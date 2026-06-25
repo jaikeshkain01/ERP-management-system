@@ -5,11 +5,9 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { 
-  AlertCircle, CheckCircle2, Cpu, Filter, Nut, 
-  Plus, Search, X, Info, AlertTriangle, Award, 
-  Layers, Landmark, ShoppingBag, ShieldAlert, Award as BrandIcon, 
-  AlertTriangle as LowStockIcon, ShieldAlert as RiskIcon
+import {
+  AlertCircle, Nut, Plus, Search, X, Info, Landmark, ShieldAlert, Filter,
+  Boxes, Tag, Truck, BarChart3, FileText, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -283,16 +281,24 @@ const COMPONENTS_DATA: ComponentData[] = [
 
 const getStatusInfo = (comp: ComponentData) => {
   if (comp.stock <= comp.minStock * 0.5) {
-    return { text: "Critical", icon: "🔴", colorClass: "bg-destructive/10 text-destructive border-destructive/20" }
+    return { text: "Critical", dot: "bg-destructive", bar: "bg-destructive", colorClass: "bg-destructive/10 text-destructive border-destructive/20" }
   }
   if (comp.stock < comp.minStock) {
-    return { text: "Low Stock", icon: "🟡", colorClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" }
+    return { text: "Low Stock", dot: "bg-amber-500", bar: "bg-amber-500", colorClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" }
   }
   if (comp.purchaseInsights.singleSupplierRisk === "YES") {
-    return { text: "Single Supplier Risk", icon: "⚠️", colorClass: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" }
+    return { text: "Single Supplier Risk", dot: "bg-rose-500", bar: "bg-emerald-500", colorClass: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20" }
   }
-  return { text: "Healthy", icon: "🟢", colorClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" }
+  return { text: "Healthy", dot: "bg-emerald-500", bar: "bg-emerald-500", colorClass: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" }
 }
+
+// Parse "₹0.80" → 0.80 for valuation math
+const parsePrice = (p: string) => parseFloat(p.replace(/[^\d.]/g, "")) || 0
+const cheapestOffer = (comp: ComponentData) =>
+  comp.suppliers.length
+    ? comp.suppliers.reduce((a, b) => (parsePrice(b.price) < parsePrice(a.price) ? b : a))
+    : null
+const formatINR = (n: number) => "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 })
 
 function ComponentListContent() {
   const searchParams = useSearchParams()
@@ -425,12 +431,22 @@ function ComponentListContent() {
     return true
   })
 
-  // Summary Metrics Setup
+  // Summary Metrics — derived live from the catalog
+  const totalValue = COMPONENTS_DATA.reduce((sum, c) => {
+    const offer = cheapestOffer(c)
+    return sum + (offer ? c.stock * parsePrice(offer.price) : 0)
+  }, 0)
+  const lowOrCritical = COMPONENTS_DATA.filter((c) => {
+    const t = getStatusInfo(c).text
+    return t === "Low Stock" || t === "Critical"
+  }).length
+  const soleSourceCount = COMPONENTS_DATA.filter((c) => c.purchaseInsights.singleSupplierRisk === "YES").length
+
   const kpis = [
-    { title: "Total Components", value: "1,250 Components", icon: Nut, color: "text-blue-600 bg-blue-500/10 border-blue-500/20" },
-    { title: "Total Brands", value: "420 Brands", icon: Award, color: "text-purple-600 bg-purple-500/10 border-purple-500/20" },
-    { title: "Low Stock Components", value: "28 Low Stock", icon: AlertCircle, color: "text-amber-600 bg-amber-500/10 border-amber-500/20" },
-    { title: "Single Supplier Risk", value: "14 Risk Items", icon: ShieldAlert, color: "text-rose-600 bg-rose-500/10 border-rose-500/20" }
+    { title: "Catalog Items", value: COMPONENTS_DATA.length.toLocaleString(), desc: "Active components", icon: Nut, color: "text-primary bg-primary/10 border-primary/20" },
+    { title: "Inventory Value", value: formatINR(totalValue), desc: "At best unit price", icon: Landmark, color: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20" },
+    { title: "Low / Critical", value: String(lowOrCritical), desc: "Below safety stock", icon: AlertCircle, color: "text-amber-600 bg-amber-500/10 border-amber-500/20" },
+    { title: "Single-Supplier Risk", value: String(soleSourceCount), desc: "Sole-sourced parts", icon: ShieldAlert, color: "text-rose-600 bg-rose-500/10 border-rose-500/20" }
   ]
 
   return (
@@ -443,11 +459,11 @@ function ComponentListContent() {
             <span>/</span>
             <span className="text-foreground font-semibold">Component List</span>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+          <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
             Component List
           </h1>
-          <p className="text-sm text-muted-foreground leading-none">
-            Track master raw parts catalog, physical stock levels, and safety thresholds.
+          <p className="text-sm text-muted-foreground">
+            Master raw-parts catalog — physical stock levels, sourcing, and safety thresholds.
           </p>
         </div>
 
@@ -469,16 +485,16 @@ function ComponentListContent() {
         {kpis.map((kpi, index) => {
           const Icon = kpi.icon
           return (
-            <Card key={index} className="transition-all hover:shadow-md hover:-translate-y-0.5 border border-border bg-card relative overflow-hidden group">
-              <div className="absolute top-0 right-0 h-12 w-12 -mr-2 -mt-2 rounded-full bg-primary/5 transition-all group-hover:scale-110" />
+            <Card key={index} className="transition-all hover:shadow-md border border-border bg-card">
               <CardHeader className="flex flex-row items-center justify-between pb-2 p-4">
-                <CardTitle className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
+                <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
                 <div className={`h-8 w-8 flex items-center justify-center rounded-lg border ${kpi.color}`}>
                   <Icon className="h-4 w-4" />
                 </div>
               </CardHeader>
               <CardContent className="px-4 pb-4">
-                <div className="text-xl font-black text-foreground tracking-tight">{kpi.value}</div>
+                <div className="text-2xl font-black text-foreground tracking-tight">{kpi.value}</div>
+                <p className="text-[10px] text-muted-foreground mt-1">{kpi.desc}</p>
               </CardContent>
             </Card>
           )
@@ -491,8 +507,8 @@ function ComponentListContent() {
         {/* Search Field */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
-          <Input 
-            placeholder="🔍 Search Anything..." 
+          <Input
+            placeholder="Search part name, generic P/N, brand, supplier, footprint…"
             className="pl-9 bg-background border-border h-10 text-sm rounded-lg focus-visible:ring-1 focus-visible:ring-primary"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -623,52 +639,74 @@ function ComponentListContent() {
       {/* Component List Table Card */}
       <Card className="w-full border border-border shadow-2xs overflow-hidden bg-card">
         <CardHeader className="border-b border-border bg-muted/10 px-6 py-4">
-          <CardTitle className="text-base font-extrabold text-foreground">Catalog Items</CardTitle>
-          <CardDescription className="text-xs">Click on any row to open the Right Drawer Spec Sheet</CardDescription>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-base font-bold text-foreground">Catalog Items</CardTitle>
+              <CardDescription className="text-xs">Select a row to open the full specification panel</CardDescription>
+            </div>
+            <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground font-mono">
+              {filteredComponents.length} / {COMPONENTS_DATA.length}
+            </span>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-foreground">
               <thead className="text-[10px] uppercase bg-muted/30 text-muted-foreground border-b border-border">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-center font-bold w-12">Indicator</th>
+                  <th scope="col" className="pl-6 pr-2 py-3 font-semibold w-6"></th>
                   <th scope="col" className="px-6 py-3 font-semibold">Generic Part No</th>
                   <th scope="col" className="px-6 py-3 font-semibold">Name</th>
                   <th scope="col" className="px-6 py-3 font-semibold">Category</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-center w-24">Brands</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-center w-24">Suppliers</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-right w-32">Stock</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-right w-24">SPQ</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-right w-44">Status</th>
+                  <th scope="col" className="px-6 py-3 font-semibold text-center w-20">Brands</th>
+                  <th scope="col" className="px-6 py-3 font-semibold text-center w-20">Suppliers</th>
+                  <th scope="col" className="px-6 py-3 font-semibold w-44">Stock Level</th>
+                  <th scope="col" className="px-6 py-3 font-semibold text-right w-28">Best Price</th>
+                  <th scope="col" className="px-6 py-3 font-semibold text-right w-40">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredComponents.map((comp) => {
                   const isSelected = comp.id === selectedComponent.id && isDrawerOpen
                   const info = getStatusInfo(comp)
+                  const pct = Math.min(100, Math.round((comp.stock / Math.max(comp.minStock, 1)) * 100))
+                  const offer = cheapestOffer(comp)
                   return (
-                    <tr 
-                      key={comp.id} 
+                    <tr
+                      key={comp.id}
                       onClick={() => handleRowClick(comp.id)}
-                      className={`hover:bg-muted/30 cursor-pointer transition-all duration-150 ${
-                        isSelected ? "bg-primary/5 hover:bg-primary/5 font-semibold text-primary" : ""
+                      className={`cursor-pointer transition-colors duration-150 ${
+                        isSelected ? "bg-primary/5 hover:bg-primary/5" : "hover:bg-muted/30"
                       }`}
                     >
-                      <td className="px-4 py-4 text-center text-lg">{info.icon}</td>
+                      <td className="pl-6 pr-2 py-4">
+                        <span className={`block h-2 w-2 rounded-full ${info.dot}`} title={info.text} />
+                      </td>
                       <td className="px-6 py-4 font-mono font-bold text-xs text-primary">{comp.genericPN}</td>
-                      <td className="px-6 py-4 font-semibold text-foreground">
-                        <div className="flex items-center gap-2">
-                          <Nut className={`h-4 w-4 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
-                          <span>{comp.name}</span>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className={`h-8 w-8 shrink-0 flex items-center justify-center rounded-lg ${isSelected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
+                            <Nut className="h-4 w-4" />
+                          </div>
+                          <span className={`font-semibold ${isSelected ? "text-primary" : "text-foreground"}`}>{comp.name}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 text-muted-foreground">{comp.category}</td>
-                      <td className="px-6 py-4 text-center font-semibold text-muted-foreground/80">{comp.brandVariants.length}</td>
-                      <td className="px-6 py-4 text-center font-semibold text-muted-foreground/80">{comp.suppliers.length}</td>
-                      <td className="px-6 py-4 font-mono font-bold text-right text-foreground">{comp.stock.toLocaleString()}</td>
-                      <td className="px-6 py-4 font-mono text-right text-muted-foreground">{comp.spq.toLocaleString()}</td>
+                      <td className="px-6 py-4 text-center font-mono font-semibold text-muted-foreground/80">{comp.brandVariants.length}</td>
+                      <td className="px-6 py-4 text-center font-mono font-semibold text-muted-foreground/80">{comp.suppliers.length}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center justify-between text-[11px] mb-1.5">
+                          <span className="font-mono font-bold text-foreground">{comp.stock.toLocaleString()}</span>
+                          <span className="font-mono text-muted-foreground">min {comp.minStock.toLocaleString()}</span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                          <div className={`h-full rounded-full ${info.bar}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-right font-mono font-semibold text-foreground">{offer ? offer.price : "—"}</td>
                       <td className="px-6 py-4 text-right">
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold border ${info.colorClass}`}>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${info.colorClass}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${info.dot}`} />
                           {info.text}
                         </span>
                       </td>
@@ -677,8 +715,14 @@ function ComponentListContent() {
                 })}
                 {filteredComponents.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="px-6 py-10 text-center text-muted-foreground font-semibold">
-                      No components match your search and filter criteria.
+                    <td colSpan={9} className="px-6 py-14 text-center">
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <Search className="h-8 w-8 opacity-30" />
+                        <span className="text-sm font-medium">No components match your search and filters</span>
+                        <button onClick={handleResetFilters} className="text-xs text-primary hover:underline font-semibold cursor-pointer mt-1">
+                          Reset all filters
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -757,9 +801,9 @@ function ComponentListContent() {
 
             {/* Section 1: Component Information */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Section 1: Component Information
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <Info className="h-3.5 w-3.5 text-primary" />
+                Component Information
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -791,9 +835,9 @@ function ComponentListContent() {
 
             {/* Section 2: Stock Summary */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Section 2: Stock Summary
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <Boxes className="h-3.5 w-3.5 text-primary" />
+                Stock Summary
               </h5>
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-secondary/40 border border-border/60 p-3 rounded-lg text-center">
@@ -815,16 +859,28 @@ function ComponentListContent() {
                   </span>
                 </div>
               </div>
+              {(() => {
+                const info = getStatusInfo(selectedComponent)
+                const pct = Math.min(100, Math.round((selectedComponent.stock / Math.max(selectedComponent.minStock, 1)) * 100))
+                return (
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground">
+                      <span>Stock vs. minimum</span>
+                      <span className="font-mono">{pct}%</span>
+                    </div>
+                    <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${info.bar}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
 
             {/* Section 3: Brand Variants (most important) */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  Section 3: Brand Variants
-                </div>
-                <span className="text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-black">MOST IMPORTANT</span>
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 text-primary" />
+                Brand Variants
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -850,9 +906,9 @@ function ComponentListContent() {
 
             {/* Section 4: Suppliers */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Section 4: Suppliers
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <Truck className="h-3.5 w-3.5 text-primary" />
+                Suppliers
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -864,13 +920,26 @@ function ComponentListContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border font-medium">
-                    {selectedComponent.suppliers.map((sup, idx) => (
-                      <tr key={idx} className="hover:bg-muted/10">
-                        <td className="px-4 py-2 font-bold text-foreground">{sup.supplier}</td>
-                        <td className="px-4 py-2 text-muted-foreground">{sup.brand}</td>
-                        <td className="px-4 py-2 text-right font-mono text-emerald-600 dark:text-emerald-400 font-bold">{sup.price}</td>
-                      </tr>
-                    ))}
+                    {selectedComponent.suppliers.map((sup, idx) => {
+                      const best = cheapestOffer(selectedComponent)
+                      const isBest = best?.supplier === sup.supplier && selectedComponent.suppliers.length > 1
+                      return (
+                        <tr key={idx} className="hover:bg-muted/10">
+                          <td className="px-4 py-2 font-bold text-foreground">
+                            <div className="flex items-center gap-1.5">
+                              {sup.supplier}
+                              {isBest && (
+                                <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-bold text-[8px] bg-emerald-500/10 px-1 py-0.5 rounded border border-emerald-500/25">
+                                  <TrendingDown className="h-2 w-2 mr-0.5" />BEST
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-muted-foreground">{sup.brand}</td>
+                          <td className="px-4 py-2 text-right font-mono text-emerald-600 dark:text-emerald-400 font-bold">{sup.price}</td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -878,12 +947,9 @@ function ComponentListContent() {
 
             {/* Section 5: Usage Analysis */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                  Section 5: Usage Analysis
-                </div>
-                <span className="text-[9px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded font-black">VERY IMPORTANT</span>
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <BarChart3 className="h-3.5 w-3.5 text-primary" />
+                Usage Analysis
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -907,9 +973,9 @@ function ComponentListContent() {
 
             {/* Section 6: Specifications */}
             <div className="space-y-2">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Section 6: Specifications
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5 text-primary" />
+                Specifications
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -933,9 +999,9 @@ function ComponentListContent() {
 
             {/* Section 7: Purchase Insights */}
             <div className="space-y-2 pb-6">
-              <h5 className="text-[10px] uppercase font-extrabold text-muted-foreground tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                Section 7: Purchase Insights
+              <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
+                <TrendingDown className="h-3.5 w-3.5 text-primary" />
+                Purchase Insights
               </h5>
               <div className="border border-border rounded-lg p-4 bg-muted/20 space-y-3 text-xs">
                 <div className="flex justify-between items-center border-b border-border/50 pb-2">

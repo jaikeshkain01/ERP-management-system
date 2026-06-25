@@ -6,24 +6,18 @@ import Image from "next/image"
 import { usePathname } from "next/navigation"
 import {
   BarChart3,
-  CalendarDays,
-  ClipboardList,
   Cpu,
   LayoutDashboard,
-  Layers,
   Nut,
   Package,
+  Boxes,
   ChevronRight,
-  ChevronDown,
-  User,
   Settings,
   Factory,
   Truck,
-  Award,
   ShoppingCart,
   Search,
   LogOut,
-  Bell,
   Circle,
 } from "lucide-react"
 
@@ -41,7 +35,6 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarSeparator,
 } from "@/components/ui/sidebar"
 import {
   Collapsible,
@@ -52,7 +45,7 @@ import {
 type NavItem = {
   title: string
   url: string
-  icon: React.ComponentType<any>
+  icon: React.ComponentType<{ className?: string }>
   items?: Array<{ title: string; url: string }>
 }
 
@@ -61,21 +54,13 @@ type NavigationGroup = {
   items: NavItem[]
 }
 
-// --- Navigation data grouped by category ---
+// --- Navigation data, ordered by operational sequence ---
 const navigationGroups: NavigationGroup[] = [
   {
     label: "Overview",
     items: [
-      {
-        title: "Dashboard",
-        url: "/",
-        icon: LayoutDashboard,
-      },
-      {
-        title: "Reports",
-        url: "/reports",
-        icon: BarChart3,
-      },
+      { title: "Dashboard", url: "/", icon: LayoutDashboard },
+      { title: "Reports", url: "/reports", icon: BarChart3 },
     ],
   },
   {
@@ -106,16 +91,15 @@ const navigationGroups: NavigationGroup[] = [
         items: [
           { title: "Component List", url: "/components/list" },
           { title: "Component Details", url: "/components/details" },
-          { title: "Usage Analysis", url: "/components/usage" },
-          { title: "Inventory", url: "/components/inventory" },
         ],
       },
       {
-        title: "Brands",
-        url: "/brands",
-        icon: Award,
+        title: "Inventory",
+        url: "/components/inventory",
+        icon: Boxes,
         items: [
-          { title: "Brand List", url: "/brands/list" },
+          { title: "Inventory", url: "/components/inventory" },
+          { title: "Usage Analysis", url: "/components/usage" },
         ],
       },
     ],
@@ -139,12 +123,13 @@ const navigationGroups: NavigationGroup[] = [
     label: "Procurement",
     items: [
       {
-        title: "Suppliers",
+        title: "Suppliers & Brands",
         url: "/suppliers",
         icon: Truck,
         items: [
           { title: "Supplier List", url: "/suppliers/list" },
           { title: "Supplier Details", url: "/suppliers/details" },
+          { title: "Brand List", url: "/brands/list" },
         ],
       },
       {
@@ -217,18 +202,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* --- Header with logo --- */}
       <SidebarHeader className="border-b border-sidebar-border px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg overflow-hidden">
+          <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/8 ring-1 ring-white/10 overflow-hidden">
             <Image
               src="/images/logo-square.png"
               alt="StackIOT Logo"
               width={100}
               height={100}
-              className="object-contain"
+              className="object-contain p-1"
             />
           </div>
           <div className="flex flex-col min-w-0">
             <span className="font-bold leading-tight tracking-tight text-white text-[13px] truncate">StackIOT Technologies</span>
-            <span className="text-[10px] text-white/45 mt-0.5 font-medium truncate">Pvt. Ltd. · Enterprise Suite</span>
+            <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-white/45 font-medium truncate">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
+              Enterprise Suite · Online
+            </span>
           </div>
         </div>
       </SidebarHeader>
@@ -247,21 +235,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </div>
       </div>
 
-      {/* --- Navigation groups --- */}
+      {/* --- Navigation groups (sequenced) --- */}
       <SidebarContent className="px-3 py-2 sidebar-scroll">
-        {filteredGroups.map((group, groupIndex) => (
-          <React.Fragment key={group.label}>
-            {groupIndex > 0 && (
-              <div className="mx-2 my-1.5">
-                <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-              </div>
-            )}
-            <SidebarGroup className="py-1">
-              <SidebarGroupLabel className="px-3 mb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-white/50">
-                {group.label}
+        {filteredGroups.map((group) => {
+          return (
+            <SidebarGroup key={group.label} className="py-1">
+              <SidebarGroupLabel className="px-2 mb-1 h-auto">
+                <div className="flex w-full items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-white/45">{group.label}</span>
+                  <span className="ml-1 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                </div>
               </SidebarGroupLabel>
               <SidebarGroupContent>
-                <SidebarMenu>
+                <SidebarMenu className="gap-0.5">
                   {group.items.map((item) => {
                     const Icon = item.icon
                     const hasSubItems = !!item.items
@@ -283,18 +269,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                 <SidebarMenuButton
                                   isActive={active}
                                   tooltip={item.title}
-                                  className="w-full justify-between h-8 text-[13px] rounded-lg"
+                                  className={`relative w-full justify-between h-9 text-[13px] rounded-lg pl-3 transition-colors before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:transition-all ${
+                                    active
+                                      ? "bg-white/10 text-white font-semibold before:bg-primary"
+                                      : "text-white/70 hover:bg-white/5 hover:text-white before:bg-transparent"
+                                  }`}
                                 />
                               }
                             >
                               <span className="flex items-center gap-2.5">
-                                <Icon className="h-4 w-4 opacity-70" />
+                                <Icon className={`h-4 w-4 ${active ? "text-primary" : "opacity-70"}`} />
                                 <span>{item.title}</span>
                               </span>
                               <ChevronRight className="h-3.5 w-3.5 opacity-40 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
                             </CollapsibleTrigger>
                             <CollapsibleContent>
-                              <SidebarMenuSub className="ml-[18px] mt-0.5 border-l border-white/8 pl-3 space-y-0">
+                              <SidebarMenuSub className="ml-[19px] mt-0.5 border-l border-white/8 pl-3 space-y-0">
                                 {item.items?.map((subItem) => {
                                   const subActive = pathname === subItem.url
                                   return (
@@ -302,10 +292,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                                       <SidebarMenuSubButton
                                         isActive={subActive}
                                         render={<Link href={subItem.url} />}
-                                        className="h-7 text-xs rounded-md"
+                                        className="h-7 text-xs rounded-md hover:bg-white/5"
                                       >
-                                        <span className={`flex items-center gap-2 ${subActive ? 'text-white font-medium' : 'text-white/55'}`}>
-                                          <Circle className={`h-1.5 w-1.5 ${subActive ? 'fill-white text-white' : 'fill-white/20 text-white/20'}`} />
+                                        <span className={`flex items-center gap-2 ${subActive ? "text-white font-medium" : "text-white/55"}`}>
+                                          <Circle className={`h-1.5 w-1.5 ${subActive ? "fill-primary text-primary" : "fill-white/20 text-white/20"}`} />
                                           {subItem.title}
                                         </span>
                                       </SidebarMenuSubButton>
@@ -325,9 +315,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           isActive={active}
                           tooltip={item.title}
                           render={<Link href={item.url} />}
-                          className="h-8 text-[13px] rounded-lg"
+                          className={`relative h-9 text-[13px] rounded-lg pl-3 transition-colors before:absolute before:left-0 before:top-1/2 before:h-5 before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:transition-all ${
+                            active
+                              ? "bg-white/10 text-white font-semibold before:bg-primary"
+                              : "text-white/70 hover:bg-white/5 hover:text-white before:bg-transparent"
+                          }`}
                         >
-                          <Icon className="h-4 w-4 opacity-70" />
+                          <Icon className={`h-4 w-4 ${active ? "text-primary" : "opacity-70"}`} />
                           <span>{item.title}</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -336,8 +330,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          </React.Fragment>
-        ))}
+          )
+        })}
 
         {/* Empty search state */}
         {filteredGroups.length === 0 && searchQuery.trim() && (
@@ -350,7 +344,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
 
       {/* --- Footer --- */}
-      <SidebarFooter className="border-t border-white/10 p-3">
+      <SidebarFooter className="border-t border-white/10 p-3 gap-2">
         {/* Settings quick link */}
         <SidebarMenu>
           <SidebarMenuItem>
@@ -358,28 +352,34 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               isActive={pathname === "/settings"}
               tooltip="Settings"
               render={<Link href="/settings" />}
-              className="h-8 text-[13px] rounded-lg"
+              className={`h-9 text-[13px] rounded-lg pl-3 transition-colors ${
+                pathname === "/settings"
+                  ? "bg-white/10 text-white font-semibold"
+                  : "text-white/70 hover:bg-white/5 hover:text-white"
+              }`}
             >
-              <Settings className="h-4 w-4 opacity-70" />
+              <Settings className={`h-4 w-4 ${pathname === "/settings" ? "text-primary" : "opacity-70"}`} />
               <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
 
-        {/* Divider */}
-        <div className="mx-1 my-1">
-          <div className="h-px bg-white/8" />
-        </div>
-
-        {/* User */}
-        <div className="flex items-center gap-3 px-2 py-1.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/80 ring-1 ring-white/10">
-            <User className="h-3.5 w-3.5" />
+        {/* User card */}
+        <div className="flex items-center gap-2.5 rounded-xl bg-white/5 ring-1 ring-white/10 px-2.5 py-2">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/20 text-white text-xs font-bold ring-1 ring-white/10">
+            JW
           </div>
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="text-[13px] font-medium leading-none text-white truncate">Jaikesh Work</span>
-            <span className="text-[10px] text-white/40 truncate mt-0.5">jaikesh@example.com</span>
+            <span className="text-[13px] font-semibold leading-none text-white truncate">Jaikesh Work</span>
+            <span className="text-[10px] text-white/45 truncate mt-1">Administrator</span>
           </div>
+          <button
+            type="button"
+            aria-label="Sign out"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white/45 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
         </div>
       </SidebarFooter>
     </Sidebar>

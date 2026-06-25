@@ -4,10 +4,10 @@ import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { 
-  Factory, Layers, Cpu, Award, Truck, Landmark, 
-  ShieldAlert, ShoppingBag, Nut, PlayCircle, ChevronDown, 
-  ChevronUp, Check, AlertCircle, CalendarDays, Clock, Package, Plus
+import {
+  Factory, Layers, Cpu, Award, Truck, Landmark,
+  ShieldAlert, ShoppingBag, Nut, PlayCircle, ChevronDown,
+  ChevronUp, Check, Package, Plus, ArrowLeft, ArrowRight, RotateCcw,
 } from "lucide-react"
 
 // Types
@@ -25,66 +25,65 @@ interface PurchaseRequest {
   date: string
 }
 
+// Calculated shortages from the MRP run
+const SHORTAGES = [
+  { item: "Audio Codec", brand: "TI", missing: 50 },
+  { item: "LED Green", brand: "Panasonic", missing: 200 },
+]
+
 export default function ProductionPlannerPage() {
   const [product, setProduct] = React.useState("roip-400")
   const [quantity, setQuantity] = React.useState(100)
   const [targetDate, setTargetDate] = React.useState("2026-07-15")
   const [calculated, setCalculated] = React.useState(false)
-  const [toast, setToast] = React.useState<string | null>(null)
-  
-  // Expandable PCBs state for Step 3
+  const [currentStep, setCurrentStep] = React.useState(0)
+  const [toast, setToast] = React.useState<{ message: string; type: "success" | "warning" } | null>(null)
+
+  // Expandable PCBs state for the PCB Breakdown step
   const [expandedPcb, setExpandedPcb] = React.useState<Record<string, boolean>>({
-    "audio": true,
-    "gsm": false,
-    "display": false,
-    "power": false
+    audio: true,
+    gsm: false,
   })
 
   const togglePcbExpand = (pcbKey: string) => {
-    setExpandedPcb(prev => ({ ...prev, [pcbKey]: !prev[pcbKey] }))
+    setExpandedPcb((prev) => ({ ...prev, [pcbKey]: !prev[pcbKey] }))
   }
+
+  const showToast = (message: string, type: "success" | "warning" = "success") => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3500)
+  }
+
+  const resetCalc = () => setCalculated(false)
 
   const handleCalculate = (e: React.FormEvent) => {
     e.preventDefault()
     setCalculated(true)
-    showToast("MRP requirements and brand allocations calculated successfully!")
-  }
-
-  const showToast = (message: string) => {
-    setToast(message)
-    setTimeout(() => setToast(null), 3000)
+    setCurrentStep(0)
+    const count = SHORTAGES.length
+    if (count > 0) {
+      showToast(`Calculation complete — ${count} component shortage${count > 1 ? "s" : ""} detected!`, "warning")
+    } else {
+      showToast("MRP requirements calculated successfully — no shortages!")
+    }
   }
 
   const handleCreatePR = () => {
-    // Generate PRs for the two shortages: Audio Codec (TI, missing 50) and LED Green (Panasonic, missing 200)
     const today = new Date().toISOString().split("T")[0]
-    
+
     const pr1: PurchaseRequest = {
       prId: `PR-${Math.floor(100000 + Math.random() * 900000)}`,
-      componentId: "audio-codec",
-      componentName: "Audio Codec",
-      brandId: "ti",
-      brandName: "TI",
-      supplierId: "mouser",
-      supplierName: "Mouser",
-      qty: 50,
-      totalCost: "₹4,250.00", // 50 * 85
-      status: "Pending Approval",
-      date: today
+      componentId: "audio-codec", componentName: "Audio Codec",
+      brandId: "ti", brandName: "TI",
+      supplierId: "mouser", supplierName: "Mouser",
+      qty: 50, totalCost: "₹4,250.00", status: "Pending Approval", date: today,
     }
-
     const pr2: PurchaseRequest = {
       prId: `PR-${Math.floor(100000 + Math.random() * 900000)}`,
-      componentId: "led-green",
-      componentName: "LED Green",
-      brandId: "panasonic",
-      brandName: "Panasonic",
-      supplierId: "abc-electronics",
-      supplierName: "ABC Electronics",
-      qty: 200,
-      totalCost: "₹420.00", // 200 * 2.10
-      status: "Pending Approval",
-      date: today
+      componentId: "led-green", componentName: "LED Green",
+      brandId: "panasonic", brandName: "Panasonic",
+      supplierId: "abc-electronics", supplierName: "ABC Electronics",
+      qty: 200, totalCost: "₹420.00", status: "Pending Approval", date: today,
     }
 
     if (typeof window !== "undefined") {
@@ -92,18 +91,386 @@ export default function ProductionPlannerPage() {
       const currentList = saved ? JSON.parse(saved) : []
       localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify([pr1, pr2, ...currentList]))
     }
-
     showToast(`Purchase Requests ${pr1.prId} and ${pr2.prId} created for shortage components!`)
   }
 
+  const productName = product === "roip-400" ? "ROIP 400" : "Voice Logger"
+
+  // ─── Wizard step definitions ─────────────────────────────────────────────
+  const steps: { key: string; label: string; title: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
+    { key: "structure", label: "Structure", title: "Product Structure Allocation", desc: "Audit sub-assembly counts needed for the build target", icon: Layers },
+    { key: "pcb", label: "PCB Breakdown", title: "PCB Breakdown", desc: "Component requirements by sub-assembly board", icon: Cpu },
+    { key: "brand", label: "Brand Alloc.", title: "Brand Allocation", desc: "Allocate raw stock across approved brands", icon: Award },
+    { key: "supplier", label: "Suppliers", title: "Supplier Options", desc: "Distributor channels and brand unit pricing", icon: Truck },
+    { key: "matrix", label: "Matrix", title: "Raw Material Allocation Matrix", desc: "BOM component mapping to active brand stock", icon: Landmark },
+    { key: "shortage", label: "Shortages", title: "Shortages Found", desc: "Automated shortage audit on the launched batch", icon: ShieldAlert },
+    { key: "purchase", label: "Purchase", title: "Purchase Recommendations", desc: "Sourcing suggestions for the missing parts", icon: ShoppingBag },
+    { key: "impact", label: "Impact", title: "Inventory Impact", desc: "Estimated stock levels before and after the run", icon: Nut },
+  ]
+  const totalSteps = steps.length
+  const step = steps[currentStep]
+  const StepIcon = step.icon
+  const isLast = currentStep === totalSteps - 1
+
+  const hasShortage = SHORTAGES.length > 0
+  const shortageStepIndex = steps.findIndex((s) => s.key === "shortage")
+
+  // ─── Step body renderer ──────────────────────────────────────────────────
+  const renderStepBody = () => {
+    switch (step.key) {
+      case "structure":
+        return (
+          <>
+            <div className="flex items-center gap-1.5 bg-primary/5 border border-primary/10 p-3 rounded-lg w-fit text-sm font-semibold mb-4">
+              <Package className="h-4 w-4 text-primary" />
+              <span>{productName} × {quantity} Units</span>
+            </div>
+            <div className="border border-border rounded-lg overflow-hidden bg-background">
+              <table className="w-full text-sm text-left text-foreground">
+                <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
+                  <tr>
+                    <th className="px-4 py-2.5">PCB Sub-Assembly</th>
+                    <th className="px-4 py-2.5 text-center">Qty / Product</th>
+                    <th className="px-4 py-2.5 text-right">Required Batch Qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {["Audio PCB", "GSM PCB", "Display PCB", "Power PCB"].map((pcb) => (
+                    <tr key={pcb} className="hover:bg-muted/5 font-medium">
+                      <td className="px-4 py-3">{pcb}</td>
+                      <td className="px-4 py-3 text-center font-mono">1</td>
+                      <td className="px-4 py-3 text-right font-mono text-primary font-bold">{quantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )
+
+      case "pcb":
+        return (
+          <div className="space-y-4">
+            {/* Audio PCB */}
+            <div className="border border-border rounded-xl overflow-hidden">
+              <div onClick={() => togglePcbExpand("audio")} className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-primary" />
+                  <span className="font-extrabold text-sm">Audio PCB Breakdown</span>
+                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: {quantity}</span>
+                </div>
+                {expandedPcb["audio"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </div>
+              {expandedPcb["audio"] && (
+                <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
+                  <table className="w-full text-xs text-left text-foreground">
+                    <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                      <tr>
+                        <th className="px-3 py-2">Component</th>
+                        <th className="px-3 py-2 text-center">Qty / PCB</th>
+                        <th className="px-3 py-2 text-right">Required Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {[["Resistor 10K", 20], ["Capacitor 100uF", 10], ["Audio Codec", 1]].map(([c, q]) => (
+                        <tr key={c as string} className="hover:bg-muted/5 font-medium">
+                          <td className="px-3 py-2.5">{c}</td>
+                          <td className="px-3 py-2.5 text-center font-mono">{q}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-bold">{((q as number) * quantity).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* GSM PCB */}
+            <div className="border border-border rounded-xl overflow-hidden">
+              <div onClick={() => togglePcbExpand("gsm")} className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none">
+                <div className="flex items-center gap-2">
+                  <Cpu className="h-4 w-4 text-primary" />
+                  <span className="font-extrabold text-sm">GSM PCB Breakdown</span>
+                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: {quantity}</span>
+                </div>
+                {expandedPcb["gsm"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </div>
+              {expandedPcb["gsm"] && (
+                <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
+                  <table className="w-full text-xs text-left text-foreground">
+                    <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                      <tr>
+                        <th className="px-3 py-2">Component</th>
+                        <th className="px-3 py-2 text-center">Qty / PCB</th>
+                        <th className="px-3 py-2 text-right">Required Qty</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {[["GSM Chip", 1], ["SIM Holder", 1], ["Capacitor 10uF", 15]].map(([c, q]) => (
+                        <tr key={c as string} className="hover:bg-muted/5 font-medium">
+                          <td className="px-3 py-2.5">{c}</td>
+                          <td className="px-3 py-2.5 text-center font-mono">{q}</td>
+                          <td className="px-3 py-2.5 text-right font-mono font-bold">{((q as number) * quantity).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+
+      case "brand":
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Allocation Target Item</span>
+                <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
+              </div>
+              <div className="text-right sm:text-left">
+                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Total Batch Required</span>
+                <span className="font-mono font-black text-primary text-base mt-0.5 block">2,000 Units</span>
+              </div>
+            </div>
+            <div className="border border-border rounded-lg overflow-hidden bg-background">
+              <table className="w-full text-sm text-left text-foreground">
+                <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
+                  <tr>
+                    <th className="px-4 py-2">Brand</th>
+                    <th className="px-4 py-2">Available</th>
+                    <th className="px-4 py-2 text-right">Allocated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  <tr className="hover:bg-muted/5 font-semibold">
+                    <td className="px-4 py-2.5">Yageo</td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">1,200</td>
+                  </tr>
+                  <tr className="hover:bg-muted/5 font-semibold">
+                    <td className="px-4 py-2.5">Vishay</td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">800</td>
+                  </tr>
+                  <tr className="hover:bg-muted/5 text-muted-foreground/60">
+                    <td className="px-4 py-2.5 font-semibold">Panasonic</td>
+                    <td className="px-4 py-2.5 font-mono">500</td>
+                    <td className="px-4 py-2.5 text-right font-mono font-bold">0</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+
+      case "supplier":
+        return (
+          <div className="border border-border rounded-lg overflow-hidden bg-background">
+            <table className="w-full text-sm text-left text-foreground">
+              <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
+                <tr>
+                  <th className="px-4 py-2">Supplier</th>
+                  <th className="px-4 py-2">Brand</th>
+                  <th className="px-4 py-2 text-right">Price</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {[["ABC", "Yageo", "₹0.80"], ["XYZ", "Yageo", "₹0.82"], ["Mouser", "Vishay", "₹0.95"]].map(([s, b, p]) => (
+                  <tr key={s} className="hover:bg-muted/5 font-medium">
+                    <td className="px-4 py-2.5 font-semibold">{s}</td>
+                    <td className="px-4 py-2.5">{b}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">{p}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+
+      case "matrix":
+        return (
+          <div className="overflow-x-auto border border-border rounded-lg bg-background">
+            <table className="w-full text-xs text-left text-foreground">
+              <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                <tr>
+                  <th className="px-4 py-2">PCB</th>
+                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2">Generic PN</th>
+                  <th className="px-4 py-2 text-right">Required</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border font-medium">
+                <tr className="hover:bg-muted/5">
+                  <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
+                  <td className="px-4 py-2.5 font-bold">Resistor</td>
+                  <td className="px-4 py-2.5 font-mono text-primary font-bold">RES-10K</td>
+                  <td className="px-4 py-2.5 text-right font-mono">2000</td>
+                </tr>
+                <tr className="hover:bg-muted/5">
+                  <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
+                  <td className="px-4 py-2.5 font-bold">Capacitor</td>
+                  <td className="px-4 py-2.5 font-mono text-primary font-bold">CAP-100UF</td>
+                  <td className="px-4 py-2.5 text-right font-mono">1000</td>
+                </tr>
+                <tr className="hover:bg-muted/5 text-destructive bg-destructive/5">
+                  <td className="px-4 py-2.5 font-semibold text-muted-foreground/60">Audio PCB</td>
+                  <td className="px-4 py-2.5 font-bold">Audio Codec</td>
+                  <td className="px-4 py-2.5 font-mono font-bold">AUD-CDC</td>
+                  <td className="px-4 py-2.5 text-right font-mono">100</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )
+
+      case "shortage":
+        return hasShortage ? (
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
+              <ShieldAlert className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-bold text-destructive">{SHORTAGES.length} component shortages will block this batch</p>
+                <p className="text-destructive/80 text-xs mt-0.5">
+                  Production cannot proceed until the missing quantities below are procured. Continue to the Purchase step to raise requests.
+                </p>
+              </div>
+            </div>
+            <div className="border border-destructive/20 rounded-lg overflow-hidden">
+              <table className="w-full text-sm text-left text-foreground">
+                <thead className="bg-destructive/10 uppercase text-xs text-destructive/80 border-b border-destructive/20 font-semibold">
+                  <tr>
+                    <th className="px-6 py-2.5">Component Item</th>
+                    <th className="px-6 py-2.5">Shortage Brand</th>
+                    <th className="px-6 py-2.5 text-right">Missing Quantity</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-destructive/10 text-destructive font-semibold">
+                  {SHORTAGES.map((s) => (
+                    <tr key={s.item} className="hover:bg-destructive/5 transition-colors">
+                      <td className="px-6 py-3 flex items-center gap-2">
+                        <span className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
+                        {s.item}
+                      </td>
+                      <td className="px-6 py-3 font-mono">{s.brand}</td>
+                      <td className="px-6 py-3 text-right font-mono font-black">-{s.missing} PCS</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
+            <Check className="h-5 w-5 text-emerald-500 shrink-0" />
+            <p className="font-semibold text-emerald-600 dark:text-emerald-400">No shortages — all components are fully stocked for this batch.</p>
+          </div>
+        )
+
+      case "purchase":
+        return (
+          <div className="space-y-5">
+            <div className="flex justify-end">
+              <Button size="sm" className="font-bold gap-1 cursor-pointer text-xs" onClick={handleCreatePR}>
+                <Plus className="h-3.5 w-3.5" />
+                <span>Create Purchase Request</span>
+              </Button>
+            </div>
+            {/* Audio Codec */}
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
+                Item Shortage: Audio Codec (Brand: TI)
+              </div>
+              <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
+                <table className="w-full text-left text-foreground">
+                  <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                    <tr>
+                      <th className="px-4 py-2">Supplier</th>
+                      <th className="px-4 py-2">Lead Time</th>
+                      <th className="px-4 py-2 text-right">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-medium">
+                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">Mouser</td><td className="px-4 py-2.5 font-mono text-muted-foreground">7 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹85</td></tr>
+                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">Arrow</td><td className="px-4 py-2.5 font-mono text-muted-foreground">5 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹88</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {/* LED Green */}
+            <div className="space-y-2 border-t border-border/50 pt-4">
+              <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
+                Item Shortage: LED Green (Brand: Panasonic)
+              </div>
+              <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
+                <table className="w-full text-left text-foreground">
+                  <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                    <tr>
+                      <th className="px-4 py-2">Supplier</th>
+                      <th className="px-4 py-2">Lead Time</th>
+                      <th className="px-4 py-2 text-right">Price</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border font-medium">
+                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">ABC Electronics</td><td className="px-4 py-2.5 font-mono text-muted-foreground">3 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.10</td></tr>
+                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">XYZ Components</td><td className="px-4 py-2.5 font-mono text-muted-foreground">2 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.20</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )
+
+      case "impact":
+        return (
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Impact Item</span>
+                <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
+              </div>
+            </div>
+            <div className="border border-border rounded-lg overflow-hidden bg-background">
+              <table className="w-full text-sm text-left text-foreground">
+                <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
+                  <tr>
+                    <th className="px-4 py-2">Brand</th>
+                    <th className="px-4 py-2">Before</th>
+                    <th className="px-4 py-2 text-right">After</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border font-semibold">
+                  <tr className="hover:bg-muted/5">
+                    <td className="px-4 py-2.5">Yageo</td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-destructive font-black">0</td>
+                  </tr>
+                  <tr className="hover:bg-muted/5">
+                    <td className="px-4 py-2.5">Vishay</td>
+                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">200</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+    }
+  }
+
   return (
-    <div className="space-y-8 relative">
+    <div className="space-y-6 relative">
       {/* Toast alert */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <div className={`fixed bottom-5 right-5 z-50 max-w-sm p-4 rounded-xl shadow-lg border transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+          toast.type === "warning"
+            ? "bg-destructive/10 border-destructive/25 text-destructive"
+            : "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+        }`}>
           <div className="flex items-center gap-2">
-            <Check className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm font-semibold">{toast}</span>
+            {toast.type === "warning" ? <ShieldAlert className="h-4 w-4 text-destructive" /> : <Check className="h-4 w-4 text-emerald-500" />}
+            <span className="text-sm font-semibold">{toast.message}</span>
           </div>
         </div>
       )}
@@ -115,19 +482,19 @@ export default function ProductionPlannerPage() {
           <span>/</span>
           <span className="text-foreground font-medium">Production Planner</span>
         </div>
-        <h1 className="text-3xl font-extrabold tracking-tight">Production Planner</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Production Planner</h1>
         <p className="text-muted-foreground">
           Simulate Material Requirements Planning (MRP) and allocate brand-specific inventory before launching shop floor orders.
         </p>
       </div>
 
-      {/* Step 1: Production Request Form Card */}
+      {/* Production Request Form */}
       <Card className="border border-border shadow-sm">
         <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
           <div className="flex items-center gap-2">
             <Factory className="h-5 w-5 text-primary" />
             <div>
-              <CardTitle className="text-lg font-bold">Step 1 — Production Request</CardTitle>
+              <CardTitle className="text-lg font-bold">Production Request</CardTitle>
               <CardDescription>Configure target product and quantities for batch run simulation</CardDescription>
             </div>
           </div>
@@ -136,46 +503,27 @@ export default function ProductionPlannerPage() {
           <form onSubmit={handleCalculate} className="grid gap-4 md:grid-cols-4 items-end">
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Product</label>
-              <select 
+              <select
                 value={product}
-                onChange={(e) => {
-                  setProduct(e.target.value)
-                  setCalculated(false)
-                }}
+                onChange={(e) => { setProduct(e.target.value); resetCalc() }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               >
                 <option value="roip-400">ROIP 400</option>
                 <option value="voice-logger">Voice Logger</option>
               </select>
             </div>
-
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Production Quantity</label>
-              <Input 
-                type="number" 
-                min={1} 
-                value={quantity}
-                onChange={(e) => {
-                  setQuantity(parseInt(e.target.value) || 0)
-                  setCalculated(false)
-                }}
-                className="border-input bg-background font-mono font-bold"
-              />
+              <Input type="number" min={1} value={quantity}
+                onChange={(e) => { setQuantity(parseInt(e.target.value) || 0); resetCalc() }}
+                className="border-input bg-background font-mono font-bold" />
             </div>
-
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground/60">Target Date</label>
-              <Input 
-                type="date"
-                value={targetDate}
-                onChange={(e) => {
-                  setTargetDate(e.target.value)
-                  setCalculated(false)
-                }}
-                className="border-input bg-background font-mono font-bold"
-              />
+              <Input type="date" value={targetDate}
+                onChange={(e) => { setTargetDate(e.target.value); resetCalc() }}
+                className="border-input bg-background font-mono font-bold" />
             </div>
-
             <Button type="submit" className="font-bold gap-2 cursor-pointer w-full">
               <PlayCircle className="h-4.5 w-4.5" />
               <span>Calculate</span>
@@ -184,496 +532,161 @@ export default function ProductionPlannerPage() {
         </CardContent>
       </Card>
 
-      {/* Calculated Steps 2 to 9 */}
+      {/* Wizard */}
       {calculated && (
-        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-500">
-          
-          <div className="grid gap-6 lg:grid-cols-2">
-            
-            {/* Left Side: Product Allocations (Step 2, 3, 4, 5) */}
-            <div className="space-y-6">
-              
-              {/* Step 2: Product Structure Allocation */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <Layers className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Step 2 — Product Structure Allocation</CardTitle>
-                      <CardDescription>Audit sub-assembly counts needed for build target</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-1.5 bg-primary/5 border border-primary/10 p-3 rounded-lg w-fit text-sm font-semibold mb-4">
+        <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-400">
+          {/* Shortage alert banner */}
+          {hasShortage && (
+            <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/10 p-4 sm:flex-row sm:items-center sm:justify-between animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-start gap-3">
+                <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-destructive/15 text-destructive">
+                  <ShieldAlert className="h-5 w-5" />
+                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                    {SHORTAGES.length}
+                  </span>
+                </span>
+                <div>
+                  <p className="text-sm font-bold text-destructive">
+                    Material shortage detected — production will be blocked
+                  </p>
+                  <p className="text-xs text-destructive/80 mt-0.5">
+                    {SHORTAGES.map((s) => `${s.item} (−${s.missing})`).join(", ")} short for this batch run.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="font-bold gap-1.5 cursor-pointer shrink-0"
+                onClick={() => setCurrentStep(shortageStepIndex)}
+              >
+                Review Shortages
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+
+          {/* Run summary + stepper */}
+          <Card className="border border-border shadow-sm">
+            <CardContent className="p-5 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary/5 border border-primary/15 px-3 py-1 font-semibold">
                     <Package className="h-4 w-4 text-primary" />
-                    <span>{product === "roip-400" ? "ROIP 400" : "Voice Logger"} × {quantity} Units</span>
-                  </div>
-                  <div className="border border-border rounded-lg overflow-hidden bg-background">
-                    <table className="w-full text-sm text-left text-foreground">
-                      <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                        <tr>
-                          <th className="px-4 py-2.5">PCB Sub-Assembly</th>
-                          <th className="px-4 py-2.5 text-center">Qty / Product</th>
-                          <th className="px-4 py-2.5 text-right">Required Batch Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-3">Audio PCB</td>
-                          <td className="px-4 py-3 text-center font-mono">1</td>
-                          <td className="px-4 py-3 text-right font-mono text-primary font-bold">100</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-3">GSM PCB</td>
-                          <td className="px-4 py-3 text-center font-mono">1</td>
-                          <td className="px-4 py-3 text-right font-mono text-primary font-bold">100</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-3">Display PCB</td>
-                          <td className="px-4 py-3 text-center font-mono">1</td>
-                          <td className="px-4 py-3 text-right font-mono text-primary font-bold">100</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-3">Power PCB</td>
-                          <td className="px-4 py-3 text-center font-mono">1</td>
-                          <td className="px-4 py-3 text-right font-mono text-primary font-bold">100</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
+                    {productName} × {quantity}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1 font-medium text-muted-foreground font-mono">
+                    Target {targetDate}
+                  </span>
+                </div>
+                <Button variant="outline" size="sm" className="gap-1.5 font-semibold cursor-pointer" onClick={resetCalc}>
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Recalculate
+                </Button>
+              </div>
 
-              {/* Step 3: PCB Breakdown (Expandable Cards) */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <Cpu className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Step 3 — PCB Breakdown</CardTitle>
-                      <CardDescription>Inspect component breakdown requirements by sub-assembly board</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  
-                  {/* Expandable: Audio PCB */}
-                  <div className="border border-border rounded-xl overflow-hidden">
-                    <div 
-                      onClick={() => togglePcbExpand("audio")}
-                      className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Cpu className="h-4 w-4 text-primary" />
-                        <span className="font-extrabold text-sm">Audio PCB Breakdown</span>
-                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: 100</span>
-                      </div>
-                      {expandedPcb["audio"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </div>
-                    {expandedPcb["audio"] && (
-                      <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
-                        <table className="w-full text-xs text-left text-foreground">
-                          <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                            <tr>
-                              <th className="px-3 py-2">Component</th>
-                              <th className="px-3 py-2 text-center">Qty / PCB</th>
-                              <th className="px-3 py-2 text-right">Required Qty</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">Resistor 10K</td>
-                              <td className="px-3 py-2.5 text-center font-mono">20</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">2,000</td>
-                            </tr>
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">Capacitor 100uF</td>
-                              <td className="px-3 py-2.5 text-center font-mono">10</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">1,000</td>
-                            </tr>
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">Audio Codec</td>
-                              <td className="px-3 py-2.5 text-center font-mono">1</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">100</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
+              {/* Stepper */}
+              <div className="overflow-x-auto">
+                <div className="flex min-w-max items-center">
+                  {steps.map((s, idx) => {
+                    const SIcon = s.icon
+                    const done = idx < currentStep
+                    const active = idx === currentStep
+                    const flagged = s.key === "shortage" && hasShortage
+                    return (
+                      <React.Fragment key={s.key}>
+                        <button
+                          onClick={() => setCurrentStep(idx)}
+                          className="flex flex-col items-center gap-1.5 px-1 cursor-pointer group"
+                        >
+                          <span className={`relative flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-bold transition-colors ${
+                            active
+                              ? flagged
+                                ? "border-destructive bg-destructive text-destructive-foreground"
+                                : "border-primary bg-primary text-primary-foreground"
+                              : flagged
+                              ? "border-destructive/50 bg-destructive/10 text-destructive ring-2 ring-destructive/15"
+                              : done
+                              ? "border-primary/40 bg-primary/10 text-primary"
+                              : "border-border bg-background text-muted-foreground group-hover:border-primary/40"
+                          }`}>
+                            {done && !flagged ? <Check className="h-4 w-4" /> : <SIcon className="h-4 w-4" />}
+                            {flagged && (
+                              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
+                                {SHORTAGES.length}
+                              </span>
+                            )}
+                          </span>
+                          <span className={`text-[10px] font-semibold whitespace-nowrap ${
+                            flagged ? "text-destructive" : active ? "text-foreground" : "text-muted-foreground"
+                          }`}>
+                            {s.label}
+                          </span>
+                        </button>
+                        {idx < totalSteps - 1 && (
+                          <div className={`h-0.5 w-8 sm:w-12 mb-5 rounded-full transition-colors ${idx < currentStep ? "bg-primary/40" : "bg-border"}`} />
+                        )}
+                      </React.Fragment>
+                    )
+                  })}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-                  {/* Expandable: GSM PCB */}
-                  <div className="border border-border rounded-xl overflow-hidden">
-                    <div 
-                      onClick={() => togglePcbExpand("gsm")}
-                      className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none"
-                    >
-                      <div className="flex items-center gap-2">
-                        <Cpu className="h-4 w-4 text-primary" />
-                        <span className="font-extrabold text-sm">GSM PCB Breakdown</span>
-                        <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: 100</span>
-                      </div>
-                      {expandedPcb["gsm"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </div>
-                    {expandedPcb["gsm"] && (
-                      <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
-                        <table className="w-full text-xs text-left text-foreground">
-                          <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                            <tr>
-                              <th className="px-3 py-2">Component</th>
-                              <th className="px-3 py-2 text-center">Qty / PCB</th>
-                              <th className="px-3 py-2 text-right">Required Qty</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border">
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">GSM Chip</td>
-                              <td className="px-3 py-2.5 text-center font-mono">1</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">100</td>
-                            </tr>
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">SIM Holder</td>
-                              <td className="px-3 py-2.5 text-center font-mono">1</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">100</td>
-                            </tr>
-                            <tr className="hover:bg-muted/5 font-medium">
-                              <td className="px-3 py-2.5">Capacitor 10uF</td>
-                              <td className="px-3 py-2.5 text-center font-mono">15</td>
-                              <td className="px-3 py-2.5 text-right font-mono font-bold">1,500</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-
-                </CardContent>
-              </Card>
-
-              {/* Step 4: Brand Allocation */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
-                      <Award className="h-5 w-5 text-primary" />
-                      <div>
-                        <CardTitle className="text-lg font-bold">Brand Allocation</CardTitle>
-                        <CardDescription>Allocate raw stock across approved brands</CardDescription>
-                      </div>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-extrabold text-xs bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
-                      <Check className="h-3.5 w-3.5" />
-                      Allocated Successfully
+          {/* Current step card */}
+          <Card key={step.key} className="border border-border shadow-sm animate-in fade-in slide-in-from-right-4 duration-300">
+            <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
+              <div className="flex items-center gap-2">
+                <StepIcon className="h-5 w-5 text-primary" />
+                <div>
+                  <CardTitle className="text-lg font-bold flex items-center gap-2">
+                    {step.title}
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                      Step {currentStep + 1} / {totalSteps}
                     </span>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Allocation Target Item</span>
-                      <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
-                    </div>
-                    <div className="text-right sm:text-left">
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Total Batch Required</span>
-                      <span className="font-mono font-black text-primary text-base mt-0.5 block">2,000 Units</span>
-                    </div>
-                  </div>
+                  </CardTitle>
+                  <CardDescription>{step.desc}</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6">{renderStepBody()}</CardContent>
+          </Card>
 
-                  <div className="border border-border rounded-lg overflow-hidden bg-background">
-                    <table className="w-full text-sm text-left text-foreground">
-                      <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                        <tr>
-                          <th className="px-4 py-2">Brand</th>
-                          <th className="px-4 py-2">Available</th>
-                          <th className="px-4 py-2 text-right">Allocated</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        <tr className="hover:bg-muted/5 font-semibold">
-                          <td className="px-4 py-2.5">Yageo</td>
-                          <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">1,200</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-semibold">
-                          <td className="px-4 py-2.5">Vishay</td>
-                          <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">800</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 text-muted-foreground/60">
-                          <td className="px-4 py-2.5 font-semibold">Panasonic</td>
-                          <td className="px-4 py-2.5 font-mono">500</td>
-                          <td className="px-4 py-2.5 text-right font-mono font-bold">0</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
+          {/* Navigation footer */}
+          <div className="flex items-center justify-between gap-4">
+            <Button
+              variant="outline"
+              className="gap-2 font-semibold cursor-pointer"
+              disabled={currentStep === 0}
+              onClick={() => setCurrentStep((s) => Math.max(0, s - 1))}
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Previous
+            </Button>
 
-              {/* Step 5: Supplier Visibility */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <Truck className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Supplier Options</CardTitle>
-                      <CardDescription>Available distributor channels and brand unit pricing</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <div className="border border-border rounded-lg overflow-hidden bg-background">
-                    <table className="w-full text-sm text-left text-foreground">
-                      <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                        <tr>
-                          <th className="px-4 py-2">Supplier</th>
-                          <th className="px-4 py-2">Brand</th>
-                          <th className="px-4 py-2 text-right">Price</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-2.5 font-semibold">ABC</td>
-                          <td className="px-4 py-2.5">Yageo</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹0.80</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-2.5 font-semibold">XYZ</td>
-                          <td className="px-4 py-2.5">Yageo</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹0.82</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 font-medium">
-                          <td className="px-4 py-2.5 font-semibold">Mouser</td>
-                          <td className="px-4 py-2.5">Vishay</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹0.95</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
+            <span className="text-xs font-semibold text-muted-foreground font-mono">
+              Step {currentStep + 1} of {totalSteps}
+            </span>
 
-            </div>
-
-            {/* Right Side: Matrix, Gaps, Recommendations & Impact (Step 6, 7, 8, 9) */}
-            <div className="space-y-6">
-              
-              {/* Step 6: Raw Material Allocation Matrix */}
-              <Card className="border border-border shadow-sm overflow-hidden">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <Landmark className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Step 6 — Raw Material Allocation Matrix</CardTitle>
-                      <CardDescription>BOM component mapping to active brand stock</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs text-left text-foreground">
-                      <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                        <tr>
-                          <th className="px-4 py-2">PCB</th>
-                          <th className="px-4 py-2">Component</th>
-                          <th className="px-4 py-2">Generic PN</th>
-                          <th className="px-4 py-2 text-right">Required</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border font-medium">
-                        <tr className="hover:bg-muted/5">
-                          <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
-                          <td className="px-4 py-2.5 font-bold">Resistor</td>
-                          <td className="px-4 py-2.5 font-mono text-primary font-bold">RES-10K</td>
-                          <td className="px-4 py-2.5 text-right font-mono">2000</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5">
-                          <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
-                          <td className="px-4 py-2.5 font-bold">Capacitor</td>
-                          <td className="px-4 py-2.5 font-mono text-primary font-bold">CAP-100UF</td>
-                          <td className="px-4 py-2.5 text-right font-mono">1000</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5 text-destructive bg-destructive/5">
-                          <td className="px-4 py-2.5 font-semibold text-muted-foreground/60">Audio PCB</td>
-                          <td className="px-4 py-2.5 font-bold animate-pulse">Audio Codec</td>
-                          <td className="px-4 py-2.5 font-mono font-bold">AUD-CDC</td>
-                          <td className="px-4 py-2.5 text-right font-mono">100</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Step 7: Shortage Analysis */}
-              <Card className="border border-destructive/30 bg-destructive/5 dark:bg-red-950/10 shadow-sm overflow-hidden">
-                <CardHeader className="border-b border-destructive/10 bg-destructive/10 px-6 py-4">
-                  <div className="flex items-center gap-2 text-destructive">
-                    <ShieldAlert className="h-5 w-5" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Step 7 — Shortages Found</CardTitle>
-                      <CardDescription className="text-destructive/85 mt-0.5">Automated shortage audit reports on launched batch</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <table className="w-full text-sm text-left text-foreground">
-                    <thead className="bg-destructive/10 uppercase text-xs text-destructive/80 border-b border-destructive/20 font-semibold">
-                      <tr>
-                        <th className="px-6 py-2.5">Component Item</th>
-                        <th className="px-6 py-2.5">Shortage Brand</th>
-                        <th className="px-6 py-2.5 text-right">Missing Quantity</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-destructive/10 text-destructive font-semibold">
-                      <tr className="hover:bg-destructive/5 transition-colors">
-                        <td className="px-6 py-3">Audio Codec</td>
-                        <td className="px-6 py-3 font-mono">TI</td>
-                        <td className="px-6 py-3 text-right font-mono font-black">-50 PCS</td>
-                      </tr>
-                      <tr className="hover:bg-destructive/5 transition-colors">
-                        <td className="px-6 py-3">LED Green</td>
-                        <td className="px-6 py-3 font-mono">Panasonic</td>
-                        <td className="px-6 py-3 text-right font-mono font-black">-200 PCS</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </CardContent>
-              </Card>
-
-              {/* Step 8: Purchase Recommendations */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4 flex flex-row items-center justify-between gap-4">
-                  <div className="flex items-center gap-2">
-                    <ShoppingBag className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Step 8 — Purchase Recommendations</CardTitle>
-                      <CardDescription>Instant sourcing suggestions for calculated missing parts</CardDescription>
-                    </div>
-                  </div>
-                  <Button 
-                    size="sm"
-                    className="font-bold gap-1 cursor-pointer text-xs"
-                    onClick={handleCreatePR}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Create Purchase Request</span>
-                  </Button>
-                </CardHeader>
-                <CardContent className="p-6 space-y-5">
-                  {/* Item 1: Audio Codec */}
-                  <div className="space-y-2">
-                    <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
-                      Item Shortage: Audio Codec (Brand: TI)
-                    </div>
-                    <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-                      <table className="w-full text-left text-foreground">
-                        <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                          <tr>
-                            <th className="px-4 py-2">Supplier</th>
-                            <th className="px-4 py-2">Lead Time</th>
-                            <th className="px-4 py-2 text-right">Price</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border font-medium">
-                          <tr className="hover:bg-muted/5">
-                            <td className="px-4 py-2.5">Mouser</td>
-                            <td className="px-4 py-2.5 font-mono text-muted-foreground">7 Days</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹85</td>
-                          </tr>
-                          <tr className="hover:bg-muted/5">
-                            <td className="px-4 py-2.5">Arrow</td>
-                            <td className="px-4 py-2.5 font-mono text-muted-foreground">5 Days</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹88</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Item 2: LED Green */}
-                  <div className="space-y-2 border-t border-border/50 pt-4">
-                    <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
-                      Item Shortage: LED Green (Brand: Panasonic)
-                    </div>
-                    <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-                      <table className="w-full text-left text-foreground">
-                        <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                          <tr>
-                            <th className="px-4 py-2">Supplier</th>
-                            <th className="px-4 py-2">Lead Time</th>
-                            <th className="px-4 py-2 text-right">Price</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border font-medium">
-                          <tr className="hover:bg-muted/5">
-                            <td className="px-4 py-2.5">ABC Electronics</td>
-                            <td className="px-4 py-2.5 font-mono text-muted-foreground">3 Days</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.10</td>
-                          </tr>
-                          <tr className="hover:bg-muted/5">
-                            <td className="px-4 py-2.5">XYZ Components</td>
-                            <td className="px-4 py-2.5 font-mono text-muted-foreground">2 Days</td>
-                            <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.20</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                </CardContent>
-              </Card>
-
-              {/* Step 9: Inventory Impact */}
-              <Card className="border border-border shadow-sm">
-                <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                  <div className="flex items-center gap-2">
-                    <Nut className="h-5 w-5 text-primary" />
-                    <div>
-                      <CardTitle className="text-lg font-bold">Inventory Impact</CardTitle>
-                      <CardDescription>Estimated stock levels before and after simulated batch run execution</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="p-6 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Impact Item</span>
-                      <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
-                    </div>
-                  </div>
-                  
-                  <div className="border border-border rounded-lg overflow-hidden bg-background">
-                    <table className="w-full text-sm text-left text-foreground">
-                      <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                        <tr>
-                          <th className="px-4 py-2">Brand</th>
-                          <th className="px-4 py-2">Before</th>
-                          <th className="px-4 py-2 text-right">After</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border font-semibold">
-                        <tr className="hover:bg-muted/5">
-                          <td className="px-4 py-2.5">Yageo</td>
-                          <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-destructive font-black">0</td>
-                        </tr>
-                        <tr className="hover:bg-muted/5">
-                          <td className="px-4 py-2.5">Vishay</td>
-                          <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
-                          <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">200</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-
-            </div>
-
+            {isLast ? (
+              <Button
+                className="gap-2 font-semibold cursor-pointer"
+                onClick={() => showToast("Production plan reviewed and ready to launch!")}
+              >
+                <Check className="h-4 w-4" />
+                Finish Plan
+              </Button>
+            ) : (
+              <Button
+                className="gap-2 font-semibold cursor-pointer"
+                onClick={() => setCurrentStep((s) => Math.min(totalSteps - 1, s + 1))}
+              >
+                Next Step
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            )}
           </div>
-          
         </div>
       )}
     </div>

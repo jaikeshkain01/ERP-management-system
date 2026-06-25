@@ -5,10 +5,11 @@ import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { 
-  ArrowLeft, Nut, Plus, Edit2, Star, Landmark, 
-  ShieldCheck, AlertCircle, X, Check, Cpu, Package, 
-  Info, Wrench, BarChart2, Inbox, Trash2 
+import {
+  ArrowLeft, Plus, Edit2, Star, Landmark,
+  ShieldCheck, AlertCircle, X, Check, Cpu, Package,
+  Info, Wrench, BarChart2, Inbox, Trash2,
+  Boxes, Truck, Layers, Gauge, Zap, ShieldAlert, Clock, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
 
@@ -254,6 +255,25 @@ function ComponentDetailsContent() {
 
   // Calculate dynamic stock sum from variants
   const calculatedTotalStock = component.mfgVariants.reduce((sum, v) => sum + (v.stock || 0), 0)
+
+  // --- Derived procurement / stock insights ---
+  const parsePrice = (p: string) => parseFloat(p.replace(/[^\d.]/g, "")) || 0
+  const parseLeadDays = (l: string) => parseInt(l.replace(/[^\d]/g, ""), 10) || 0
+  const formatINR = (n: number) =>
+    "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 })
+
+  const stockPct = Math.min(100, Math.round((calculatedTotalStock / Math.max(component.minStock, 1)) * 100))
+  const isHealthy = calculatedTotalStock >= component.minStock
+  const maxVariantStock = component.mfgVariants.reduce((m, v) => Math.max(m, v.stock || 0), 0)
+
+  const cheapestSupplier = component.suppliers.length
+    ? component.suppliers.reduce((a, b) => (parsePrice(b.price) < parsePrice(a.price) ? b : a))
+    : null
+  const fastestSupplier = component.suppliers.length
+    ? component.suppliers.reduce((a, b) => (parseLeadDays(b.leadTime) < parseLeadDays(a.leadTime) ? b : a))
+    : null
+  const singleSupplierRisk = component.suppliers.length <= 1
+  const stockValue = cheapestSupplier ? calculatedTotalStock * parsePrice(cheapestSupplier.price) : 0
 
   // Prepopulate edit modal state
   const openEditModal = () => {
@@ -516,12 +536,26 @@ function ComponentDetailsContent() {
             <span className="text-foreground font-bold">{component.name}</span>
           </div>
           <h1 className="text-3.5xl font-black tracking-tight text-foreground">{component.name}</h1>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-xs font-bold text-muted-foreground">Generic Part No:</span>
+          <div className="flex flex-wrap items-center gap-2 mt-1.5">
             <span className="font-mono text-sm font-black bg-primary/10 border border-primary/25 text-primary px-2.5 py-0.5 rounded-lg select-all">
               {component.genericPN}
             </span>
+            <span className="inline-flex items-center rounded-lg border border-border bg-muted/40 px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
+              {component.category}
+            </span>
+            <span className="inline-flex items-center rounded-lg border border-border bg-muted/40 px-2.5 py-0.5 text-xs font-semibold font-mono text-muted-foreground">
+              {component.solderType}
+            </span>
+            <span className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-0.5 text-xs font-bold ${
+              isHealthy
+                ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                : "bg-destructive/10 border-destructive/20 text-destructive"
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${isHealthy ? "bg-emerald-500" : "bg-destructive"}`} />
+              {isHealthy ? "In Stock" : "Below Minimum"}
+            </span>
           </div>
+          <p className="text-sm text-muted-foreground mt-2 max-w-xl leading-relaxed">{component.description}</p>
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <Button 
@@ -552,6 +586,34 @@ function ComponentDetailsContent() {
         </div>
       </div>
 
+      {/* Key Metrics Strip */}
+      <div className="grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+        {[
+          { label: "Total Stock", value: calculatedTotalStock.toLocaleString(), sub: component.unit, icon: Boxes, accent: "text-primary bg-primary/10" },
+          { label: "Stock Health", value: `${stockPct}%`, sub: isHealthy ? "Healthy" : "Below min", icon: Gauge, accent: isHealthy ? "text-emerald-600 bg-emerald-500/10" : "text-destructive bg-destructive/10" },
+          { label: "Variants", value: String(component.mfgVariants.length), sub: "Approved brands", icon: Wrench, accent: "text-primary bg-primary/10" },
+          { label: "Suppliers", value: String(component.suppliers.length), sub: singleSupplierRisk ? "Sole source" : "Multi-source", icon: Truck, accent: singleSupplierRisk ? "text-amber-500 bg-amber-500/10" : "text-primary bg-primary/10" },
+          { label: "Best Price", value: cheapestSupplier ? cheapestSupplier.price : "—", sub: cheapestSupplier ? cheapestSupplier.name : "No offers", icon: TrendingDown, accent: "text-emerald-600 bg-emerald-500/10" },
+          { label: "Used In", value: String(component.usedInProductsCount), sub: `${component.usedInPCBsCount} PCBs`, icon: Layers, accent: "text-primary bg-primary/10" },
+        ].map((m) => {
+          const Icon = m.icon
+          return (
+            <Card key={m.label} className="border border-border shadow-xs">
+              <CardContent className="p-3.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{m.label}</span>
+                  <div className={`h-7 w-7 flex items-center justify-center rounded-lg ${m.accent}`}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                </div>
+                <div className="text-xl font-black tracking-tight mt-1.5 truncate">{m.value}</div>
+                <p className="text-[10px] text-muted-foreground truncate mt-0.5">{m.sub}</p>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+
       {/* Primary Details Grid */}
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Side: Info & Lists */}
@@ -564,39 +626,25 @@ function ComponentDetailsContent() {
                 <CardTitle className="text-lg font-bold">Specifications</CardTitle>
               </div>
             </CardHeader>
-            <CardContent className="p-0">
-              <table className="w-full text-sm text-left text-foreground">
-                <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-bold">
-                  <tr>
-                    <th scope="col" className="px-6 py-3 w-1/2">Field</th>
-                    <th scope="col" className="px-6 py-3 w-1/2">Value</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border bg-background">
-                  <tr className="hover:bg-muted/5 transition-colors">
-                    <td className="px-6 py-3 font-bold text-muted-foreground">Category</td>
-                    <td className="px-6 py-3 font-semibold">{component.category}</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5 transition-colors">
-                    <td className="px-6 py-3 font-bold text-muted-foreground">Solder Type</td>
-                    <td className="px-6 py-3 font-semibold">{component.solderType}</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5 transition-colors">
-                    <td className="px-6 py-3 font-bold text-muted-foreground">Footprint</td>
-                    <td className="px-6 py-3 font-mono font-bold text-primary">{component.footprint}</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5 transition-colors">
-                    <td className="px-6 py-3 font-bold text-muted-foreground">SPQ</td>
-                    <td className="px-6 py-3 font-mono font-semibold">{component.spq.toLocaleString()}</td>
-                  </tr>
-                  {component.specs && component.specs.map((spec) => (
-                    <tr key={spec.key} className="hover:bg-muted/5 transition-colors">
-                      <td className="px-6 py-3 font-bold text-muted-foreground">{spec.key}</td>
-                      <td className="px-6 py-3 font-semibold">{spec.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <CardContent className="p-6">
+              <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-3">
+                {([
+                  { key: "Category", value: component.category },
+                  { key: "Solder Type", value: component.solderType, mono: true },
+                  { key: "Footprint", value: component.footprint, mono: true, accent: true },
+                  { key: "SPQ", value: component.spq.toLocaleString(), mono: true },
+                  { key: "Min Stock", value: component.minStock.toLocaleString(), mono: true },
+                  { key: "Unit", value: component.unit },
+                  ...(component.specs || []),
+                ] as { key: string; value: string; mono?: boolean; accent?: boolean }[]).map((spec) => (
+                  <div key={spec.key} className="bg-background p-4">
+                    <dt className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{spec.key}</dt>
+                    <dd className={`mt-1 text-sm font-bold ${spec.mono ? "font-mono" : ""} ${spec.accent ? "text-primary" : "text-foreground"}`}>
+                      {spec.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             </CardContent>
           </Card>
 
@@ -637,7 +685,17 @@ function ComponentDetailsContent() {
                     <tr key={idx} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-3.5 font-bold text-sm">{variant.manufacturer}</td>
                       <td className="px-6 py-3.5 font-mono text-xs font-semibold text-primary">{variant.mfgPartNo}</td>
-                      <td className="px-6 py-3.5 font-mono text-xs font-bold text-right">{(variant.stock || 0).toLocaleString()}</td>
+                      <td className="px-6 py-3.5">
+                        <div className="flex items-center justify-end gap-2.5">
+                          <div className="hidden sm:block h-1.5 w-20 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary/70"
+                              style={{ width: `${maxVariantStock ? Math.round(((variant.stock || 0) / maxVariantStock) * 100) : 0}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-xs font-bold w-16 text-right">{(variant.stock || 0).toLocaleString()}</span>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {(!component.mfgVariants || component.mfgVariants.length === 0) && (
@@ -723,32 +781,52 @@ function ComponentDetailsContent() {
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-foreground">
-                  <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border font-bold">
+                  <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border font-bold tracking-wide">
                     <tr>
                       <th scope="col" className="px-6 py-3">Supplier</th>
                       <th scope="col" className="px-6 py-3">Brand</th>
+                      <th scope="col" className="px-6 py-3 text-right">MOQ</th>
+                      <th scope="col" className="px-6 py-3 text-right">Lead Time</th>
                       <th scope="col" className="px-6 py-3 text-right">Price</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border bg-background">
-                    {component.suppliers.map((sup, idx) => (
-                      <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                        <td className="px-6 py-4 flex items-center gap-2 font-semibold">
-                          <span>{sup.name}</span>
-                          {sup.preferred && (
-                            <span className="inline-flex items-center text-amber-500 font-bold text-[9px] bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/25">
-                              <Star className="h-2.5 w-2.5 fill-amber-500 mr-0.5" />
-                              Pref
+                    {component.suppliers.map((sup, idx) => {
+                      const isCheapest = cheapestSupplier?.name === sup.name && component.suppliers.length > 1
+                      return (
+                        <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2 font-semibold">
+                              <span>{sup.name}</span>
+                              {sup.preferred && (
+                                <span className="inline-flex items-center text-amber-500 font-bold text-[9px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/25">
+                                  <Star className="h-2.5 w-2.5 fill-amber-500 mr-0.5" />
+                                  Preferred
+                                </span>
+                              )}
+                              {isCheapest && (
+                                <span className="inline-flex items-center text-emerald-600 dark:text-emerald-400 font-bold text-[9px] bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/25">
+                                  <TrendingDown className="h-2.5 w-2.5 mr-0.5" />
+                                  Best
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 font-mono text-xs text-muted-foreground font-semibold">{sup.manufacturer || "-"}</td>
+                          <td className="px-6 py-4 font-mono text-xs text-right text-muted-foreground">{sup.moq.toLocaleString()}</td>
+                          <td className="px-6 py-4 text-right">
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+                              <Clock className="h-3 w-3" />
+                              {sup.leadTime}
                             </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 font-mono text-xs text-muted-foreground font-semibold">{sup.manufacturer || "-"}</td>
-                        <td className="px-6 py-4 font-mono text-primary font-bold text-sm text-right">{sup.price}</td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="px-6 py-4 font-mono text-primary font-bold text-sm text-right">{sup.price}</td>
+                        </tr>
+                      )
+                    })}
                     {component.suppliers.length === 0 && (
                       <tr>
-                        <td colSpan={3} className="px-6 py-8 text-center text-muted-foreground">
+                        <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
                           No suppliers registered in active matrix.
                         </td>
                       </tr>
@@ -756,6 +834,39 @@ function ComponentDetailsContent() {
                   </tbody>
                 </table>
               </div>
+
+              {/* Procurement insights footer */}
+              {component.suppliers.length > 0 && (
+                <div className="grid grid-cols-1 divide-y border-t border-border bg-muted/20 sm:grid-cols-3 sm:divide-x sm:divide-y-0 divide-border">
+                  <div className="flex items-center gap-2.5 px-6 py-3">
+                    <TrendingDown className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Cheapest</p>
+                      <p className="text-xs font-semibold truncate">{cheapestSupplier?.name} · <span className="font-mono text-primary">{cheapestSupplier?.price}</span></p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 px-6 py-3">
+                    <Zap className="h-4 w-4 text-primary shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Fastest</p>
+                      <p className="text-xs font-semibold truncate">{fastestSupplier?.name} · <span className="font-mono">{fastestSupplier?.leadTime}</span></p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 px-6 py-3">
+                    {singleSupplierRisk ? (
+                      <ShieldAlert className="h-4 w-4 text-amber-500 shrink-0" />
+                    ) : (
+                      <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sourcing Risk</p>
+                      <p className={`text-xs font-semibold truncate ${singleSupplierRisk ? "text-amber-600 dark:text-amber-400" : ""}`}>
+                        {singleSupplierRisk ? "Single supplier" : "Diversified"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -768,32 +879,51 @@ function ComponentDetailsContent() {
               <CardTitle className="text-base font-bold">Physical Stock Summary</CardTitle>
             </CardHeader>
             <CardContent className="p-6">
-              <div className="bg-secondary/20 border border-border/60 p-4 rounded-xl space-y-4 shadow-2xs">
+              <div className="bg-secondary/20 border border-border/60 p-5 rounded-xl space-y-4 shadow-2xs">
                 <div className="flex justify-between items-baseline">
-                  <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Total Stock</span>
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">On-hand Total</span>
                   <span className="text-xs font-semibold text-muted-foreground">{component.unit}</span>
                 </div>
-                <div className="text-4xl font-black text-foreground tracking-tight">
-                  {calculatedTotalStock.toLocaleString()}
+                <div className="flex items-end justify-between">
+                  <div className="text-4xl font-black text-foreground tracking-tight">
+                    {calculatedTotalStock.toLocaleString()}
+                  </div>
+                  <span className={`font-bold inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] ${
+                    isHealthy
+                      ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
+                      : "bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive-foreground"
+                  }`}>
+                    {isHealthy ? <Check className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+                    {isHealthy ? "Healthy" : "Low"}
+                  </span>
                 </div>
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/50 text-xs">
+
+                {/* Stock vs minimum bar */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px] font-semibold text-muted-foreground">
+                    <span>Stock vs. minimum</span>
+                    <span className="font-mono">{stockPct}%</span>
+                  </div>
+                  <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                    <div className={`h-full rounded-full ${isHealthy ? "bg-emerald-500" : "bg-destructive"}`} style={{ width: `${stockPct}%` }} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-3 border-t border-border/50 text-xs">
                   <div className="flex flex-col">
                     <span className="text-[10px] text-muted-foreground font-semibold">Min Stock</span>
                     <span className="font-mono font-bold mt-0.5">{component.minStock.toLocaleString()}</span>
                   </div>
                   <div className="flex flex-col items-end">
-                    <span className="text-[10px] text-muted-foreground font-semibold">Status</span>
-                    <span className={`font-bold mt-0.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] ${
-                      calculatedTotalStock >= component.minStock 
-                        ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400" 
-                        : "bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive-foreground"
-                    }`}>
-                      {calculatedTotalStock >= component.minStock && <Check className="h-3 w-3" />}
-                      {calculatedTotalStock < component.minStock && <AlertCircle className="h-3 w-3" />}
-                      {calculatedTotalStock >= component.minStock ? "Healthy" : "Low"}
-                    </span>
+                    <span className="text-[10px] text-muted-foreground font-semibold">Stock Value</span>
+                    <span className="font-mono font-bold mt-0.5">{stockValue > 0 ? formatINR(stockValue) : "—"}</span>
                   </div>
                 </div>
+                {stockValue > 0 && (
+                  <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                    Valued at best available unit price ({cheapestSupplier?.price}).
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>

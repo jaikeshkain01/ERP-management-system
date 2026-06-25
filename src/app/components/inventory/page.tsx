@@ -1,47 +1,246 @@
+"use client"
+
+import * as React from "react"
+import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { AlertCircle, AlertTriangle, ArrowUpRight, DollarSign, Package, Package2, ShieldAlert, CheckCircle2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  AlertCircle, AlertTriangle, ChevronDown, DollarSign,
+  Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
+  Boxes, ArrowUpRight, Truck, Tag,
+} from "lucide-react"
+
+// --- Types ---
+type StockStatus = "Healthy" | "Low" | "Critical" | "Out of Stock"
+
+interface BrandVariant {
+  brand: string
+  partNo: string
+  stock: number
+}
+
+interface SupplierOffer {
+  supplier: string
+  brand: string
+  price: string
+  leadTime: string
+}
+
+interface InventoryItem {
+  id: string
+  name: string
+  genericPN: string
+  category: string
+  stock: number
+  minStock: number
+  reorderQty: number
+  unit: string
+  unitCost: number
+  bin: string
+  solderType: "SMD" | "DIP"
+  footprint: string
+  lastCount: string
+  brands: BrandVariant[]
+  suppliers: SupplierOffer[]
+  usedIn: string[]
+}
+
+// --- Mock inventory dataset ---
+const INVENTORY: InventoryItem[] = [
+  {
+    id: "resistor-10k", name: "Resistor 10K", genericPN: "RES-10K", category: "Passive",
+    stock: 7000, minStock: 5000, reorderQty: 10000, unit: "PCS", unitCost: 0.8, bin: "B-03",
+    solderType: "SMD", footprint: "0603", lastCount: "12 Jun 2026",
+    brands: [
+      { brand: "Yageo", partNo: "RC0603JR", stock: 3000 },
+      { brand: "Vishay", partNo: "CRCW0603", stock: 2500 },
+      { brand: "Panasonic", partNo: "ERJ3EKF", stock: 1500 },
+    ],
+    suppliers: [
+      { supplier: "ABC Electronics", brand: "Yageo", price: "₹0.80", leadTime: "3 days" },
+      { supplier: "Mouser", brand: "Vishay", price: "₹0.95", leadTime: "5 days" },
+    ],
+    usedIn: ["ROIP 400", "Voice Logger"],
+  },
+  {
+    id: "capacitor-100uf", name: "Capacitor 100uF", genericPN: "CAP-100UF", category: "Passive",
+    stock: 400, minStock: 500, reorderQty: 2000, unit: "PCS", unitCost: 1.5, bin: "B-08",
+    solderType: "DIP", footprint: "Radial 6.3x11mm", lastCount: "10 Jun 2026",
+    brands: [
+      { brand: "Nichicon", partNo: "UVR1E101MED", stock: 250 },
+      { brand: "Rubycon", partNo: "25YXG100M", stock: 150 },
+    ],
+    suppliers: [
+      { supplier: "ABC Electronics", brand: "Nichicon", price: "₹1.50", leadTime: "2 days" },
+      { supplier: "DigiKey", brand: "Nichicon", price: "₹1.70", leadTime: "4 days" },
+    ],
+    usedIn: ["ROIP 400", "Voice Logger"],
+  },
+  {
+    id: "audio-codec", name: "Audio Codec IC", genericPN: "AUDIO-CODEC", category: "IC",
+    stock: 50, minStock: 120, reorderQty: 1000, unit: "PCS", unitCost: 68, bin: "C-01",
+    solderType: "SMD", footprint: "QFN-32", lastCount: "08 Jun 2026",
+    brands: [{ brand: "Texas Instruments", partNo: "TLV320AIC3104", stock: 50 }],
+    suppliers: [
+      { supplier: "ABC Electronics", brand: "Texas Instruments", price: "₹68.00", leadTime: "3 days" },
+    ],
+    usedIn: ["ROIP 400", "Voice Logger"],
+  },
+  {
+    id: "gsm-chip", name: "GSM Chipset", genericPN: "GSM-CHIP", category: "RF Module",
+    stock: 350, minStock: 200, reorderQty: 500, unit: "PCS", unitCost: 380, bin: "C-04",
+    solderType: "SMD", footprint: "LGA-68", lastCount: "11 Jun 2026",
+    brands: [{ brand: "Quectel", partNo: "MC60", stock: 350 }],
+    suppliers: [
+      { supplier: "XYZ Components", brand: "Quectel", price: "₹380.00", leadTime: "2 days" },
+    ],
+    usedIn: ["ROIP 400"],
+  },
+  {
+    id: "mcu-stm32", name: "STM32 Microcontroller", genericPN: "MCU-STM32", category: "IC",
+    stock: 1200, minStock: 1000, reorderQty: 1000, unit: "PCS", unitCost: 110, bin: "C-07",
+    solderType: "SMD", footprint: "LQFP-64", lastCount: "12 Jun 2026",
+    brands: [
+      { brand: "STMicroelectronics", partNo: "STM32F401RET6", stock: 700 },
+      { brand: "GigaDevice", partNo: "GD32F401RET6", stock: 500 },
+    ],
+    suppliers: [
+      { supplier: "XYZ Components", brand: "GigaDevice", price: "₹110.00", leadTime: "2 days" },
+      { supplier: "Mouser", brand: "STMicroelectronics", price: "₹125.00", leadTime: "5 days" },
+    ],
+    usedIn: ["Voice Logger"],
+  },
+  {
+    id: "led-green", name: "LED Green Indicator", genericPN: "LED-GRN", category: "Optoelectronics",
+    stock: 300, minStock: 1000, reorderQty: 5000, unit: "PCS", unitCost: 2.1, bin: "A-12",
+    solderType: "DIP", footprint: "5mm Radial", lastCount: "09 Jun 2026",
+    brands: [
+      { brand: "Everlight", partNo: "EL-513-GRN", stock: 150 },
+      { brand: "Lite-On", partNo: "LTL-4231N", stock: 150 },
+    ],
+    suppliers: [
+      { supplier: "XYZ Components", brand: "Lite-On", price: "₹2.10", leadTime: "1 day" },
+      { supplier: "LED Depot", brand: "Everlight", price: "₹2.20", leadTime: "3 days" },
+    ],
+    usedIn: ["ROIP 400", "Voice Logger"],
+  },
+  {
+    id: "sim-holder", name: "SIM Card Holder", genericPN: "SIM-HLDR", category: "Connectors",
+    stock: 250, minStock: 150, reorderQty: 500, unit: "PCS", unitCost: 12, bin: "D-05",
+    solderType: "SMD", footprint: "6-Pin Push-Push", lastCount: "07 Jun 2026",
+    brands: [{ brand: "Amphenol", partNo: "114-00841-68", stock: 250 }],
+    suppliers: [
+      { supplier: "ABC Electronics", brand: "Amphenol", price: "₹12.00", leadTime: "4 days" },
+    ],
+    usedIn: ["ROIP 400"],
+  },
+  {
+    id: "flash-mem", name: "Flash Memory 128Mb", genericPN: "FLASH-128", category: "IC",
+    stock: 0, minStock: 300, reorderQty: 1000, unit: "PCS", unitCost: 45, bin: "C-09",
+    solderType: "SMD", footprint: "SOP-8", lastCount: "06 Jun 2026",
+    brands: [{ brand: "Winbond", partNo: "W25Q128JV", stock: 0 }],
+    suppliers: [
+      { supplier: "Mouser", brand: "Winbond", price: "₹45.00", leadTime: "6 days" },
+    ],
+    usedIn: ["Voice Logger"],
+  },
+]
+
+const CATEGORIES = ["All", ...Array.from(new Set(INVENTORY.map((i) => i.category)))]
+
+// --- Helpers ---
+function getStatus(item: InventoryItem): StockStatus {
+  if (item.stock === 0) return "Out of Stock"
+  if (item.stock < item.minStock * 0.5) return "Critical"
+  if (item.stock < item.minStock) return "Low"
+  return "Healthy"
+}
+
+const STATUS_STYLES: Record<StockStatus, { pill: string; bar: string; dot: string }> = {
+  Healthy: {
+    pill: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
+    bar: "bg-emerald-500", dot: "bg-emerald-500",
+  },
+  Low: {
+    pill: "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400",
+    bar: "bg-amber-500", dot: "bg-amber-500",
+  },
+  Critical: {
+    pill: "bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-400",
+    bar: "bg-orange-500", dot: "bg-orange-500",
+  },
+  "Out of Stock": {
+    pill: "bg-destructive/10 border-destructive/20 text-destructive",
+    bar: "bg-destructive", dot: "bg-destructive",
+  },
+}
+
+const formatINR = (n: number) =>
+  "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 })
 
 export default function InventoryPage() {
-  const stats = [
-    {
-      title: "Total Inventory Value",
-      value: "$45,230.00",
-      description: "Based on unit purchase cost",
-      icon: DollarSign,
-      color: "text-primary",
-    },
-    {
-      title: "Low Stock Items",
-      value: "8",
-      description: "Items approaching safety limits",
-      icon: AlertTriangle,
-      color: "text-amber-500",
-      bg: "border-amber-500/20 bg-amber-500/5 dark:bg-amber-950/10",
-    },
-    {
-      title: "Critical Items",
-      value: "3",
-      description: "Immediate restocking required",
-      icon: ShieldAlert,
-      color: "text-orange-500",
-      bg: "border-orange-500/20 bg-orange-500/5 dark:bg-orange-950/10",
-    },
-    {
-      title: "Out of Stock Items",
-      value: "1",
-      description: "Depleted inventory lines",
-      icon: AlertCircle,
-      color: "text-destructive",
-      bg: "border-destructive/20 bg-destructive/5 dark:bg-red-950/10",
-    },
-  ]
+  const [draftQuery, setDraftQuery] = React.useState("")
+  const [query, setQuery] = React.useState("")
+  const [category, setCategory] = React.useState("All")
+  const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
+  const [expanded, setExpanded] = React.useState<string | null>(null)
 
-  const inventoryItems = [
-    { name: "LED", category: "Optoelectronics", stock: 300, bin: "Bin A-12", status: "Low" },
-    { name: "Resistor", category: "Passive Components", stock: 5000, bin: "Bin B-03", status: "Healthy" },
-    { name: "Capacitor", category: "Passive Components", stock: 4000, bin: "Bin B-08", status: "Healthy" },
-    { name: "Audio Codec", category: "Integrated Circuits", stock: 120, bin: "Bin C-01", status: "Healthy" },
-    { name: "SIM Holder", category: "Connectors", stock: 250, bin: "Bin D-05", status: "Healthy" },
+  const submitSearch = () => setQuery(draftQuery.trim())
+  const clearSearch = () => {
+    setDraftQuery("")
+    setQuery("")
+  }
+
+  // --- Derived stats (over the whole dataset, not filtered) ---
+  const stats = React.useMemo(() => {
+    const totalValue = INVENTORY.reduce((sum, i) => sum + i.stock * i.unitCost, 0)
+    const counts = INVENTORY.reduce(
+      (acc, i) => {
+        acc[getStatus(i)]++
+        return acc
+      },
+      { Healthy: 0, Low: 0, Critical: 0, "Out of Stock": 0 } as Record<StockStatus, number>
+    )
+    return { totalValue, counts, skuCount: INVENTORY.length }
+  }, [])
+
+  // --- Filtered rows ---
+  const rows = React.useMemo(() => {
+    const q = query.toLowerCase()
+    return INVENTORY.filter((item) => {
+      const matchesQuery =
+        !q ||
+        item.name.toLowerCase().includes(q) ||
+        item.genericPN.toLowerCase().includes(q) ||
+        item.category.toLowerCase().includes(q) ||
+        item.bin.toLowerCase().includes(q) ||
+        item.brands.some((b) => b.brand.toLowerCase().includes(q) || b.partNo.toLowerCase().includes(q))
+      const matchesCategory = category === "All" || item.category === category
+      const matchesStatus = statusFilter === "All" || getStatus(item) === statusFilter
+      return matchesQuery && matchesCategory && matchesStatus
+    })
+  }, [query, category, statusFilter])
+
+  const summaryCards = [
+    {
+      title: "Inventory Value", value: formatINR(stats.totalValue), desc: "On-hand valuation at unit cost",
+      icon: Landmark, accent: "text-emerald-600 bg-emerald-500/10", border: "border-border",
+    },
+    {
+      title: "Active SKUs", value: String(stats.skuCount), desc: "Distinct catalog line items",
+      icon: Boxes, accent: "text-primary bg-primary/10", border: "border-border",
+    },
+    {
+      title: "Low / Critical", value: String(stats.counts.Low + stats.counts.Critical), desc: "Below safety stock level",
+      icon: AlertTriangle, accent: "text-amber-500 bg-amber-500/10",
+      border: "border-amber-500/20 bg-amber-500/[0.03]",
+    },
+    {
+      title: "Out of Stock", value: String(stats.counts["Out of Stock"]), desc: "Depleted, blocks production",
+      icon: ShieldAlert, accent: "text-destructive bg-destructive/10",
+      border: "border-destructive/20 bg-destructive/[0.03]",
+    },
   ]
 
   return (
@@ -53,85 +252,332 @@ export default function InventoryPage() {
           <span>/</span>
           <span className="text-foreground font-medium">Inventory</span>
         </div>
-        <h1 className="text-3xl font-extrabold tracking-tight">Inventory</h1>
-        <p className="text-muted-foreground">
-          Track storage distribution, stock valuations, and warehouse bin logistics.
-        </p>
+        <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight">Inventory</h1>
+            <p className="text-muted-foreground mt-1">
+              Stock levels, valuation, bin allocation, and supplier coverage across the component catalog.
+            </p>
+          </div>
+        </div>
       </div>
 
-      {/* Summary Cards Grid */}
+      {/* Summary Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon
+        {summaryCards.map((c) => {
+          const Icon = c.icon
           return (
-            <Card key={stat.title} className={`relative overflow-hidden transition-all duration-300 hover:shadow-md ${stat.bg || "border-border"}`}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-semibold text-muted-foreground">{stat.title}</CardTitle>
-                <Icon className={`h-4 w-4 ${stat.color}`} />
+            <Card key={c.title} className={`relative overflow-hidden transition-all duration-300 hover:shadow-md ${c.border}`}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
+                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{c.title}</CardTitle>
+                <div className={`h-8 w-8 flex items-center justify-center rounded-lg ${c.accent}`}>
+                  <Icon className="h-4 w-4" />
+                </div>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold tracking-tight">{stat.value}</div>
-                <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
+              <CardContent className="px-4 pb-4">
+                <div className="text-2xl font-black tracking-tight">{c.value}</div>
+                <p className="text-[11px] text-muted-foreground mt-1">{c.desc}</p>
               </CardContent>
             </Card>
           )
         })}
       </div>
 
-      {/* Inventory Stock Ledger */}
+      {/* Ledger */}
       <Card className="border border-border shadow-sm overflow-hidden">
         <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-lg font-bold">Physical Stock Ledger</CardTitle>
-              <CardDescription>On-hand quantities by bin allocation</CardDescription>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-primary" />
+              <div>
+                <CardTitle className="text-lg font-bold">Physical Stock Ledger</CardTitle>
+                <CardDescription>On-hand quantities, valuation, and warehouse allocation</CardDescription>
+              </div>
             </div>
-            <Package className="h-5 w-5 text-muted-foreground/60" />
+
+            {/* Search + filters */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={draftQuery}
+                  onChange={(e) => setDraftQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitSearch()}
+                  placeholder="Search part, P/N, brand, bin…"
+                  className="h-9 w-full pl-8 pr-8 sm:w-72"
+                />
+                {draftQuery && (
+                  <button
+                    onClick={clearSearch}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <Button size="sm" onClick={submitSearch} className="h-9 font-semibold cursor-pointer">
+                <Search className="h-3.5 w-3.5 mr-1.5" />
+                Search
+              </Button>
+            </div>
+          </div>
+
+          {/* Category + status filter chips */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-4">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">Category</span>
+            {CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setCategory(cat)}
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
+                  category === cat
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+            <div className="mx-2 h-4 w-px bg-border" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">Status</span>
+            {(["All", "Healthy", "Low", "Critical", "Out of Stock"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
+                  statusFilter === st
+                    ? "border-foreground/20 bg-foreground/5 text-foreground"
+                    : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                {st}
+              </button>
+            ))}
           </div>
         </CardHeader>
+
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left text-foreground">
-              <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
+              <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border tracking-wide">
                 <tr>
-                  <th scope="col" className="px-6 py-3 font-semibold">Item</th>
-                  <th scope="col" className="px-6 py-3 font-semibold">Category</th>
-                  <th scope="col" className="px-6 py-3 font-semibold">Stock</th>
-                  <th scope="col" className="px-6 py-3 font-semibold">Bin Location</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-right">Status</th>
+                  <th className="px-6 py-3 font-semibold">Component</th>
+                  <th className="px-6 py-3 font-semibold">Category</th>
+                  <th className="px-6 py-3 font-semibold w-[200px]">Stock Level</th>
+                  <th className="px-6 py-3 font-semibold text-right">Value</th>
+                  <th className="px-6 py-3 font-semibold">Location</th>
+                  <th className="px-6 py-3 font-semibold text-right">Status</th>
+                  <th className="px-4 py-3 font-semibold text-center w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {inventoryItems.map((item) => {
-                  const isLow = item.status === "Low"
+                {rows.map((item) => {
+                  const status = getStatus(item)
+                  const style = STATUS_STYLES[status]
+                  const pct = Math.min(100, Math.round((item.stock / Math.max(item.minStock, 1)) * 100))
+                  const isOpen = expanded === item.id
                   return (
-                    <tr key={item.name} className="hover:bg-muted/10 transition-colors">
-                      <td className="px-6 py-4 font-semibold flex items-center gap-2">
-                        <Package2 className="h-4 w-4 text-muted-foreground" />
-                        <span>{item.name}</span>
-                      </td>
-                      <td className="px-6 py-4 text-muted-foreground">{item.category}</td>
-                      <td className="px-6 py-4 font-mono font-bold">{item.stock.toLocaleString()}</td>
-                      <td className="px-6 py-4 font-mono text-xs">{item.bin}</td>
-                      <td className="px-6 py-4 text-right">
-                        {isLow ? (
-                          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive-foreground">
-                            <AlertCircle className="h-3 w-3" />
-                            Low
+                    <React.Fragment key={item.id}>
+                      <tr
+                        className="hover:bg-muted/20 transition-colors cursor-pointer"
+                        onClick={() => setExpanded(isOpen ? null : item.id)}
+                      >
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                              <Nut className="h-4 w-4" />
+                            </div>
+                            <div className="flex flex-col min-w-0">
+                              <span className="font-semibold leading-tight">{item.name}</span>
+                              <span className="text-[11px] font-mono text-muted-foreground">{item.genericPN}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <Tag className="h-3 w-3" />
+                            {item.category}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Healthy
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center justify-between text-xs mb-1.5">
+                            <span className="font-mono font-bold text-foreground">{item.stock.toLocaleString()}</span>
+                            <span className="font-mono text-muted-foreground">min {item.minStock.toLocaleString()}</span>
+                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                            <div className={`h-full rounded-full ${style.bar}`} style={{ width: `${pct}%` }} />
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-right font-mono font-semibold">
+                          {formatINR(item.stock * item.unitCost)}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center gap-1.5 font-mono text-xs">
+                            <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+                            {item.bin}
                           </span>
-                        )}
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold ${style.pill}`}>
+                            <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+                            {status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 text-center">
+                          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                        </td>
+                      </tr>
+
+                      {/* Expanded detail */}
+                      {isOpen && (
+                        <tr className="bg-muted/10">
+                          <td colSpan={7} className="px-6 py-5">
+                            <div className="grid gap-6 lg:grid-cols-3">
+                              {/* Specs / meta */}
+                              <div className="space-y-3">
+                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                  <Layers className="h-3.5 w-3.5" /> Specifications
+                                </h4>
+                                <dl className="space-y-1.5 text-xs">
+                                  {[
+                                    ["Solder Type", item.solderType],
+                                    ["Footprint", item.footprint],
+                                    ["Unit Cost", `₹${item.unitCost.toFixed(2)}`],
+                                    ["Reorder Qty", `${item.reorderQty.toLocaleString()} ${item.unit}`],
+                                    ["Last Counted", item.lastCount],
+                                  ].map(([k, v]) => (
+                                    <div key={k} className="flex justify-between gap-4 border-b border-border/50 pb-1.5">
+                                      <dt className="text-muted-foreground">{k}</dt>
+                                      <dd className="font-medium font-mono text-right">{v}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                                <div className="pt-1">
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Used In</span>
+                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    {item.usedIn.map((p) => (
+                                      <span key={p} className="rounded-md border border-border bg-background px-2 py-0.5 text-[11px] font-medium">
+                                        {p}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Brand variants */}
+                              <div className="space-y-3">
+                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                  <Tag className="h-3.5 w-3.5" /> Brand Variants
+                                </h4>
+                                <div className="rounded-lg border border-border overflow-hidden bg-background">
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-muted/40 text-muted-foreground">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-semibold">Brand</th>
+                                        <th className="px-3 py-2 text-left font-semibold">Part No.</th>
+                                        <th className="px-3 py-2 text-right font-semibold">Stock</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {item.brands.map((b) => (
+                                        <tr key={b.partNo}>
+                                          <td className="px-3 py-2 font-semibold">{b.brand}</td>
+                                          <td className="px-3 py-2 font-mono text-muted-foreground">{b.partNo}</td>
+                                          <td className="px-3 py-2 text-right font-mono">{b.stock.toLocaleString()}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {/* Suppliers */}
+                              <div className="space-y-3">
+                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                  <Truck className="h-3.5 w-3.5" /> Supplier Coverage
+                                </h4>
+                                <div className="rounded-lg border border-border overflow-hidden bg-background">
+                                  <table className="w-full text-xs">
+                                    <thead className="bg-muted/40 text-muted-foreground">
+                                      <tr>
+                                        <th className="px-3 py-2 text-left font-semibold">Supplier</th>
+                                        <th className="px-3 py-2 text-right font-semibold">Price</th>
+                                        <th className="px-3 py-2 text-right font-semibold">Lead</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                      {item.suppliers.map((s) => (
+                                        <tr key={s.supplier}>
+                                          <td className="px-3 py-2">
+                                            <span className="font-semibold block">{s.supplier}</span>
+                                            <span className="text-muted-foreground">{s.brand}</span>
+                                          </td>
+                                          <td className="px-3 py-2 text-right font-mono font-semibold text-primary">{s.price}</td>
+                                          <td className="px-3 py-2 text-right font-mono text-muted-foreground">{s.leadTime}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                {item.suppliers.length === 1 && (
+                                  <div className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
+                                    <AlertCircle className="h-3.5 w-3.5" />
+                                    Single supplier — sourcing risk
+                                  </div>
+                                )}
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 text-xs font-semibold w-full cursor-pointer"
+                                  render={<Link href="/components/details" />}
+                                >
+                                  View full component record
+                                  <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
+                                </Button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   )
                 })}
+
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-16 text-center">
+                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                        <Search className="h-8 w-8 opacity-30" />
+                        <span className="text-sm font-medium">No components match your search</span>
+                        <span className="text-xs">Try a different term or reset the filters</span>
+                        <Button variant="outline" size="sm" className="mt-2 cursor-pointer" onClick={() => { clearSearch(); setCategory("All"); setStatusFilter("All") }}>
+                          Reset filters
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
+
+          {/* Footer summary */}
+          {rows.length > 0 && (
+            <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-6 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Showing <strong className="text-foreground font-mono">{rows.length}</strong> of{" "}
+                <strong className="text-foreground font-mono">{INVENTORY.length}</strong> components
+              </span>
+              <span className="flex items-center gap-1.5">
+                <DollarSign className="h-3.5 w-3.5" />
+                Filtered value:{" "}
+                <strong className="text-foreground font-mono">
+                  {formatINR(rows.reduce((s, i) => s + i.stock * i.unitCost, 0))}
+                </strong>
+              </span>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
