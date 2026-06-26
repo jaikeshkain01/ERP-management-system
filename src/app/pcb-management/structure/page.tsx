@@ -5,8 +5,9 @@ import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck } from "lucide-react"
+import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck, Table2, Download } from "lucide-react"
 import Link from "next/link"
+import { exportToExcel } from "@/lib/export-excel"
 
 interface ComponentBrand {
   id: string
@@ -19,6 +20,13 @@ interface ComponentItem {
   qty: number
   approvedBrands?: ComponentBrand[]
   lookupId?: string
+  // Extended BOM (Excel view) fields
+  partNumber?: string
+  solderType?: "SMD" | "DIP"
+  footprint?: string
+  spq?: number
+  unitPrice?: number
+  availableQty?: number
 }
 
 interface PCBData {
@@ -408,11 +416,11 @@ const PCBS_DATA: Record<string, PCBData> = {
     stockCount: 120,
     usedIn: ["ROIP400", "Voice Logger"],
     components: [
-      { name: "Audio Codec", type: "IC", qty: 1, approvedBrands: [{ id: "silicon-labs", name: "Silicon Labs" }], lookupId: "audio-codec" },
-      { name: "Resistor 10K", type: "Passive", qty: 20, approvedBrands: [{ id: "yageo", name: "Yageo" }, { id: "vishay", name: "Vishay" }], lookupId: "resistor-10k" },
-      { name: "Capacitor 100uF", type: "Passive", qty: 10, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-100uf" },
-      { name: "LED Green", type: "Opto", qty: 4, approvedBrands: [{ id: "everlight", name: "Everlight" }, { id: "lite-on", name: "Lite-On" }], lookupId: "led-green" },
-      { name: "Connector", type: "Mechanical", qty: 3, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "connector" },
+      { name: "Audio Codec", type: "IC", qty: 1, approvedBrands: [{ id: "silicon-labs", name: "Silicon Labs" }], lookupId: "audio-codec", partNumber: "TLV320AIC3104", solderType: "SMD", footprint: "QFN-32", spq: 1000, unitPrice: 125.0, availableQty: 120 },
+      { name: "Resistor 10K", type: "Passive", qty: 20, approvedBrands: [{ id: "yageo", name: "Yageo" }, { id: "vishay", name: "Vishay" }], lookupId: "resistor-10k", partNumber: "RC0603JR-0710KL", solderType: "SMD", footprint: "R0603", spq: 5000, unitPrice: 0.8, availableQty: 15000 },
+      { name: "Capacitor 100uF", type: "Passive", qty: 10, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-100uf", partNumber: "EEU-FR1E101", solderType: "DIP", footprint: "Radial 6.3x11mm", spq: 500, unitPrice: 1.45, availableQty: 8000 },
+      { name: "LED Green", type: "Opto", qty: 4, approvedBrands: [{ id: "everlight", name: "Everlight" }, { id: "lite-on", name: "Lite-On" }], lookupId: "led-green", partNumber: "EL-513GD", solderType: "DIP", footprint: "5mm Radial", spq: 1000, unitPrice: 2.1, availableQty: 500 },
+      { name: "Connector", type: "Mechanical", qty: 3, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "connector", partNumber: "10118192-0001LF", solderType: "DIP", footprint: "Header 2.54mm", spq: 250, unitPrice: 18.0, availableQty: 3200 },
     ],
   },
   "gsm-pcb": {
@@ -422,10 +430,10 @@ const PCBS_DATA: Record<string, PCBData> = {
     stockCount: 80,
     usedIn: ["ROIP400"],
     components: [
-      { name: "GSM Chip", type: "IC", qty: 1, approvedBrands: [{ id: "quectel", name: "Quectel" }], lookupId: "gsm-chip" },
-      { name: "SIM Holder", type: "Connector", qty: 1, approvedBrands: [{ id: "molex", name: "Molex" }], lookupId: "sim-holder" },
-      { name: "Capacitor 10uF", type: "Passive", qty: 15, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-10uf" },
-      { name: "Antenna Connector", type: "RF", qty: 2, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "antenna-connector" },
+      { name: "GSM Chip", type: "IC", qty: 1, approvedBrands: [{ id: "quectel", name: "Quectel" }], lookupId: "gsm-chip", partNumber: "MC60", solderType: "SMD", footprint: "LGA-68", spq: 250, unitPrice: 375.0, availableQty: 85 },
+      { name: "SIM Holder", type: "Connector", qty: 1, approvedBrands: [{ id: "molex", name: "Molex" }], lookupId: "sim-holder", partNumber: "78646-0001", solderType: "SMD", footprint: "SIM-6P", spq: 500, unitPrice: 15.0, availableQty: 300 },
+      { name: "Capacitor 10uF", type: "Passive", qty: 15, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-10uf", partNumber: "GRM21BR61H106", solderType: "SMD", footprint: "C0805", spq: 4000, unitPrice: 0.6, availableQty: 12000 },
+      { name: "Antenna Connector", type: "RF", qty: 2, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "antenna-connector", partNumber: "SMA-J-P-H-ST-EM1", solderType: "DIP", footprint: "SMA-TH", spq: 200, unitPrice: 22.0, availableQty: 450 },
     ],
   },
   "display-pcb": {
@@ -435,10 +443,10 @@ const PCBS_DATA: Record<string, PCBData> = {
     stockCount: 150,
     usedIn: ["ROIP400"],
     components: [
-      { name: "Display IC", type: "IC", qty: 1, approvedBrands: [{ id: "sitronix", name: "Sitronix" }], lookupId: "display-ic" },
-      { name: "LED Backlight Driver", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "led-backlight-driver" },
-      { name: "LEDs", type: "Opto", qty: 12, approvedBrands: [{ id: "lite-on", name: "Lite-On" }, { id: "everlight", name: "Everlight" }], lookupId: "leds" },
-      { name: "Ribbon Connector", type: "Mechanical", qty: 1, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "ribbon-connector" },
+      { name: "Display IC", type: "IC", qty: 1, approvedBrands: [{ id: "sitronix", name: "Sitronix" }], lookupId: "display-ic", partNumber: "ST7789V", solderType: "SMD", footprint: "QFN-48", spq: 1000, unitPrice: 85.0, availableQty: 250 },
+      { name: "LED Backlight Driver", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "led-backlight-driver", partNumber: "TPS61165DRVR", solderType: "SMD", footprint: "SOT-23-6", spq: 1000, unitPrice: 42.0, availableQty: 200 },
+      { name: "LEDs", type: "Opto", qty: 12, approvedBrands: [{ id: "lite-on", name: "Lite-On" }, { id: "everlight", name: "Everlight" }], lookupId: "leds", partNumber: "LTW-3528", solderType: "SMD", footprint: "3528", spq: 2000, unitPrice: 1.8, availableQty: 6000 },
+      { name: "Ribbon Connector", type: "Mechanical", qty: 1, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "ribbon-connector", partNumber: "FH12-40S-0.5SH", solderType: "SMD", footprint: "FPC-40P", spq: 500, unitPrice: 12.0, availableQty: 800 },
     ],
   },
   "power-pcb": {
@@ -448,10 +456,10 @@ const PCBS_DATA: Record<string, PCBData> = {
     stockCount: 200,
     usedIn: ["ROIP400"],
     components: [
-      { name: "Power IC", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "power-ic" },
-      { name: "Inductor 4.7uH", type: "Passive", qty: 3, approvedBrands: [{ id: "tdk", name: "TDK" }], lookupId: "inductor-4.7uh" },
-      { name: "Capacitors 22uF", type: "Passive", qty: 8, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitors-22uf" },
-      { name: "Fuse 2A", type: "Protection", qty: 2, approvedBrands: [{ id: "littelfuse", name: "Littelfuse" }], lookupId: "fuse-2a" },
+      { name: "Power IC", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "power-ic", partNumber: "TPS54360DDAR", solderType: "SMD", footprint: "HSOP-8", spq: 1000, unitPrice: 95.0, availableQty: 180 },
+      { name: "Inductor 4.7uH", type: "Passive", qty: 3, approvedBrands: [{ id: "tdk", name: "TDK" }], lookupId: "inductor-4.7uh", partNumber: "SPM6530T-4R7M", solderType: "SMD", footprint: "6x6mm", spq: 1000, unitPrice: 3.2, availableQty: 4500 },
+      { name: "Capacitors 22uF", type: "Passive", qty: 8, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitors-22uf", partNumber: "GRM31CR61C226", solderType: "SMD", footprint: "C1206", spq: 3000, unitPrice: 1.1, availableQty: 9500 },
+      { name: "Fuse 2A", type: "Protection", qty: 2, approvedBrands: [{ id: "littelfuse", name: "Littelfuse" }], lookupId: "fuse-2a", partNumber: "0467002.NR", solderType: "SMD", footprint: "C1206", spq: 2000, unitPrice: 5.5, availableQty: 2200 },
     ],
   },
   "main-pcb": {
@@ -461,10 +469,10 @@ const PCBS_DATA: Record<string, PCBData> = {
     stockCount: 50,
     usedIn: ["Voice Logger"],
     components: [
-      { name: "DSP Chip", type: "IC", qty: 1, approvedBrands: [{ id: "analog-devices", name: "Analog Devices" }], lookupId: "dsp-chip" },
-      { name: "Microcontroller", type: "MCU", qty: 1, approvedBrands: [{ id: "stmicroelectronics", name: "STMicroelectronics" }], lookupId: "microcontroller" },
-      { name: "SRAM 512KB", type: "Memory", qty: 2, approvedBrands: [{ id: "infineon", name: "Infineon" }], lookupId: "sram-512kb" },
-      { name: "Oscillator 24MHz", type: "Frequency", qty: 1, approvedBrands: [{ id: "kyocera", name: "Kyocera" }], lookupId: "oscillator-24mhz" },
+      { name: "DSP Chip", type: "IC", qty: 1, approvedBrands: [{ id: "analog-devices", name: "Analog Devices" }], lookupId: "dsp-chip", partNumber: "ADSP-21489KSWZ", solderType: "SMD", footprint: "LQFP-176", spq: 500, unitPrice: 450.0, availableQty: 60 },
+      { name: "Microcontroller", type: "MCU", qty: 1, approvedBrands: [{ id: "stmicroelectronics", name: "STMicroelectronics" }], lookupId: "microcontroller", partNumber: "STM32F407VGT6", solderType: "SMD", footprint: "LQFP-100", spq: 250, unitPrice: 280.0, availableQty: 95 },
+      { name: "SRAM 512KB", type: "Memory", qty: 2, approvedBrands: [{ id: "infineon", name: "Infineon" }], lookupId: "sram-512kb", partNumber: "CY62157EV30LL", solderType: "SMD", footprint: "TSOP-44", spq: 500, unitPrice: 75.0, availableQty: 140 },
+      { name: "Oscillator 24MHz", type: "Frequency", qty: 1, approvedBrands: [{ id: "kyocera", name: "Kyocera" }], lookupId: "oscillator-24mhz", partNumber: "CX3225SB24000", solderType: "SMD", footprint: "3225", spq: 1000, unitPrice: 18.0, availableQty: 320 },
     ],
   },
 }
@@ -474,6 +482,7 @@ function PCBStructureContent() {
   const pcbId = searchParams.get("pcb") || "audio-pcb"
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
+  const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
 
   // Fallback to audio-pcb if invalid pcbId
   const pcb = PCBS_DATA[pcbId] || PCBS_DATA["audio-pcb"]
@@ -488,6 +497,53 @@ function PCBStructureContent() {
 
   // Compute total component instances
   const totalParts = pcb.components.reduce((sum, c) => sum + c.qty, 0)
+
+  // Excel/BOM view helpers
+  const formatINR = (n: number) =>
+    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const lineTotal = (c: ComponentItem) => (c.unitPrice ?? 0) * c.qty * buildQty
+  const bomTotalValue = pcb.components.reduce((sum, c) => sum + lineTotal(c), 0)
+
+  const handleExportExcel = () => {
+    const scaled = buildQty > 1
+    exportToExcel({
+      fileName: `${pcb.name.replace(/\s+/g, "-")}-BOM${scaled ? `-x${buildQty}` : ""}`,
+      sheetName: pcb.name.slice(0, 28) || "BOM",
+      columns: [
+        { header: "#", value: (_c, i) => i + 1, type: "Number", width: 4 },
+        { header: "Type", value: (c) => c.type, width: 14 },
+        { header: "Name", value: (c) => c.name, width: 24 },
+        { header: "Part Number", value: (c) => c.partNumber ?? "", width: 20 },
+        { header: "Solder Type", value: (c) => c.solderType ?? "", width: 11 },
+        { header: "Footprint", value: (c) => c.footprint ?? "", width: 20 },
+        { header: "Qty / Board", value: (c) => c.qty, type: "Number", width: 11 },
+        ...(scaled
+          ? [{ header: "Qty Needed", value: (c: ComponentItem) => c.qty * buildQty, type: "Number" as const, width: 12 }]
+          : []),
+        { header: "SPQ", value: (c) => c.spq ?? "", type: "Number", width: 8 },
+        { header: "Manufacturer", value: (c) => c.approvedBrands?.map((b) => b.name).join(", ") ?? "", width: 22 },
+        { header: "Unit Price (INR)", value: (c) => c.unitPrice ?? "", type: "Number", width: 14 },
+        { header: "Total Price (INR)", value: (c) => Number(lineTotal(c).toFixed(2)), type: "Number", width: 15 },
+        { header: "Available Qty", value: (c) => c.availableQty ?? "", type: "Number", width: 12 },
+      ],
+      rows: pcb.components,
+      totalsRow: [
+        "",
+        "TOTAL",
+        `${pcb.components.length} items`,
+        "",
+        "",
+        "",
+        totalParts,
+        ...(scaled ? [totalParts * buildQty] : []),
+        "",
+        "",
+        "",
+        Number(bomTotalValue.toFixed(2)),
+        "",
+      ],
+    })
+  }
 
   return (
     <div className="space-y-6 relative">
@@ -504,28 +560,79 @@ function PCBStructureContent() {
             Component composition, quantities, and bill of materials breakdown.
           </p>
         </div>
-        <Button 
-          variant="outline" 
-          render={<Link href="/pcb-management/list" />}
-          className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Back to List</span>
-        </Button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            onClick={handleExportExcel}
+            variant="outline"
+            className="gap-2 border-border bg-background cursor-pointer"
+          >
+            <Download className="h-4 w-4" />
+            <span>Export to Excel</span>
+          </Button>
+          <Button
+            variant="outline"
+            render={<Link href="/pcb-management/list" />}
+            className="gap-2 border-border bg-background cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back to List</span>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Tree Panel */}
+        {/* Left Structure Panel */}
         <Card className="lg:col-span-2 border border-border shadow-sm">
           <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-            <div className="flex items-center gap-2">
-              <ListTree className="h-5 w-5 text-primary" />
-              <div>
-                <CardTitle className="text-lg font-bold">PCB Component Tree</CardTitle>
-                <CardDescription>Visual breakdown of {pcb.name} parts with quantities. Click a component to view details.</CardDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                {viewMode === "tree" ? (
+                  <ListTree className="h-5 w-5 text-primary" />
+                ) : (
+                  <Table2 className="h-5 w-5 text-primary" />
+                )}
+                <div>
+                  <CardTitle className="text-lg font-bold">
+                    {viewMode === "tree" ? "PCB Component Tree" : "Bill of Materials (Excel View)"}
+                  </CardTitle>
+                  <CardDescription>
+                    {viewMode === "tree"
+                      ? `Visual breakdown of ${pcb.name} parts with quantities. Click a component to view details.`
+                      : `Flat BOM sheet for ${pcb.name}. Click a row to view component details.`}
+                  </CardDescription>
+                </div>
+              </div>
+
+              {/* View Mode Switch */}
+              <div className="inline-flex shrink-0 items-center rounded-lg border border-border bg-background p-0.5 shadow-2xs self-start">
+                <button
+                  onClick={() => setViewMode("tree")}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                    viewMode === "tree"
+                      ? "bg-primary text-primary-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <ListTree className="h-3.5 w-3.5" />
+                  <span>Tree</span>
+                </button>
+                <button
+                  onClick={() => setViewMode("excel")}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                    viewMode === "excel"
+                      ? "bg-primary text-primary-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Table2 className="h-3.5 w-3.5" />
+                  <span>Excel</span>
+                </button>
               </div>
             </div>
           </CardHeader>
+
+          {/* ===== TREE VIEW ===== */}
+          {viewMode === "tree" && (
           <CardContent className="p-6 md:p-8 overflow-x-auto">
             {/* Root Node */}
             <div className="space-y-6">
@@ -602,6 +709,134 @@ function PCBStructureContent() {
               </div>
             </div>
           </CardContent>
+          )}
+
+          {/* ===== EXCEL / BOM VIEW ===== */}
+          {viewMode === "excel" && (
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
+                <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
+                  <tr>
+                    <th scope="col" className="px-3 py-3 text-center w-10">#</th>
+                    <th scope="col" className="px-3 py-3">Type</th>
+                    <th scope="col" className="px-3 py-3 min-w-[140px]">Name</th>
+                    <th scope="col" className="px-3 py-3">Part Number</th>
+                    <th scope="col" className="px-3 py-3 text-center">Solder Type</th>
+                    <th scope="col" className="px-3 py-3">Footprint</th>
+                    <th scope="col" className="px-3 py-3 text-center">Qty</th>
+                    {buildQty > 1 && (
+                      <th scope="col" className="px-3 py-3 text-center">Qty Needed</th>
+                    )}
+                    <th scope="col" className="px-3 py-3 text-center">SPQ</th>
+                    <th scope="col" className="px-3 py-3">Manufacturer</th>
+                    <th scope="col" className="px-3 py-3 text-right">Unit Price</th>
+                    <th scope="col" className="px-3 py-3 text-right">Total Price</th>
+                    <th scope="col" className="px-3 py-3 text-right">Available Qty</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {pcb.components.map((c, idx) => {
+                    const isClickable = !!c.lookupId && !!DRAWER_COMPONENTS_DATA[c.lookupId]
+                    const qtyNeeded = c.qty * buildQty
+                    const shortage = c.availableQty !== undefined && c.availableQty < qtyNeeded
+                    return (
+                      <tr
+                        key={c.name}
+                        onClick={() => isClickable && handleComponentClick(c)}
+                        className={`transition-colors ${
+                          isClickable ? "cursor-pointer hover:bg-muted/30" : "hover:bg-muted/10"
+                        }`}
+                      >
+                        <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">{idx + 1}</td>
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
+                            {c.type}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold text-foreground">
+                          <div className="flex items-center gap-2">
+                            <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span>{c.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-muted-foreground">{c.partNumber ?? "—"}</td>
+                        <td className="px-3 py-2.5 text-center">
+                          {c.solderType ? (
+                            <span className="font-mono text-[10px] font-bold text-foreground">{c.solderType}</span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-muted-foreground">{c.footprint ?? "—"}</td>
+                        <td className="px-3 py-2.5 text-center font-mono font-bold text-primary">{c.qty}</td>
+                        {buildQty > 1 && (
+                          <td className="px-3 py-2.5 text-center font-mono font-bold text-amber-600">
+                            {qtyNeeded.toLocaleString()}
+                          </td>
+                        )}
+                        <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">
+                          {c.spq?.toLocaleString() ?? "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted-foreground">
+                          {c.approvedBrands && c.approvedBrands.length > 0 ? (
+                            <span className="font-semibold text-foreground">
+                              {c.approvedBrands[0].name}
+                              {c.approvedBrands.length > 1 && (
+                                <span className="text-muted-foreground font-mono"> +{c.approvedBrands.length - 1}</span>
+                              )}
+                            </span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-foreground">
+                          {c.unitPrice !== undefined ? formatINR(c.unitPrice) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-foreground">
+                          {c.unitPrice !== undefined ? formatINR(lineTotal(c)) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {c.availableQty !== undefined ? (
+                            <span className={`font-mono font-bold ${shortage ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+                              {c.availableQty.toLocaleString()}
+                            </span>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {/* Totals Row */}
+                  <tr className="bg-muted/40 font-bold border-t-2 border-border">
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={5}>
+                      Total — {pcb.components.length} line items
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono text-primary">{totalParts}</td>
+                    {buildQty > 1 && (
+                      <td className="px-3 py-3 text-center font-mono text-amber-600">
+                        {(totalParts * buildQty).toLocaleString()}
+                      </td>
+                    )}
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3 text-right font-mono text-foreground">{formatINR(bomTotalValue)}</td>
+                    <td className="px-3 py-3" />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Excel view footer actions */}
+            <div className="flex items-center justify-between border-t border-border bg-muted/10 px-6 py-3">
+              <span className="text-xs text-muted-foreground font-medium">
+                Estimated BOM cost{buildQty > 1 ? ` for ${buildQty.toLocaleString()} units` : " per board"}:{" "}
+                <span className="font-mono font-bold text-foreground">{formatINR(bomTotalValue)}</span>
+              </span>
+              <Button onClick={handleExportExcel} variant="outline" size="sm" className="gap-2 font-semibold border-border cursor-pointer">
+                <Download className="h-4 w-4" />
+                <span>Export to Excel</span>
+              </Button>
+            </div>
+          </CardContent>
+          )}
         </Card>
 
         {/* Right Summary + Calculator Panel */}

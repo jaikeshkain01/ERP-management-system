@@ -5,8 +5,9 @@ import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle } from "lucide-react"
+import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle, Table2, Download } from "lucide-react"
 import Link from "next/link"
+import { exportToExcel } from "@/lib/export-excel"
 
 interface ComponentItem {
   name: string
@@ -364,7 +365,8 @@ function ProductStructureContent() {
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [expandedComponents, setExpandedComponents] = React.useState<Record<string, boolean>>({})
-  
+  const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
+
   // Default to roip-400 if product key is invalid
   const product = PRODUCTS_DATA[productId] || PRODUCTS_DATA["roip-400"]
 
@@ -372,6 +374,65 @@ function ProductStructureContent() {
     if (comp.lookupId && DRAWER_COMPONENTS_DATA[comp.lookupId]) {
       setSelectedCompId(comp.lookupId)
     }
+  }
+
+  // ----- Excel / BOM view helpers -----
+  const detailOf = (c: ComponentItem) =>
+    c.lookupId ? DRAWER_COMPONENTS_DATA[c.lookupId] : undefined
+  const parsePrice = (p: string) => parseFloat(p.replace(/[^\d.]/g, "")) || 0
+  const unitPriceOf = (c: ComponentItem) => {
+    const d = detailOf(c)
+    if (!d || d.suppliers.length === 0) return 0
+    return Math.min(...d.suppliers.map((s) => parsePrice(s.price)))
+  }
+  const formatINR = (n: number) =>
+    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  // Flattened BOM (product → PCB → component)
+  const bomRows = product.structure.flatMap((pcb) =>
+    pcb.components.map((comp) => ({ pcb: pcb.name, comp })),
+  )
+  const totalParts = bomRows.reduce((sum, r) => sum + r.comp.qty, 0)
+  const lineTotal = (c: ComponentItem) => unitPriceOf(c) * c.qty * buildQty
+  const bomTotalValue = bomRows.reduce((sum, r) => sum + lineTotal(r.comp), 0)
+
+  const handleExportExcel = () => {
+    const scaled = buildQty > 1
+    exportToExcel({
+      fileName: `${product.code}-BOM${scaled ? `-x${buildQty}` : ""}`,
+      sheetName: product.name.slice(0, 28) || "BOM",
+      columns: [
+        { header: "#", value: (_r, i) => i + 1, type: "Number", width: 4 },
+        { header: "PCB", value: (r) => r.pcb, width: 16 },
+        { header: "Type", value: (r) => r.comp.type, width: 14 },
+        { header: "Name", value: (r) => r.comp.name, width: 22 },
+        { header: "Generic PN", value: (r) => detailOf(r.comp)?.genericPN ?? "", width: 14 },
+        { header: "Category", value: (r) => detailOf(r.comp)?.category ?? "", width: 14 },
+        { header: "Qty / Unit", value: (r) => r.comp.qty, type: "Number", width: 10 },
+        ...(scaled
+          ? [{ header: "Qty Needed", value: (r: { comp: ComponentItem }) => r.comp.qty * buildQty, type: "Number" as const, width: 12 }]
+          : []),
+        { header: "Approved Brands", value: (r) => detailOf(r.comp)?.brands.map((b) => b.name).join(", ") ?? "", width: 26 },
+        { header: "Stock", value: (r) => detailOf(r.comp)?.stock ?? "", type: "Number", width: 10 },
+        { header: "Unit Price (INR)", value: (r) => unitPriceOf(r.comp) || "", type: "Number", width: 14 },
+        { header: "Total Price (INR)", value: (r) => Number(lineTotal(r.comp).toFixed(2)), type: "Number", width: 15 },
+      ],
+      rows: bomRows,
+      totalsRow: [
+        "",
+        "TOTAL",
+        `${bomRows.length} items`,
+        "",
+        "",
+        "",
+        totalParts,
+        ...(scaled ? [totalParts * buildQty] : []),
+        "",
+        "",
+        "",
+        Number(bomTotalValue.toFixed(2)),
+      ],
+    })
   }
 
   const toggleComponentExpand = (key: string) => {
@@ -398,28 +459,79 @@ function ProductStructureContent() {
             BOM hierarchy mapping and assembly layout tree.
           </p>
         </div>
-        <Button 
-          variant="outline" 
-          render={<Link href="/products/list" />}
-          className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span>Back to List</span>
-        </Button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            onClick={handleExportExcel}
+            variant="outline"
+            className="gap-2 border-border bg-background cursor-pointer"
+          >
+            <Download className="h-4 w-4" />
+            <span>Export to Excel</span>
+          </Button>
+          <Button
+            variant="outline"
+            render={<Link href="/products/list" />}
+            className="gap-2 border-border bg-background cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Back to List</span>
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Tree Panel (Hero) */}
+        {/* Left Structure Panel (Hero) */}
         <Card className="lg:col-span-2 border border-border shadow-sm">
           <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-            <div className="flex items-center gap-2">
-              <ListTree className="h-5 w-5 text-primary" />
-              <div>
-                <CardTitle className="text-lg font-bold">Assembly Tree</CardTitle>
-                <CardDescription>Visual breakdown of {product.name} components. Click on a component to view specifications.</CardDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                {viewMode === "tree" ? (
+                  <ListTree className="h-5 w-5 text-primary" />
+                ) : (
+                  <Table2 className="h-5 w-5 text-primary" />
+                )}
+                <div>
+                  <CardTitle className="text-lg font-bold">
+                    {viewMode === "tree" ? "Assembly Tree" : "Bill of Materials (Excel View)"}
+                  </CardTitle>
+                  <CardDescription>
+                    {viewMode === "tree"
+                      ? `Visual breakdown of ${product.name} components. Click on a component to view specifications.`
+                      : `Flat BOM sheet for ${product.name} across all PCBs. Click a row to view details.`}
+                  </CardDescription>
+                </div>
+              </div>
+
+              {/* View Mode Switch */}
+              <div className="inline-flex shrink-0 items-center rounded-lg border border-border bg-background p-0.5 shadow-2xs self-start">
+                <button
+                  onClick={() => setViewMode("tree")}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                    viewMode === "tree"
+                      ? "bg-primary text-primary-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <ListTree className="h-3.5 w-3.5" />
+                  <span>Tree</span>
+                </button>
+                <button
+                  onClick={() => setViewMode("excel")}
+                  className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                    viewMode === "excel"
+                      ? "bg-primary text-primary-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Table2 className="h-3.5 w-3.5" />
+                  <span>Excel</span>
+                </button>
               </div>
             </div>
           </CardHeader>
+
+          {/* ===== TREE VIEW ===== */}
+          {viewMode === "tree" && (
           <CardContent className="p-6 md:p-8 overflow-x-auto">
             {/* Root Product Node */}
             <div className="space-y-6">
@@ -533,6 +645,129 @@ function ProductStructureContent() {
               </div>
             </div>
           </CardContent>
+          )}
+
+          {/* ===== EXCEL / BOM VIEW ===== */}
+          {viewMode === "excel" && (
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
+                <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
+                  <tr>
+                    <th scope="col" className="px-3 py-3 text-center w-10">#</th>
+                    <th scope="col" className="px-3 py-3">PCB</th>
+                    <th scope="col" className="px-3 py-3">Type</th>
+                    <th scope="col" className="px-3 py-3 min-w-[140px]">Name</th>
+                    <th scope="col" className="px-3 py-3">Generic PN</th>
+                    <th scope="col" className="px-3 py-3">Category</th>
+                    <th scope="col" className="px-3 py-3 text-center">Qty</th>
+                    {buildQty > 1 && (
+                      <th scope="col" className="px-3 py-3 text-center">Qty Needed</th>
+                    )}
+                    <th scope="col" className="px-3 py-3 text-center">Brands</th>
+                    <th scope="col" className="px-3 py-3 text-right">Stock</th>
+                    <th scope="col" className="px-3 py-3 text-right">Unit Price</th>
+                    <th scope="col" className="px-3 py-3 text-right">Total Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {bomRows.map((r, idx) => {
+                    const c = r.comp
+                    const detail = detailOf(c)
+                    const isClickable = !!c.lookupId && !!detail
+                    const qtyNeeded = c.qty * buildQty
+                    const price = unitPriceOf(c)
+                    // Group separator: show PCB name boldly only on first row of each PCB
+                    const isFirstOfPcb = idx === 0 || bomRows[idx - 1].pcb !== r.pcb
+                    return (
+                      <tr
+                        key={`${r.pcb}-${c.name}-${idx}`}
+                        onClick={() => isClickable && handleComponentClick(c)}
+                        className={`transition-colors ${
+                          isClickable ? "cursor-pointer hover:bg-muted/30" : "hover:bg-muted/10"
+                        }`}
+                      >
+                        <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">{idx + 1}</td>
+                        <td className="px-3 py-2.5">
+                          {isFirstOfPcb ? (
+                            <span className="inline-flex items-center gap-1.5 font-bold text-foreground">
+                              <Cpu className="h-3.5 w-3.5 text-primary shrink-0" />
+                              {r.pcb}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/40 pl-5">↳</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
+                            {c.type}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold text-foreground">
+                          <div className="flex items-center gap-2">
+                            <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span>{c.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-primary font-bold">
+                          {detail?.genericPN ?? (c.lookupId?.toUpperCase() || "—")}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted-foreground">{detail?.category ?? "—"}</td>
+                        <td className="px-3 py-2.5 text-center font-mono font-bold text-primary">{c.qty}</td>
+                        {buildQty > 1 && (
+                          <td className="px-3 py-2.5 text-center font-mono font-bold text-amber-600">
+                            {qtyNeeded.toLocaleString()}
+                          </td>
+                        )}
+                        <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">
+                          {detail ? detail.brands.length : (c.brandsCount ?? "—")}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">
+                          {detail ? detail.stock.toLocaleString() : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono text-foreground">
+                          {price ? formatINR(price) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-right font-mono font-bold text-foreground">
+                          {price ? formatINR(lineTotal(c)) : "—"}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {/* Totals Row */}
+                  <tr className="bg-muted/40 font-bold border-t-2 border-border">
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={5}>
+                      Total — {bomRows.length} line items across {product.structure.length} PCBs
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono text-primary">{totalParts}</td>
+                    {buildQty > 1 && (
+                      <td className="px-3 py-3 text-center font-mono text-amber-600">
+                        {(totalParts * buildQty).toLocaleString()}
+                      </td>
+                    )}
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3" />
+                    <td className="px-3 py-3 text-right font-mono text-foreground">{formatINR(bomTotalValue)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Excel view footer actions */}
+            <div className="flex items-center justify-between border-t border-border bg-muted/10 px-6 py-3">
+              <span className="text-xs text-muted-foreground font-medium">
+                Estimated BOM cost{buildQty > 1 ? ` for ${buildQty.toLocaleString()} units` : " per unit"}:{" "}
+                <span className="font-mono font-bold text-foreground">{formatINR(bomTotalValue)}</span>
+              </span>
+              <Button onClick={handleExportExcel} variant="outline" size="sm" className="gap-2 font-semibold border-border cursor-pointer">
+                <Download className="h-4 w-4" />
+                <span>Export to Excel</span>
+              </Button>
+            </div>
+          </CardContent>
+          )}
         </Card>
 
         {/* Right Product Details & Calculator Panel */}
