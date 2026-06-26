@@ -5,15 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Bar, BarChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { BarChart3, TrendingUp, Users, Clock, Percent } from "lucide-react"
-
-const productionData = [
-  { month: "Jan", yield: 65 },
-  { month: "Feb", yield: 80 },
-  { month: "Mar", yield: 95 },
-  { month: "Apr", yield: 110 },
-  { month: "May", yield: 125 },
-  { month: "Jun", yield: 140 },
-]
+import { PRODUCTION_YIELD as productionData } from "@/mockdata/reports"
 
 const chartConfig = {
   yield: {

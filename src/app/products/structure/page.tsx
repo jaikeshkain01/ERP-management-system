@@ -8,6 +8,11 @@ import { Input } from "@/components/ui/input"
 import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle, Table2, Download } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
+import {
+  PRODUCTS, getProduct, getComponent, getSupplierName, productPcbs, pcbBom,
+  componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
+  productTotalParts, formatINR as fmtINR, formatLeadTime, type Component as MComponent,
+} from "@/mockdata"
 
 interface ComponentItem {
   name: string
@@ -49,315 +54,6 @@ interface DrawerComponentDetail {
   suppliers: { id: string; name: string; price: string; leadTime: string }[]
 }
 
-const DRAWER_COMPONENTS_DATA: Record<string, DrawerComponentDetail> = {
-  "resistor-10k": {
-    id: "resistor-10k",
-    name: "Resistor 10K",
-    category: "Resistor",
-    genericPN: "RES-10K",
-    stock: 15000,
-    minStock: 5000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "10k Ohm metal film resistor, 1/4W, 1% tolerance, axial leaded.",
-    brands: [
-      { id: "yageo", name: "Yageo", status: "Approved" },
-      { id: "vishay", name: "Vishay", status: "Approved" },
-      { id: "panasonic", name: "Panasonic", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹0.80", leadTime: "3 Days" },
-      { id: "xyz-components", name: "XYZ Components", price: "₹0.82", leadTime: "2 Days" },
-      { id: "powertech", name: "PowerTech", price: "₹0.90", leadTime: "1 Day" },
-    ]
-  },
-  "capacitor-100uf": {
-    id: "capacitor-100uf",
-    name: "Capacitor 100uF",
-    category: "Capacitor",
-    genericPN: "CAP-100UF",
-    stock: 8000,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "100uF aluminum electrolytic capacitor, 25V, radial lead, 20% tolerance.",
-    brands: [
-      { id: "murata", name: "Murata", status: "Approved" },
-      { id: "panasonic", name: "Panasonic", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹1.45", leadTime: "4 Days" },
-      { id: "powertech", name: "PowerTech", price: "₹1.50", leadTime: "2 Days" },
-    ]
-  },
-  "led-green": {
-    id: "led-green",
-    name: "LED Green",
-    category: "LED",
-    genericPN: "LED-GRN",
-    stock: 500,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Low",
-    description: "5mm green LED light emitting diode, through-hole, 2.1V forward voltage.",
-    brands: [
-      { id: "everlight", name: "Everlight", status: "Approved" },
-      { id: "lite-on", name: "Lite-On", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹2.10", leadTime: "4 Days" },
-      { id: "led-depot", name: "LED Depot", price: "₹2.20", leadTime: "2 Days" },
-    ]
-  },
-  "audio-codec": {
-    id: "audio-codec",
-    name: "Audio Codec",
-    category: "IC",
-    genericPN: "AUD-CDC",
-    stock: 120,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Low-power stereo audio codec with integrated headphone amplifier.",
-    brands: [
-      { id: "silicon-labs", name: "Silicon Labs", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹125.00", leadTime: "3 Days" }
-    ]
-  },
-  "gsm-chip": {
-    id: "gsm-chip",
-    name: "GSM Chip",
-    category: "IC",
-    genericPN: "GSM-CHP",
-    stock: 85,
-    minStock: 20,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Quad-band GSM/GPRS engine module supporting cellular connectivity.",
-    brands: [
-      { id: "quectel", name: "Quectel", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹375.00", leadTime: "4 Days" }
-    ]
-  },
-  "sim-holder": {
-    id: "sim-holder",
-    name: "SIM Holder",
-    category: "Connector",
-    genericPN: "SIM-HLD",
-    stock: 300,
-    minStock: 100,
-    unit: "PCS",
-    status: "Healthy",
-    description: "6-pin push-push micro SIM card holder connector.",
-    brands: [
-      { id: "molex", name: "Molex", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹15.00", leadTime: "4 Days" }
-    ]
-  },
-  "display-ic": {
-    id: "display-ic",
-    name: "Display IC",
-    category: "IC",
-    genericPN: "DSP-IC",
-    stock: 250,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "TFT-LCD graphic driver IC with integrated RAM and power circuits.",
-    brands: [
-      { id: "sitronix", name: "Sitronix", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹85.00", leadTime: "5 Days" }
-    ]
-  },
-  "dsp-chip": {
-    id: "dsp-chip",
-    name: "DSP Chip",
-    category: "IC",
-    genericPN: "DSP-CHP",
-    stock: 230,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "High-performance digital signal processor, 32-bit floating point, 400MHz.",
-    brands: [
-      { id: "ti", name: "Texas Instruments", status: "Approved" },
-      { id: "analog-devices", name: "Analog Devices", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "mouser", name: "Mouser", price: "₹240.00", leadTime: "5 Days" }
-    ]
-  },
-  "microcontroller": {
-    id: "microcontroller",
-    name: "Microcontroller",
-    category: "MCU",
-    genericPN: "MCU-STM32",
-    stock: 450,
-    minStock: 100,
-    unit: "PCS",
-    status: "Healthy",
-    description: "STM32F4 series ARM Cortex-M4 32-bit MCU, 168 MHz, 1 MB Flash.",
-    brands: [
-      { id: "st", name: "STMicroelectronics", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "arrow", name: "Arrow Electronics", price: "₹185.00", leadTime: "3 Days" }
-    ]
-  },
-  "connectors": {
-    id: "connectors",
-    name: "Connectors",
-    category: "Connector",
-    genericPN: "CON-HDR",
-    stock: 1200,
-    minStock: 300,
-    unit: "PCS",
-    status: "Healthy",
-    description: "2.54mm pitch double row pin header connector, gold plated, 40-pin.",
-    brands: [
-      { id: "molex", name: "Molex", status: "Approved" },
-      { id: "amphenol", name: "Amphenol", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹12.00", leadTime: "2 Days" }
-    ]
-  },
-  "flash-memory": {
-    id: "flash-memory",
-    name: "Flash Memory",
-    category: "IC",
-    genericPN: "MEM-FLSH",
-    stock: 340,
-    minStock: 80,
-    unit: "PCS",
-    status: "Healthy",
-    description: "64M-bit serial flash memory with dual and quad SPI, SOIC-8.",
-    brands: [
-      { id: "winbond", name: "Winbond", status: "Approved" },
-      { id: "micron", name: "Micron", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "mouser", name: "Mouser", price: "₹45.00", leadTime: "4 Days" }
-    ]
-  },
-  "sd-card-slot": {
-    id: "sd-card-slot",
-    name: "SD Card Slot",
-    category: "Connector",
-    genericPN: "CON-SD",
-    stock: 180,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Micro SD card connector hinge type, 8-pin SMT.",
-    brands: [
-      { id: "molex", name: "Molex", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹18.00", leadTime: "3 Days" }
-    ]
-  },
-  "usb-controller": {
-    id: "usb-controller",
-    name: "USB Controller",
-    category: "IC",
-    genericPN: "IC-USB",
-    stock: 290,
-    minStock: 60,
-    unit: "PCS",
-    status: "Healthy",
-    description: "USB 2.0 to UART bridge controller, integrated clock and voltage regulator.",
-    brands: [
-      { id: "ftdi", name: "FTDI Chip", status: "Approved" },
-      { id: "silicon-labs", name: "Silicon Labs", status: "Approved" }
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹65.00", leadTime: "3 Days" }
-    ]
-  }
-}
-
-const PRODUCTS_DATA: Record<string, ProductData> = {
-  "roip-400": {
-    name: "ROIP 400",
-    code: "ROIP400",
-    version: "1.0",
-    pcbsCount: 4,
-    uniqueComponentsCount: 285,
-    totalComponentsCount: 1248,
-    estimatedCost: "₹18,450",
-    description: "Radio over IP Gateway Terminal",
-    structure: [
-      {
-        name: "Audio PCB",
-        components: [
-          { name: "Resistor 10K", type: "Passive", suppliers: ["ABC Electronics", "XYZ Components", "PowerTech"], qty: 20, brandsCount: 3, lookupId: "resistor-10k" },
-          { name: "Capacitor 100uF", type: "Passive", suppliers: ["ABC Electronics", "Delta Components"], qty: 10, brandsCount: 2, lookupId: "capacitor-100uf" },
-          { name: "Audio Codec", type: "IC", suppliers: ["Texas Supplier", "India Electronics"], qty: 1, brandsCount: 1, lookupId: "audio-codec" },
-        ],
-      },
-      {
-        name: "GSM PCB",
-        components: [
-          { name: "GSM Chip", type: "IC", suppliers: ["Semiconductors Corp", "XYZ Components"], qty: 1, brandsCount: 1, lookupId: "gsm-chip" },
-          { name: "SIM Holder", type: "Connector", suppliers: ["Delta Components"], qty: 1, brandsCount: 1, lookupId: "sim-holder" },
-          { name: "Capacitor 100uF", type: "Passive", suppliers: ["PowerTech", "ABC Electronics"], qty: 15, brandsCount: 2, lookupId: "capacitor-100uf" },
-        ],
-      },
-      {
-        name: "Display PCB",
-        components: [
-          { name: "Display IC", type: "IC", suppliers: ["Semiconductors Corp"], qty: 1, brandsCount: 1, lookupId: "display-ic" },
-          { name: "LED Green", type: "Optoelectronics", suppliers: ["LED Depot", "ABC Electronics"], qty: 5, brandsCount: 2, lookupId: "led-green" },
-        ],
-      },
-    ],
-  },
-  "voice-logger": {
-    name: "Voice Logger",
-    code: "VLG200",
-    version: "1.2",
-    pcbsCount: 3,
-    uniqueComponentsCount: 160,
-    totalComponentsCount: 750,
-    estimatedCost: "₹12,800",
-    description: "Multi-channel voice recording system",
-    structure: [
-      {
-        name: "Main PCB",
-        components: [
-          { name: "DSP Chip", type: "IC", suppliers: ["Semiconductors Corp", "Texas Supplier"], qty: 1, brandsCount: 1, lookupId: "dsp-chip" },
-          { name: "Microcontroller", type: "MCU", suppliers: ["Semiconductors Corp", "India Electronics"], qty: 1, brandsCount: 1, lookupId: "microcontroller" },
-          { name: "Connectors", type: "Connector", suppliers: ["Delta Components", "XYZ Components"], qty: 4, brandsCount: 1, lookupId: "connectors" },
-        ],
-      },
-      {
-        name: "Memory PCB",
-        components: [
-          { name: "Flash Memory", type: "IC", suppliers: ["Semiconductors Corp"], qty: 2, brandsCount: 1, lookupId: "flash-memory" },
-          { name: "SD Card Slot", type: "Connector", suppliers: ["Delta Components"], qty: 1, brandsCount: 1, lookupId: "sd-card-slot" },
-          { name: "Resistor 10K", type: "Passive", suppliers: ["ABC Electronics", "XYZ Components", "PowerTech"], qty: 12, brandsCount: 3, lookupId: "resistor-10k" },
-        ],
-      },
-      {
-        name: "Interface PCB",
-        components: [
-          { name: "USB Controller", type: "IC", suppliers: ["Semiconductors Corp"], qty: 1, brandsCount: 1, lookupId: "usb-controller" },
-          { name: "LED Green", type: "Optoelectronics", suppliers: ["LED Depot"], qty: 3, brandsCount: 2, lookupId: "led-green" },
-        ],
-      },
-    ],
-  },
-}
-
 function ProductStructureContent() {
   const searchParams = useSearchParams()
   const productId = searchParams.get("product") || "roip-400"
@@ -367,26 +63,70 @@ function ProductStructureContent() {
   const [expandedComponents, setExpandedComponents] = React.useState<Record<string, boolean>>({})
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
 
-  // Default to roip-400 if product key is invalid
-  const product = PRODUCTS_DATA[productId] || PRODUCTS_DATA["roip-400"]
+  const formatINR = (n: number) =>
+    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  // Default to first product if id is invalid — data from the central store
+  const productEntity = getProduct(productId) || PRODUCTS[0]
+
+  // Build a Component → DrawerComponentDetail view from a canonical component
+  const toDrawerDetail = (component: MComponent): DrawerComponentDetail => ({
+    id: component.id,
+    name: component.name,
+    category: component.category,
+    genericPN: component.genericPN,
+    stock: component.stock,
+    minStock: component.minStock,
+    unit: component.unit,
+    status: componentStockStatus(component) === "Healthy" ? "Healthy" : "Low",
+    description: component.description,
+    brands: componentBrands(component).map((b) => ({ id: b.id, name: b.name, status: "Approved" })),
+    suppliers: component.offers.map((o) => ({
+      id: o.supplierId,
+      name: getSupplierName(o.supplierId),
+      price: fmtINR(o.price),
+      leadTime: formatLeadTime(o.leadTimeDays),
+    })),
+  })
+
+  // Assembly tree view model (product → PCB → component)
+  const product: ProductData = {
+    name: productEntity.name,
+    code: productEntity.code,
+    version: productEntity.version,
+    pcbsCount: productEntity.pcbIds.length,
+    uniqueComponentsCount: productUniqueComponents(productEntity).length,
+    totalComponentsCount: productTotalParts(productEntity),
+    estimatedCost: formatINR(productEntity.estimatedCost).replace(/\.00$/, ""),
+    description: productEntity.description,
+    structure: productPcbs(productEntity).map((pcb): PCBItem => ({
+      name: pcb.name,
+      components: pcbBom(pcb).map(({ component, qty }): ComponentItem => ({
+        name: component.name,
+        type: component.category,
+        suppliers: component.offers.map((o) => getSupplierName(o.supplierId)),
+        qty,
+        brandsCount: componentBrands(component).length,
+        lookupId: component.id,
+      })),
+    })),
+  }
 
   const handleComponentClick = (comp: ComponentItem) => {
-    if (comp.lookupId && DRAWER_COMPONENTS_DATA[comp.lookupId]) {
+    if (comp.lookupId && getComponent(comp.lookupId)) {
       setSelectedCompId(comp.lookupId)
     }
   }
 
   // ----- Excel / BOM view helpers -----
-  const detailOf = (c: ComponentItem) =>
-    c.lookupId ? DRAWER_COMPONENTS_DATA[c.lookupId] : undefined
-  const parsePrice = (p: string) => parseFloat(p.replace(/[^\d.]/g, "")) || 0
-  const unitPriceOf = (c: ComponentItem) => {
-    const d = detailOf(c)
-    if (!d || d.suppliers.length === 0) return 0
-    return Math.min(...d.suppliers.map((s) => parsePrice(s.price)))
+  const detailOf = (c: ComponentItem): DrawerComponentDetail | undefined => {
+    const comp = c.lookupId ? getComponent(c.lookupId) : undefined
+    return comp ? toDrawerDetail(comp) : undefined
   }
-  const formatINR = (n: number) =>
-    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const unitPriceOf = (c: ComponentItem) => {
+    const comp = c.lookupId ? getComponent(c.lookupId) : undefined
+    return comp ? bestPrice(comp) : 0
+  }
 
   // Flattened BOM (product → PCB → component)
   const bomRows = product.structure.flatMap((pcb) =>
@@ -442,7 +182,8 @@ function ProductStructureContent() {
     }))
   }
 
-  const selectedComponentDetail = selectedCompId ? DRAWER_COMPONENTS_DATA[selectedCompId] : null
+  const selectedComp = selectedCompId ? getComponent(selectedCompId) : null
+  const selectedComponentDetail = selectedComp ? toDrawerDetail(selectedComp) : null
 
   return (
     <div className="space-y-6 relative">
@@ -562,8 +303,8 @@ function ProductStructureContent() {
                     {pcb.components && pcb.components.length > 0 && (
                       <div className="relative pl-8 mt-2 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:border-l-2 before:border-dashed before:border-border">
                         {pcb.components.map((component, compIdx) => {
-                          const isClickable = !!component.lookupId && !!DRAWER_COMPONENTS_DATA[component.lookupId]
-                          const detail = component.lookupId ? DRAWER_COMPONENTS_DATA[component.lookupId] : null
+                          const isClickable = !!component.lookupId && !!getComponent(component.lookupId)
+                          const detail = detailOf(component) ?? null
                           
                           const toggleKey = `${pcb.name}-${component.lookupId || compIdx}`
                           const isExpanded = !!expandedComponents[toggleKey]

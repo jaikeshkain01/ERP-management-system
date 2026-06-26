@@ -3,58 +3,10 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Truck, Filter, Plus, Search, Star, CheckCircle2, ArrowRight } from "lucide-react"
+import { SUPPLIERS } from "@/mockdata"
 
 export default function SupplierListPage() {
-  const suppliers = [
-    {
-      id: "abc-electronics",
-      name: "ABC Electronics",
-      description: "Elite components distributor and logistics partner",
-      contact: "Rajesh Kumar",
-      rating: 4.7,
-      status: "Active",
-    },
-    {
-      id: "xyz-components",
-      name: "XYZ Components",
-      description: "Bulk electronic component vendor and direct importer",
-      contact: "Sarah Jenkins",
-      rating: 4.4,
-      status: "Active",
-    },
-    {
-      id: "powertech",
-      name: "PowerTech",
-      description: "High-reliability industrial power electronics and passives",
-      contact: "Marc DuPont",
-      rating: 4.6,
-      status: "Active",
-    },
-    {
-      id: "semiconductors-corp",
-      name: "Semiconductors Corp",
-      description: "Primary distributor of ICs and microcontrollers",
-      contact: "Jane Doe",
-      rating: 4.8,
-      status: "Active",
-    },
-    {
-      id: "led-depot",
-      name: "LED Depot",
-      description: "Supplier of LEDs and optoelectronics components",
-      contact: "John Smith",
-      rating: 4.2,
-      status: "Active",
-    },
-    {
-      id: "fastpcbs-ltd",
-      name: "FastPCBs Ltd",
-      description: "PCB fabrication and layout prototyping services",
-      contact: "Alice Johnson",
-      rating: 4.9,
-      status: "Active",
-    },
-  ]
+  const suppliers = SUPPLIERS
 
   return (
     <div className="space-y-6">

@@ -10,6 +10,10 @@ import {
   Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
   Boxes, ArrowUpRight, Truck, Tag,
 } from "lucide-react"
+import {
+  COMPONENTS, getBrandName, getSupplierName, bestPrice,
+  productsUsingComponent, formatINR as mINR, formatLeadTime,
+} from "@/mockdata"
 
 // --- Types ---
 type StockStatus = "Healthy" | "Low" | "Critical" | "Out of Stock"
@@ -46,106 +50,30 @@ interface InventoryItem {
   usedIn: string[]
 }
 
-// --- Mock inventory dataset ---
-const INVENTORY: InventoryItem[] = [
-  {
-    id: "resistor-10k", name: "Resistor 10K", genericPN: "RES-10K", category: "Passive",
-    stock: 7000, minStock: 5000, reorderQty: 10000, unit: "PCS", unitCost: 0.8, bin: "B-03",
-    solderType: "SMD", footprint: "0603", lastCount: "12 Jun 2026",
-    brands: [
-      { brand: "Yageo", partNo: "RC0603JR", stock: 3000 },
-      { brand: "Vishay", partNo: "CRCW0603", stock: 2500 },
-      { brand: "Panasonic", partNo: "ERJ3EKF", stock: 1500 },
-    ],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Yageo", price: "₹0.80", leadTime: "3 days" },
-      { supplier: "Mouser", brand: "Vishay", price: "₹0.95", leadTime: "5 days" },
-    ],
-    usedIn: ["ROIP 400", "Voice Logger"],
-  },
-  {
-    id: "capacitor-100uf", name: "Capacitor 100uF", genericPN: "CAP-100UF", category: "Passive",
-    stock: 400, minStock: 500, reorderQty: 2000, unit: "PCS", unitCost: 1.5, bin: "B-08",
-    solderType: "DIP", footprint: "Radial 6.3x11mm", lastCount: "10 Jun 2026",
-    brands: [
-      { brand: "Nichicon", partNo: "UVR1E101MED", stock: 250 },
-      { brand: "Rubycon", partNo: "25YXG100M", stock: 150 },
-    ],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Nichicon", price: "₹1.50", leadTime: "2 days" },
-      { supplier: "DigiKey", brand: "Nichicon", price: "₹1.70", leadTime: "4 days" },
-    ],
-    usedIn: ["ROIP 400", "Voice Logger"],
-  },
-  {
-    id: "audio-codec", name: "Audio Codec IC", genericPN: "AUDIO-CODEC", category: "IC",
-    stock: 50, minStock: 120, reorderQty: 1000, unit: "PCS", unitCost: 68, bin: "C-01",
-    solderType: "SMD", footprint: "QFN-32", lastCount: "08 Jun 2026",
-    brands: [{ brand: "Texas Instruments", partNo: "TLV320AIC3104", stock: 50 }],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Texas Instruments", price: "₹68.00", leadTime: "3 days" },
-    ],
-    usedIn: ["ROIP 400", "Voice Logger"],
-  },
-  {
-    id: "gsm-chip", name: "GSM Chipset", genericPN: "GSM-CHIP", category: "RF Module",
-    stock: 350, minStock: 200, reorderQty: 500, unit: "PCS", unitCost: 380, bin: "C-04",
-    solderType: "SMD", footprint: "LGA-68", lastCount: "11 Jun 2026",
-    brands: [{ brand: "Quectel", partNo: "MC60", stock: 350 }],
-    suppliers: [
-      { supplier: "XYZ Components", brand: "Quectel", price: "₹380.00", leadTime: "2 days" },
-    ],
-    usedIn: ["ROIP 400"],
-  },
-  {
-    id: "mcu-stm32", name: "STM32 Microcontroller", genericPN: "MCU-STM32", category: "IC",
-    stock: 1200, minStock: 1000, reorderQty: 1000, unit: "PCS", unitCost: 110, bin: "C-07",
-    solderType: "SMD", footprint: "LQFP-64", lastCount: "12 Jun 2026",
-    brands: [
-      { brand: "STMicroelectronics", partNo: "STM32F401RET6", stock: 700 },
-      { brand: "GigaDevice", partNo: "GD32F401RET6", stock: 500 },
-    ],
-    suppliers: [
-      { supplier: "XYZ Components", brand: "GigaDevice", price: "₹110.00", leadTime: "2 days" },
-      { supplier: "Mouser", brand: "STMicroelectronics", price: "₹125.00", leadTime: "5 days" },
-    ],
-    usedIn: ["Voice Logger"],
-  },
-  {
-    id: "led-green", name: "LED Green Indicator", genericPN: "LED-GRN", category: "Optoelectronics",
-    stock: 300, minStock: 1000, reorderQty: 5000, unit: "PCS", unitCost: 2.1, bin: "A-12",
-    solderType: "DIP", footprint: "5mm Radial", lastCount: "09 Jun 2026",
-    brands: [
-      { brand: "Everlight", partNo: "EL-513-GRN", stock: 150 },
-      { brand: "Lite-On", partNo: "LTL-4231N", stock: 150 },
-    ],
-    suppliers: [
-      { supplier: "XYZ Components", brand: "Lite-On", price: "₹2.10", leadTime: "1 day" },
-      { supplier: "LED Depot", brand: "Everlight", price: "₹2.20", leadTime: "3 days" },
-    ],
-    usedIn: ["ROIP 400", "Voice Logger"],
-  },
-  {
-    id: "sim-holder", name: "SIM Card Holder", genericPN: "SIM-HLDR", category: "Connectors",
-    stock: 250, minStock: 150, reorderQty: 500, unit: "PCS", unitCost: 12, bin: "D-05",
-    solderType: "SMD", footprint: "6-Pin Push-Push", lastCount: "07 Jun 2026",
-    brands: [{ brand: "Amphenol", partNo: "114-00841-68", stock: 250 }],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Amphenol", price: "₹12.00", leadTime: "4 days" },
-    ],
-    usedIn: ["ROIP 400"],
-  },
-  {
-    id: "flash-mem", name: "Flash Memory 128Mb", genericPN: "FLASH-128", category: "IC",
-    stock: 0, minStock: 300, reorderQty: 1000, unit: "PCS", unitCost: 45, bin: "C-09",
-    solderType: "SMD", footprint: "SOP-8", lastCount: "06 Jun 2026",
-    brands: [{ brand: "Winbond", partNo: "W25Q128JV", stock: 0 }],
-    suppliers: [
-      { supplier: "Mouser", brand: "Winbond", price: "₹45.00", leadTime: "6 days" },
-    ],
-    usedIn: ["Voice Logger"],
-  },
-]
+// --- Inventory view model derived from the centralized component store ---
+const INVENTORY: InventoryItem[] = COMPONENTS.map((c) => ({
+  id: c.id,
+  name: c.name,
+  genericPN: c.genericPN,
+  category: c.category,
+  stock: c.stock,
+  minStock: c.minStock,
+  reorderQty: c.reorderQty,
+  unit: c.unit,
+  unitCost: bestPrice(c),
+  bin: c.bin,
+  solderType: c.solderType,
+  footprint: c.footprint,
+  lastCount: c.lastCount,
+  brands: c.brandVariants.map((v) => ({ brand: getBrandName(v.brandId), partNo: v.partNo, stock: v.stock })),
+  suppliers: c.offers.map((o) => ({
+    supplier: getSupplierName(o.supplierId),
+    brand: getBrandName(o.brandId),
+    price: mINR(o.price),
+    leadTime: formatLeadTime(o.leadTimeDays),
+  })),
+  usedIn: productsUsingComponent(c.id).map((p) => p.name),
+}))
 
 const CATEGORIES = ["All", ...Array.from(new Set(INVENTORY.map((i) => i.category)))]
 

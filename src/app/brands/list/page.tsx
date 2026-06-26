@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, CheckCircle2, Award, Filter, Plus, Search, Layers, ShieldCheck, Landmark, Star, X, Check, ArrowRight, MapPin, Calendar, Clock, Sparkles } from "lucide-react"
 import Link from "next/link"
+import {
+  BRANDS, SUPPLIERS, COMPONENTS, getSupplier, brandComponents,
+  componentStockStatus, formatINR, formatLeadTime,
+} from "@/mockdata"
 
 // Types
 interface AssociatedComponent {
@@ -37,67 +41,51 @@ interface BrandData {
   suppliers: AssociatedSupplier[]
 }
 
-const DEFAULT_BRANDS: Record<string, BrandData> = {
-  "yageo": {
-    id: "yageo",
-    name: "Yageo",
-    description: "Global leader in passive component manufacturing, specializing in resistors, capacitors, and high-frequency products.",
-    headquarter: "Hsinchu, Taiwan",
-    founded: "1977",
-    status: "Approved",
-    components: [
-      { id: "resistor-10k", displayName: "Resistor 10K", category: "Resistor", stock: 15000, status: "Healthy" },
-      { id: "capacitor-100uf", displayName: "Capacitor 100uF", category: "Capacitor", stock: 8000, status: "Healthy" },
-      { id: "led-green", displayName: "LED Green", category: "LED", stock: 500, status: "Low" }
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹0.80", moq: 1000, leadTime: "3 Days", rating: 4.7 },
-      { id: "xyz-components", name: "XYZ Components", price: "₹0.82", moq: 5000, leadTime: "2 Days", rating: 4.4 }
+// Seed derived from the centralized store. Each brand's components and the
+// suppliers that carry them are joined from the canonical component records.
+const DEFAULT_BRANDS: Record<string, BrandData> = Object.fromEntries(
+  BRANDS.map((b) => {
+    const comps = brandComponents(b.id)
+    const components: AssociatedComponent[] = comps.map((c) => ({
+      id: c.id,
+      displayName: c.name,
+      category: c.category,
+      stock: c.stock,
+      status: componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
+    }))
+    const supMap = new Map<string, AssociatedSupplier>()
+    comps.forEach((c) =>
+      c.offers
+        .filter((o) => o.brandId === b.id)
+        .forEach((o) => {
+          if (!supMap.has(o.supplierId)) {
+            const sup = getSupplier(o.supplierId)
+            supMap.set(o.supplierId, {
+              id: o.supplierId,
+              name: sup?.name ?? o.supplierId,
+              price: formatINR(o.price),
+              moq: c.spq,
+              leadTime: formatLeadTime(o.leadTimeDays),
+              rating: sup?.rating ?? 4.5,
+            })
+          }
+        }),
+    )
+    return [
+      b.id,
+      {
+        id: b.id,
+        name: b.name,
+        description: b.description,
+        headquarter: b.headquarter,
+        founded: b.founded,
+        status: b.status,
+        components,
+        suppliers: Array.from(supMap.values()),
+      } satisfies BrandData,
     ]
-  },
-  "vishay": {
-    id: "vishay",
-    name: "Vishay",
-    description: "One of the world's largest manufacturers of discrete semiconductors and passive electronic components.",
-    headquarter: "Pennsylvania, USA",
-    founded: "1962",
-    status: "Approved",
-    components: [
-      { id: "resistor-10k", displayName: "Resistor 10K", category: "Resistor", stock: 15000, status: "Healthy" }
-    ],
-    suppliers: [
-      { id: "powertech", name: "PowerTech", price: "₹0.95", moq: 500, leadTime: "7 Days", rating: 4.6 }
-    ]
-  },
-  "panasonic": {
-    id: "panasonic",
-    name: "Panasonic",
-    description: "Multinational electronics corporation offering high-quality industrial components, ceramic and electrolytic capacitors, resistors, and relays.",
-    headquarter: "Osaka, Japan",
-    founded: "1918",
-    status: "Approved",
-    components: [
-      { id: "resistor-10k", displayName: "Resistor 10K", category: "Resistor", stock: 15000, status: "Healthy" }
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹1.10", moq: 250, leadTime: "10 Days", rating: 4.7 }
-    ]
-  },
-  "murata": {
-    id: "murata",
-    name: "Murata",
-    description: "Worldwide leader in the design, manufacture and sale of ceramic passive electronic components and solutions.",
-    headquarter: "Kyoto, Japan",
-    founded: "1944",
-    status: "Approved",
-    components: [
-      { id: "capacitor-100uf", displayName: "Capacitor 100uF", category: "Capacitor", stock: 8000, status: "Healthy" }
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹1.45", moq: 2500, leadTime: "4 Days", rating: 4.4 }
-    ]
-  }
-}
+  }),
+)
 
 function BrandDashboardContent() {
   const searchParams = useSearchParams()
@@ -129,20 +117,13 @@ function BrandDashboardContent() {
   const [newSupMOQ, setNewSupMOQ] = React.useState("")
   const [newSupLead, setNewSupLead] = React.useState("")
 
-  const supplierOptions = [
-    { id: "abc-electronics", name: "ABC Electronics", rating: 4.7 },
-    { id: "xyz-components", name: "XYZ Components", rating: 4.4 },
-    { id: "powertech", name: "PowerTech", rating: 4.6 },
-    { id: "semiconductors-corp", name: "Semiconductors Corp", rating: 4.8 },
-    { id: "led-depot", name: "LED Depot", rating: 4.2 },
-    { id: "fastpcbs-ltd", name: "FastPCBs Ltd", rating: 4.9 }
-  ]
+  const supplierOptions = SUPPLIERS.map((s) => ({ id: s.id, name: s.name, rating: s.rating }))
 
-  const componentOptions = [
-    { id: "resistor-10k", displayName: "Resistor 10K", category: "Resistor" },
-    { id: "capacitor-100uf", displayName: "Capacitor 100uF", category: "Capacitor" },
-    { id: "led-green", displayName: "LED Green", category: "LED" }
-  ]
+  const componentOptions = COMPONENTS.map((c) => ({
+    id: c.id,
+    displayName: c.name,
+    category: c.category,
+  }))
 
   // Sync state with localStorage on mount
   React.useEffect(() => {

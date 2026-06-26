@@ -1,0 +1,33 @@
+import type { Brand } from "./types"
+
+// Canonical manufacturer brands. Referenced by component brand variants,
+// supplier offers, purchase records, etc. via `id`.
+export const BRANDS: Brand[] = [
+  { id: "yageo", name: "Yageo", description: "Global leader in passive component manufacturing — resistors, capacitors, and high-frequency products.", headquarter: "Hsinchu, Taiwan", founded: "1977", status: "Approved", rating: 4.7 },
+  { id: "vishay", name: "Vishay", description: "One of the world's largest manufacturers of discrete semiconductors and passive electronic components.", headquarter: "Pennsylvania, USA", founded: "1962", status: "Approved", rating: 4.6 },
+  { id: "panasonic", name: "Panasonic", description: "Multinational electronics corporation offering industrial components, capacitors, resistors, and relays.", headquarter: "Osaka, Japan", founded: "1918", status: "Approved", rating: 4.7 },
+  { id: "murata", name: "Murata", description: "Worldwide leader in ceramic passive electronic components and solutions.", headquarter: "Kyoto, Japan", founded: "1944", status: "Approved", rating: 4.5 },
+  { id: "nichicon", name: "Nichicon", description: "Specialist manufacturer of aluminum electrolytic capacitors and energy devices.", headquarter: "Kyoto, Japan", founded: "1950", status: "Approved", rating: 4.4 },
+  { id: "rubycon", name: "Rubycon", description: "Manufacturer of high-reliability aluminum electrolytic and film capacitors.", headquarter: "Nagano, Japan", founded: "1952", status: "Approved", rating: 4.3 },
+  { id: "everlight", name: "Everlight", description: "Leading optoelectronics manufacturer producing LEDs and sensor components.", headquarter: "New Taipei, Taiwan", founded: "1983", status: "Approved", rating: 4.2 },
+  { id: "lite-on", name: "Lite-On", description: "Optoelectronics and power electronics maker specializing in LEDs and modules.", headquarter: "Taipei, Taiwan", founded: "1975", status: "Approved", rating: 4.3 },
+  { id: "texas-instruments", name: "Texas Instruments", description: "Global semiconductor company designing analog ICs and embedded processors.", headquarter: "Texas, USA", founded: "1930", status: "Approved", rating: 4.9 },
+  { id: "quectel", name: "Quectel", description: "Leading global supplier of cellular and GNSS IoT modules.", headquarter: "Shanghai, China", founded: "2010", status: "Approved", rating: 4.4 },
+  { id: "molex", name: "Molex", description: "Manufacturer of electronic connectors and interconnect solutions.", headquarter: "Illinois, USA", founded: "1938", status: "Approved", rating: 4.6 },
+  { id: "amphenol", name: "Amphenol", description: "Major producer of connectors, cable, and interconnect systems.", headquarter: "Connecticut, USA", founded: "1932", status: "Approved", rating: 4.7 },
+  { id: "sitronix", name: "Sitronix", description: "Designer of display driver ICs and touch controllers.", headquarter: "Hsinchu, Taiwan", founded: "1997", status: "Approved", rating: 4.1 },
+  { id: "tdk", name: "TDK", description: "Electronics manufacturer of inductors, ferrites, and passive components.", headquarter: "Tokyo, Japan", founded: "1935", status: "Approved", rating: 4.6 },
+  { id: "littelfuse", name: "Littelfuse", description: "Global leader in circuit protection, fuses, and power control.", headquarter: "Illinois, USA", founded: "1927", status: "Approved", rating: 4.5 },
+  { id: "analog-devices", name: "Analog Devices", description: "High-performance analog, mixed-signal, and DSP semiconductor company.", headquarter: "Massachusetts, USA", founded: "1965", status: "Approved", rating: 4.8 },
+  { id: "stmicroelectronics", name: "STMicroelectronics", description: "Leading manufacturer of microcontrollers and broad-range semiconductors.", headquarter: "Geneva, Switzerland", founded: "1987", status: "Approved", rating: 4.8 },
+  { id: "gigadevice", name: "GigaDevice", description: "Supplier of flash memory and ARM Cortex-M microcontrollers.", headquarter: "Beijing, China", founded: "2005", status: "Pending", rating: 4.0 },
+  { id: "infineon", name: "Infineon", description: "Semiconductor manufacturer focused on power, memory, and security ICs.", headquarter: "Neubiberg, Germany", founded: "1999", status: "Approved", rating: 4.7 },
+  { id: "kyocera", name: "Kyocera", description: "Maker of crystals, oscillators, and electronic components.", headquarter: "Kyoto, Japan", founded: "1959", status: "Approved", rating: 4.5 },
+  { id: "winbond", name: "Winbond", description: "Specialty memory IC manufacturer producing flash and DRAM.", headquarter: "Taichung, Taiwan", founded: "1987", status: "Approved", rating: 4.3 },
+  { id: "micron", name: "Micron", description: "Global producer of DRAM, NAND flash, and storage solutions.", headquarter: "Idaho, USA", founded: "1978", status: "Approved", rating: 4.6 },
+  { id: "ftdi", name: "FTDI Chip", description: "Designer of USB interface and bridge controller ICs.", headquarter: "Glasgow, UK", founded: "1992", status: "Approved", rating: 4.4 },
+  { id: "silicon-labs", name: "Silicon Labs", description: "Provider of analog-intensive mixed-signal ICs and wireless SoCs.", headquarter: "Texas, USA", founded: "1996", status: "Approved", rating: 4.5 },
+  { id: "dell", name: "Dell", description: "Computer technology company and peripherals manufacturer.", headquarter: "Texas, USA", founded: "1984", status: "Approved", rating: 4.2 },
+  { id: "lenovo", name: "Lenovo", description: "Multinational technology and personal-computer peripherals manufacturer.", headquarter: "Beijing, China", founded: "1984", status: "Approved", rating: 4.1 },
+  { id: "hp", name: "HP", description: "Information technology company and peripherals manufacturer.", headquarter: "California, USA", founded: "1939", status: "Approved", rating: 4.2 },
+]

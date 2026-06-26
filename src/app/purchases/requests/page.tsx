@@ -6,80 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { AlertCircle, Check, FileText, ShoppingCart, ShoppingBag, Plus, Landmark, Award, Star, Clock } from "lucide-react"
 import Link from "next/link"
-
-interface PurchaseRequest {
-  prId: string
-  componentId: string
-  componentName: string
-  brandId: string
-  brandName: string
-  supplierId: string
-  supplierName: string
-  qty: number
-  totalCost: string
-  status: "Draft" | "Pending Approval" | "Sent" | "Approved"
-  date: string
-}
-
-interface SourcingRecommendation {
-  supplierId: string
-  supplierName: string
-  brandId: string
-  brandName: string
-  price: string
-  leadTime: string
-}
-
-const DEFAULT_PRS: PurchaseRequest[] = [
-  {
-    prId: "PR-849201",
-    componentId: "led-green",
-    componentName: "LED Green",
-    brandId: "panasonic",
-    brandName: "Panasonic",
-    supplierId: "abc-electronics",
-    supplierName: "ABC Electronics",
-    qty: 200,
-    totalCost: "₹420.00",
-    status: "Pending Approval",
-    date: "2026-06-22"
-  },
-  {
-    prId: "PR-392048",
-    componentId: "capacitor-100uf",
-    componentName: "Capacitor 100uF",
-    brandId: "murata",
-    brandName: "Murata",
-    supplierId: "xyz-components",
-    supplierName: "XYZ Components",
-    qty: 1000,
-    totalCost: "₹1,450.00",
-    status: "Approved",
-    date: "2026-06-21"
-  },
-  {
-    prId: "PR-728109",
-    componentId: "resistor-10k",
-    componentName: "Resistor 10K",
-    brandId: "yageo",
-    brandName: "Yageo",
-    supplierId: "abc-electronics",
-    supplierName: "ABC Electronics",
-    qty: 5000,
-    totalCost: "₹4,000.00",
-    status: "Approved",
-    date: "2026-06-20"
-  }
-]
-
-const RECOMMENDATIONS: SourcingRecommendation[] = [
-  { supplierId: "abc-electronics", supplierName: "ABC Electronics", brandId: "yageo", brandName: "Yageo", price: "₹0.80", leadTime: "3 Days" },
-  { supplierId: "xyz-components", supplierName: "XYZ Components", brandId: "yageo", brandName: "Yageo", price: "₹0.82", leadTime: "2 Days" },
-  { supplierId: "powertech", supplierName: "Mouser", brandId: "vishay", brandName: "Vishay", price: "₹0.95", leadTime: "7 Days" }
-]
+import {
+  PURCHASE_REQUESTS, RECOMMENDATIONS,
+  type PurchaseRequest, type SourcingRecommendation,
+} from "@/mockdata/purchases"
 
 function PurchaseRequestsContent() {
-  const [prList, setPrList] = React.useState<PurchaseRequest[]>(DEFAULT_PRS)
+  const [prList, setPrList] = React.useState<PurchaseRequest[]>(PURCHASE_REQUESTS)
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
@@ -97,7 +30,7 @@ function PurchaseRequestsContent() {
           console.error("Failed to parse purchase requests", e)
         }
       } else {
-        localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify(DEFAULT_PRS))
+        localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify(PURCHASE_REQUESTS))
       }
     }
   }, [])

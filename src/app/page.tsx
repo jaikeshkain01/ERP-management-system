@@ -11,53 +11,11 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
-
-// Data Structures
-interface ProductStatusItem {
-  product: string
-  status: "Ready" | "Blocked" | "Limited"
-  buildableQty: number
-}
-
-interface BlockerItem {
-  product: string
-  missingComp: string
-  qty: number
-}
-
-interface LowStockItem {
-  component: string
-  current: number
-  minimum: number
-  status: "Critical" | "Low" | "Healthy"
-}
-
-interface SingleSupplierItem {
-  component: string
-  supplier: string
-}
-
-interface ProductionOrder {
-  orderId: string
-  product: string
-  qty: number
-  status: "In Progress" | "Completed" | "Draft"
-}
-
-interface ConsumedComponent {
-  component: string
-  monthlyUsage: string
-}
-
-interface UsageImpactItem {
-  component: string
-  usedInProducts: number
-}
-
-interface ActivityItem {
-  text: string
-  time: string
-}
+import {
+  PRODUCT_STATUS, PRODUCTION_BLOCKERS, LOW_STOCK, PURCHASE_SUMMARY,
+  PRODUCTION_ORDERS_RECENT, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT,
+  RECENT_ACTIVITIES, INVENTORY_CHART,
+} from "@/mockdata/dashboard"
 
 type TabId = "overview" | "manufacturing" | "inventory" | "procurement"
 
@@ -79,64 +37,17 @@ export default function Dashboard() {
     { title: "Inventory Value", value: "₹ 2.4 Cr", desc: "Physical asset valuation", icon: Landmark, color: "text-emerald-600 bg-emerald-500/10" },
   ]
 
-  const productStatus: ProductStatusItem[] = [
-    { product: "ROIP 400", status: "Ready", buildableQty: 120 },
-    { product: "Voice Logger", status: "Blocked", buildableQty: 0 },
-    { product: "Dispatcher", status: "Limited", buildableQty: 20 },
-  ]
-
-  const productionBlockers: BlockerItem[] = [
-    { product: "ROIP400", missingComp: "LED Green", qty: 500 },
-    { product: "Voice Logger", missingComp: "Audio Codec", qty: 25 },
-  ]
-
-  const lowStock: LowStockItem[] = [
-    { component: "LED Green", current: 300, minimum: 1000, status: "Low" },
-    { component: "Audio Codec", current: 25, minimum: 100, status: "Critical" },
-  ]
-
-  const purchaseSummary = [
-    { title: "Pending PRs", value: 12, desc: "Awaiting manager approval" },
-    { title: "Open POs", value: 8, desc: "Shipment agreements in transit" },
-    { title: "Expected Deliveries", value: 5, desc: "Due within next 7 days" },
-  ]
-
-  const productionOrders: ProductionOrder[] = [
-    { orderId: "PROD-001", product: "ROIP400", qty: 100, status: "In Progress" },
-    { orderId: "PROD-002", product: "Voice Logger", qty: 50, status: "Completed" },
-  ]
-
-  const singleSupplierComponents: SingleSupplierItem[] = [
-    { component: "Audio Codec", supplier: "ABC Electronics" },
-    { component: "GSM Chip", supplier: "XYZ Components" },
-  ]
-
-  const topConsumed: ConsumedComponent[] = [
-    { component: "Resistor 10K", monthlyUsage: "50,000" },
-    { component: "Capacitor 100uF", monthlyUsage: "30,000" },
-    { component: "LED Green", monthlyUsage: "15,000" },
-  ]
-
-  const usageImpact: UsageImpactItem[] = [
-    { component: "Resistor 10K", usedInProducts: 12 },
-    { component: "LED Green", usedInProducts: 8 },
-    { component: "Audio Codec", usedInProducts: 6 },
-  ]
-
-  const recentActivities: ActivityItem[] = [
-    { text: "ABC Electronics added as preferred supplier for Resistor 10K", time: "10 mins ago" },
-    { text: "Purchase Order PO-104 created and sent to XYZ Components", time: "1 hour ago" },
-    { text: "ROIP400 engineering BOM structure updated", time: "3 hours ago" },
-    { text: "100 units of Audio PCB produced and transferred to stock", time: "5 hours ago" },
-    { text: "Voice Logger production batch PROD-002 completed successfully", time: "1 day ago" },
-  ]
-
-  // Recharts Data Setup
-  const inventoryChartData = [
-    { name: "Components", value: 1250, color: "#875A7B" },
-    { name: "PCBs", value: 48, color: "#28C76F" },
-    { name: "Products", value: 15, color: "#FF9F43" },
-  ]
+  // Panel datasets sourced from the centralized store (see @/mockdata/dashboard)
+  const productStatus = PRODUCT_STATUS
+  const productionBlockers = PRODUCTION_BLOCKERS
+  const lowStock = LOW_STOCK
+  const purchaseSummary = PURCHASE_SUMMARY
+  const productionOrders = PRODUCTION_ORDERS_RECENT
+  const singleSupplierComponents = SINGLE_SUPPLIER
+  const topConsumed = TOP_CONSUMED
+  const usageImpact = USAGE_IMPACT
+  const recentActivities = RECENT_ACTIVITIES
+  const inventoryChartData = INVENTORY_CHART
 
   const tabs: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }>; alert?: number }[] = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },

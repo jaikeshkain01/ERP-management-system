@@ -10,68 +10,9 @@ import {
   CircuitBoard, Boxes, CheckCircle2, FlaskConical,
   Archive, RefreshCw
 } from "lucide-react"
+import { PCBS, pcbUsedInLabels, type PcbStatus } from "@/mockdata"
 
-type PCBStatus = "Active" | "Prototype" | "Deprecated"
-
-interface PCBData {
-  id: string
-  name: string
-  description: string
-  componentsCount: number
-  layers: number
-  usedIn: string[]
-  status: PCBStatus
-}
-
-const PCBS_DATA: PCBData[] = [
-  {
-    id: "audio-pcb",
-    name: "Audio PCB",
-    description: "Voice and audio signal processing board",
-    componentsCount: 58,
-    layers: 4,
-    usedIn: ["ROIP400", "Voice Logger"],
-    status: "Active",
-  },
-  {
-    id: "gsm-pcb",
-    name: "GSM PCB",
-    description: "Mobile network connectivity module board",
-    componentsCount: 75,
-    layers: 6,
-    usedIn: ["ROIP400"],
-    status: "Active",
-  },
-  {
-    id: "display-pcb",
-    name: "Display PCB",
-    description: "LCD screen driver interface board",
-    componentsCount: 40,
-    layers: 2,
-    usedIn: ["ROIP400"],
-    status: "Active",
-  },
-  {
-    id: "power-pcb",
-    name: "Power PCB",
-    description: "Voltage regulation and power distribution board",
-    componentsCount: 32,
-    layers: 2,
-    usedIn: ["ROIP400"],
-    status: "Prototype",
-  },
-  {
-    id: "main-pcb",
-    name: "Main PCB",
-    description: "Primary controller and DSP board",
-    componentsCount: 80,
-    layers: 8,
-    usedIn: ["Voice Logger"],
-    status: "Active",
-  },
-]
-
-const STATUS_STYLES: Record<PCBStatus, { label: string; className: string; icon: React.ElementType }> = {
+const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
   Active: {
     label: "Active",
     icon: CheckCircle2,
@@ -101,13 +42,13 @@ export default function PCBListPage() {
     setStatusFilter("All")
   }
 
-  const filteredPcbs = PCBS_DATA.filter((pcb) => {
+  const filteredPcbs = PCBS.filter((pcb) => {
     if (searchQuery.trim() !== "") {
       const q = searchQuery.toLowerCase()
       const matchesSearch =
         pcb.name.toLowerCase().includes(q) ||
         pcb.description.toLowerCase().includes(q) ||
-        pcb.usedIn.some((p) => p.toLowerCase().includes(q))
+        pcbUsedInLabels(pcb.id).some((p) => p.toLowerCase().includes(q))
       if (!matchesSearch) return false
     }
     if (statusFilter !== "All" && pcb.status !== statusFilter) return false
@@ -115,11 +56,11 @@ export default function PCBListPage() {
   })
 
   // Summary metrics (computed across the full dataset)
-  const totalPcbs = PCBS_DATA.length
-  const totalComponents = PCBS_DATA.reduce((sum, pcb) => sum + pcb.componentsCount, 0)
-  const activeCount = PCBS_DATA.filter((pcb) => pcb.status === "Active").length
+  const totalPcbs = PCBS.length
+  const totalComponents = PCBS.reduce((sum, pcb) => sum + pcb.componentsCount, 0)
+  const activeCount = PCBS.filter((pcb) => pcb.status === "Active").length
 
-  const renderStatusBadge = (status: PCBStatus) => {
+  const renderStatusBadge = (status: PcbStatus) => {
     const { label, className, icon: Icon } = STATUS_STYLES[status]
     return (
       <span
@@ -287,7 +228,7 @@ export default function PCBListPage() {
               <div className="space-y-1.5">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Used In</span>
                 <div className="flex flex-wrap gap-1.5">
-                  {pcb.usedIn.map((product) => (
+                  {pcbUsedInLabels(pcb.id).map((product) => (
                     <span
                       key={product}
                       className="inline-flex items-center rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground border border-border/60"

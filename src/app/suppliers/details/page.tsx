@@ -7,6 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award, Layers, Star, Plus, X, Check, AlertCircle } from "lucide-react"
 import Link from "next/link"
+import {
+  SUPPLIERS, COMPONENTS, BRANDS, getBrandName, supplierComponents,
+  supplierBrandIds, productsUsingComponent, formatINR, formatLeadTime,
+} from "@/mockdata"
 
 interface SupplyItem {
   partId: string
@@ -33,117 +37,50 @@ interface SupplierData {
   parts: SupplyItem[]
 }
 
-const DEFAULT_SUPPLIERS: Record<string, SupplierData> = {
-  "abc-electronics": {
-    id: "abc-electronics",
-    name: "ABC Electronics",
-    description: "Elite components distributor and logistics partner",
-    contact: "Rajesh Kumar",
-    email: "contact@abcelectronics.in",
-    phone: "+91 80 4912 3456",
-    address: "Plot 42, Electronic City Phase 1, Bangalore, Karnataka, India",
-    terms: "Net 30",
-    activeOrders: 3,
-    componentsSupplied: 250,
-    brandsSupported: 12,
-    productsImpacted: 15,
-    parts: [
-      { partId: "resistor-10k", partName: "Resistor 10K", brandId: "yageo", brandName: "Yageo", price: "₹0.80", leadTime: "3 Days" },
-      { partId: "capacitor-100uf", partName: "Capacitor 100uF", brandId: "yageo", brandName: "Yageo", price: "₹1.20", leadTime: "3 Days" },
-      { partId: "led-green", partName: "LED Green", brandId: "panasonic", brandName: "Panasonic", price: "₹2.00", leadTime: "10 Days" },
-    ],
-  },
-  "xyz-components": {
-    id: "xyz-components",
-    name: "XYZ Components",
-    description: "Bulk electronic component vendor and direct importer",
-    contact: "Sarah Jenkins",
-    email: "sales@xyzcomponents.com",
-    phone: "+1 (555) 762-0981",
-    address: "85 Circuit Boulevard, Suite 300, Chicago, IL, USA",
-    terms: "Net 45",
-    activeOrders: 1,
-    componentsSupplied: 180,
-    brandsSupported: 8,
-    productsImpacted: 10,
-    parts: [
-      { partId: "resistor-10k", partName: "Resistor 10K", brandId: "yageo", brandName: "Yageo", price: "₹0.82", leadTime: "2 Days" },
-      { partId: "led-green", partName: "LED Green", brandId: "lite-on", brandName: "Lite-On", price: "₹2.10", leadTime: "4 Days" },
-      { partId: "capacitor-100uf", partName: "Capacitor 100uF", brandId: "murata", brandName: "Murata", price: "₹1.45", leadTime: "4 Days" },
-    ],
-  },
-  "powertech": {
-    id: "powertech",
-    name: "PowerTech",
-    description: "High-reliability industrial power electronics and passives",
-    contact: "Marc DuPont",
-    email: "support@powertech-ind.eu",
-    phone: "+33 1 42 68 53 00",
-    address: "12 Rue de la Technology, Paris, France",
-    terms: "Net 15",
-    activeOrders: 2,
-    componentsSupplied: 120,
-    brandsSupported: 6,
-    productsImpacted: 8,
-    parts: [
-      { partId: "resistor-10k", partName: "Resistor 10K", brandId: "vishay", brandName: "Vishay", price: "₹0.95", leadTime: "7 Days" },
-      { partId: "capacitor-100uf", partName: "Capacitor 100uF", brandId: "nichicon", brandName: "Nichicon", price: "₹1.50", leadTime: "2 Days" },
-    ],
-  },
-  "semiconductors-corp": {
-    id: "semiconductors-corp",
-    name: "Semiconductors Corp",
-    description: "Primary distributor of ICs and microcontrollers",
-    contact: "Jane Doe",
-    email: "orders@semiconductorscorp.com",
-    phone: "+1 (555) 123-4567",
-    address: "100 Silicon Way, San Jose, CA, USA",
-    terms: "Net 30",
-    activeOrders: 2,
-    componentsSupplied: 95,
-    brandsSupported: 5,
-    productsImpacted: 12,
-    parts: [
-      { partId: "audio-codec", partName: "Audio Codec", brandId: "texas-instruments", brandName: "Texas Instruments", price: "₹125.00", leadTime: "5 Days" },
-      { partId: "gsm-chip", partName: "GSM Chip", brandId: "quectel", brandName: "Quectel", price: "₹375.00", leadTime: "7 Days" },
-    ],
-  },
-  "led-depot": {
-    id: "led-depot",
-    name: "LED Depot",
-    description: "Supplier of LEDs and optoelectronics components",
-    contact: "John Smith",
-    email: "sales@leddepot.com",
-    phone: "+1 (555) 987-6543",
-    address: "450 Bright Ave, Austin, TX, USA",
-    terms: "Net 15",
-    activeOrders: 1,
-    componentsSupplied: 40,
-    brandsSupported: 3,
-    productsImpacted: 6,
-    parts: [
-      { partId: "led-green", partName: "LED Green", brandId: "everlight", brandName: "Everlight", price: "₹2.20", leadTime: "2 Days" },
-    ],
-  },
-  "fastpcbs-ltd": {
-    id: "fastpcbs-ltd",
-    name: "FastPCBs Ltd",
-    description: "PCB fabrication and layout prototyping services",
-    contact: "Alice Johnson",
-    email: "pcb@fastpcbs.co.uk",
-    phone: "+44 20 7946 0958",
-    address: "78 Circuit Lane, London, UK",
-    terms: "Due on Receipt",
-    activeOrders: 0,
-    componentsSupplied: 15,
-    brandsSupported: 2,
-    productsImpacted: 5,
-    parts: [
-      { partId: "audio-pcb", partName: "Audio PCB Fab", brandId: "fastpcbs", brandName: "FastPCBs", price: "₹410.00", leadTime: "3 Days" },
-      { partId: "gsm-pcb", partName: "GSM PCB Fab", brandId: "fastpcbs", brandName: "FastPCBs", price: "₹530.00", leadTime: "3 Days" },
-    ],
-  },
-}
+// Seed derived from the centralized store — supplier profiles plus the parts
+// they offer, joined from each component's offers. Persisted to localStorage
+// once the user edits (forms below).
+const DEFAULT_SUPPLIERS: Record<string, SupplierData> = Object.fromEntries(
+  SUPPLIERS.map((s) => {
+    const parts: SupplyItem[] = []
+    COMPONENTS.forEach((c) =>
+      c.offers
+        .filter((o) => o.supplierId === s.id)
+        .forEach((o) =>
+          parts.push({
+            partId: c.id,
+            partName: c.name,
+            brandId: o.brandId,
+            brandName: getBrandName(o.brandId),
+            price: formatINR(o.price),
+            leadTime: formatLeadTime(o.leadTimeDays),
+          }),
+        ),
+    )
+    const impactedProducts = new Set<string>()
+    supplierComponents(s.id).forEach((c) =>
+      productsUsingComponent(c.id).forEach((p) => impactedProducts.add(p.id)),
+    )
+    return [
+      s.id,
+      {
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        contact: s.contact,
+        email: s.email,
+        phone: s.phone,
+        address: s.address,
+        terms: s.terms,
+        activeOrders: impactedProducts.size,
+        componentsSupplied: parts.length,
+        brandsSupported: supplierBrandIds(s.id).length,
+        productsImpacted: impactedProducts.size,
+        parts,
+      } satisfies SupplierData,
+    ]
+  }),
+)
 
 function SupplierDetailsContent() {
   const searchParams = useSearchParams()
@@ -162,18 +99,8 @@ function SupplierDetailsContent() {
   const [newPrice, setNewPrice] = React.useState("")
   const [newLeadTime, setNewLeadTime] = React.useState("")
 
-  const componentOptions = [
-    { id: "resistor-10k", name: "Resistor 10K" },
-    { id: "capacitor-100uf", name: "Capacitor 100uF" },
-    { id: "led-green", name: "LED Green" },
-  ]
-
-  const brandOptions = [
-    { id: "yageo", name: "Yageo" },
-    { id: "vishay", name: "Vishay" },
-    { id: "panasonic", name: "Panasonic" },
-    { id: "murata", name: "Murata" },
-  ]
+  const componentOptions = COMPONENTS.map((c) => ({ id: c.id, name: c.name }))
+  const brandOptions = BRANDS.map((b) => ({ id: b.id, name: b.name }))
 
   React.useEffect(() => {
     setMounted(true)

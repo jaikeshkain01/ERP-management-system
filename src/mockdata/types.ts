@@ -1,0 +1,106 @@
+// ============================================================================
+//  Shared domain types for the centralized mock dataset.
+//  Every page reads from src/mockdata — these are the canonical entity shapes.
+// ============================================================================
+
+export type StockStatus = "Healthy" | "Low" | "Critical"
+export type SolderType = "SMD" | "DIP"
+
+export interface Spec {
+  key: string
+  value: string
+}
+
+/** A manufacturer-specific variant of a generic component. */
+export interface ComponentBrandVariant {
+  brandId: string
+  partNo: string
+  stock: number
+}
+
+/** A supplier price offer for a specific brand variant of a component. */
+export interface ComponentOffer {
+  supplierId: string
+  brandId: string
+  price: number // INR
+  leadTimeDays: number
+}
+
+export interface Component {
+  id: string
+  genericPN: string
+  name: string
+  category: string
+  description: string
+  stock: number
+  minStock: number
+  reorderQty: number
+  unit: string
+  bin: string
+  lastCount: string
+  solderType: SolderType
+  footprint: string
+  spq: number
+  annualConsumption: number
+  specs: Spec[]
+  brandVariants: ComponentBrandVariant[]
+  offers: ComponentOffer[]
+}
+
+export interface Brand {
+  id: string
+  name: string
+  description: string
+  headquarter: string
+  founded: string
+  status: "Approved" | "Pending"
+  rating: number
+}
+
+export interface Supplier {
+  id: string
+  name: string
+  description: string
+  contact: string
+  email: string
+  phone: string
+  address: string
+  terms: string
+  rating: number
+  status: "Active" | "Inactive"
+}
+
+export type PcbStatus = "Active" | "Prototype" | "Deprecated"
+
+/** A bill-of-materials line: a component used on a PCB with a per-board qty. */
+export interface PcbLine {
+  componentId: string
+  qty: number
+}
+
+export interface Pcb {
+  id: string
+  name: string
+  description: string
+  layers: number
+  status: PcbStatus
+  /** Headline BOM line count shown in lists (may exceed unique lines). */
+  componentsCount: number
+  /** Finished-board stock on hand. */
+  stockCount: number
+  lines: PcbLine[]
+}
+
+export type ProductStatus = "Ready" | "Blocked" | "Limited"
+
+export interface Product {
+  id: string
+  name: string
+  code: string
+  version: string
+  description: string
+  status: ProductStatus
+  estimatedCost: number
+  buildableQty: number
+  pcbIds: string[]
+}

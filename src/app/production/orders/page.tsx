@@ -4,25 +4,12 @@ import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ClipboardList, GripVertical, Plus } from "lucide-react"
-
-interface ProductionOrder {
-  id: string
-  product: string
-  qty: number
-  status: "Draft" | "Ready" | "In Progress" | "Completed"
-}
-
-const INITIAL_ORDERS: ProductionOrder[] = [
-  { id: "PO-001", product: "ROIP 400", qty: 100, status: "Ready" },
-  { id: "PO-002", product: "Voice Logger", qty: 20, status: "Draft" },
-  { id: "PO-003", product: "ROIP 400", qty: 50, status: "Completed" },
-  { id: "PO-004", product: "Voice Logger", qty: 10, status: "In Progress" },
-]
+import { PRODUCTION_ORDERS, type ProductionOrder } from "@/mockdata/production"
 
 type StatusColumn = "Draft" | "Ready" | "In Progress" | "Completed"
 
 export default function ProductionOrdersPage() {
-  const [orders, setOrders] = React.useState<ProductionOrder[]>(INITIAL_ORDERS)
+  const [orders, setOrders] = React.useState<ProductionOrder[]>(PRODUCTION_ORDERS)
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
 
   const handleDragStart = (e: React.DragEvent, id: string) => {

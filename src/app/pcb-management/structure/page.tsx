@@ -8,6 +8,10 @@ import { Input } from "@/components/ui/input"
 import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck, Table2, Download } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
+import {
+  PCBS, getPcb, getComponent, getSupplierName, pcbBom, componentBrands,
+  componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime,
+} from "@/mockdata"
 
 interface ComponentBrand {
   id: string
@@ -29,15 +33,6 @@ interface ComponentItem {
   availableQty?: number
 }
 
-interface PCBData {
-  name: string
-  componentsCount: number
-  stockCount: number
-  usedIn: string[]
-  description: string
-  components: ComponentItem[]
-}
-
 interface DrawerComponentDetail {
   id: string
   name: string
@@ -51,432 +46,6 @@ interface DrawerComponentDetail {
   suppliers: { id: string; name: string; price: string; leadTime: string }[]
 }
 
-// --- Drawer data for component detail slide-out ---
-const DRAWER_COMPONENTS_DATA: Record<string, DrawerComponentDetail> = {
-  "audio-codec": {
-    id: "audio-codec",
-    name: "Audio Codec",
-    category: "IC",
-    stock: 120,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Low-power stereo audio codec with integrated headphone amplifier and programmable PGA.",
-    brands: [
-      { id: "silicon-labs", name: "Silicon Labs", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹125.00", leadTime: "3 Days" },
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹130.00", leadTime: "5 Days" },
-    ],
-  },
-  "resistor-10k": {
-    id: "resistor-10k",
-    name: "Resistor 10K",
-    category: "Resistor",
-    stock: 15000,
-    minStock: 5000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "10k Ohm metal film resistor, 1/4W, 1% tolerance, axial leaded.",
-    brands: [
-      { id: "yageo", name: "Yageo", status: "Approved" },
-      { id: "vishay", name: "Vishay", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹0.80", leadTime: "3 Days" },
-      { id: "xyz-components", name: "XYZ Components", price: "₹0.82", leadTime: "2 Days" },
-      { id: "powertech", name: "PowerTech", price: "₹0.90", leadTime: "1 Day" },
-    ],
-  },
-  "capacitor-100uf": {
-    id: "capacitor-100uf",
-    name: "Capacitor 100uF",
-    category: "Capacitor",
-    stock: 8000,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "100uF aluminum electrolytic capacitor, 25V, radial lead, 20% tolerance.",
-    brands: [
-      { id: "murata", name: "Murata", status: "Approved" },
-      { id: "panasonic", name: "Panasonic", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹1.45", leadTime: "4 Days" },
-      { id: "powertech", name: "PowerTech", price: "₹1.50", leadTime: "2 Days" },
-    ],
-  },
-  "led-green": {
-    id: "led-green",
-    name: "LED Green",
-    category: "LED",
-    stock: 500,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Low",
-    description: "5mm green LED light emitting diode, through-hole, 2.1V forward voltage.",
-    brands: [
-      { id: "everlight", name: "Everlight", status: "Approved" },
-      { id: "lite-on", name: "Lite-On", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹2.10", leadTime: "4 Days" },
-      { id: "led-depot", name: "LED Depot", price: "₹2.20", leadTime: "2 Days" },
-    ],
-  },
-  "connector": {
-    id: "connector",
-    name: "Connector",
-    category: "Mechanical",
-    stock: 3200,
-    minStock: 500,
-    unit: "PCS",
-    status: "Healthy",
-    description: "PCB-mount multi-pin I/O connector, gold-plated contacts, right-angle.",
-    brands: [
-      { id: "amphenol", name: "Amphenol", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹18.00", leadTime: "3 Days" },
-      { id: "delta-components", name: "Delta Components", price: "₹19.50", leadTime: "4 Days" },
-    ],
-  },
-  "gsm-chip": {
-    id: "gsm-chip",
-    name: "GSM Chip",
-    category: "IC",
-    stock: 85,
-    minStock: 20,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Quad-band GSM/GPRS engine module supporting cellular connectivity.",
-    brands: [
-      { id: "quectel", name: "Quectel", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹375.00", leadTime: "4 Days" },
-    ],
-  },
-  "sim-holder": {
-    id: "sim-holder",
-    name: "SIM Holder",
-    category: "Connector",
-    stock: 300,
-    minStock: 100,
-    unit: "PCS",
-    status: "Healthy",
-    description: "6-pin push-push micro SIM card holder connector.",
-    brands: [
-      { id: "molex", name: "Molex", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹15.00", leadTime: "4 Days" },
-    ],
-  },
-  "capacitor-10uf": {
-    id: "capacitor-10uf",
-    name: "Capacitor 10uF",
-    category: "Capacitor",
-    stock: 12000,
-    minStock: 2000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "10uF ceramic multilayer capacitor, 50V, X7R dielectric, 0805 SMD.",
-    brands: [
-      { id: "murata", name: "Murata", status: "Approved" },
-      { id: "panasonic", name: "Panasonic", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹0.60", leadTime: "2 Days" },
-      { id: "powertech", name: "PowerTech", price: "₹0.65", leadTime: "1 Day" },
-    ],
-  },
-  "antenna-connector": {
-    id: "antenna-connector",
-    name: "Antenna Connector",
-    category: "RF",
-    stock: 450,
-    minStock: 100,
-    unit: "PCS",
-    status: "Healthy",
-    description: "SMA female bulkhead antenna connector, 50 ohm impedance, gold-plated.",
-    brands: [
-      { id: "amphenol", name: "Amphenol", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹22.00", leadTime: "3 Days" },
-    ],
-  },
-  "display-ic": {
-    id: "display-ic",
-    name: "Display IC",
-    category: "IC",
-    stock: 250,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "TFT-LCD graphic driver IC with integrated RAM and power circuits.",
-    brands: [
-      { id: "sitronix", name: "Sitronix", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹85.00", leadTime: "5 Days" },
-    ],
-  },
-  "led-backlight-driver": {
-    id: "led-backlight-driver",
-    name: "LED Backlight Driver",
-    category: "IC",
-    stock: 200,
-    minStock: 40,
-    unit: "PCS",
-    status: "Healthy",
-    description: "High-efficiency LED backlight driver IC with dimming control capability.",
-    brands: [
-      { id: "texas-instruments", name: "Texas Instruments", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹42.00", leadTime: "3 Days" },
-    ],
-  },
-  "leds": {
-    id: "leds",
-    name: "LEDs",
-    category: "Opto",
-    stock: 6000,
-    minStock: 1500,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Surface-mount white LED for LCD backlight array, 3528 package.",
-    brands: [
-      { id: "lite-on", name: "Lite-On", status: "Approved" },
-      { id: "everlight", name: "Everlight", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "led-depot", name: "LED Depot", price: "₹1.80", leadTime: "2 Days" },
-      { id: "xyz-components", name: "XYZ Components", price: "₹1.95", leadTime: "3 Days" },
-    ],
-  },
-  "ribbon-connector": {
-    id: "ribbon-connector",
-    name: "Ribbon Connector",
-    category: "Mechanical",
-    stock: 800,
-    minStock: 200,
-    unit: "PCS",
-    status: "Healthy",
-    description: "40-pin ZIF FPC/FFC ribbon cable connector for LCD display interface.",
-    brands: [
-      { id: "amphenol", name: "Amphenol", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "delta-components", name: "Delta Components", price: "₹12.00", leadTime: "4 Days" },
-    ],
-  },
-  "power-ic": {
-    id: "power-ic",
-    name: "Power IC",
-    category: "IC",
-    stock: 180,
-    minStock: 40,
-    unit: "PCS",
-    status: "Healthy",
-    description: "Multi-output DC-DC switching regulator with integrated MOSFETs.",
-    brands: [
-      { id: "texas-instruments", name: "Texas Instruments", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹95.00", leadTime: "3 Days" },
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹98.00", leadTime: "5 Days" },
-    ],
-  },
-  "inductor-4.7uh": {
-    id: "inductor-4.7uh",
-    name: "Inductor 4.7uH",
-    category: "Passive",
-    stock: 4500,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "4.7μH shielded power inductor, 3A saturation current, SMD 6×6mm.",
-    brands: [
-      { id: "tdk", name: "TDK", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹3.20", leadTime: "3 Days" },
-    ],
-  },
-  "capacitors-22uf": {
-    id: "capacitors-22uf",
-    name: "Capacitors 22uF",
-    category: "Passive",
-    stock: 9500,
-    minStock: 2000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "22uF ceramic capacitor, 16V, X5R dielectric, 1206 package.",
-    brands: [
-      { id: "murata", name: "Murata", status: "Approved" },
-      { id: "panasonic", name: "Panasonic", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "powertech", name: "PowerTech", price: "₹1.10", leadTime: "2 Days" },
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹1.15", leadTime: "3 Days" },
-    ],
-  },
-  "fuse-2a": {
-    id: "fuse-2a",
-    name: "Fuse 2A",
-    category: "Protection",
-    stock: 2200,
-    minStock: 500,
-    unit: "PCS",
-    status: "Healthy",
-    description: "2A fast-blow SMD fuse, 32V rating, 1206 package size.",
-    brands: [
-      { id: "littelfuse", name: "Littelfuse", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "xyz-components", name: "XYZ Components", price: "₹5.50", leadTime: "3 Days" },
-    ],
-  },
-  "dsp-chip": {
-    id: "dsp-chip",
-    name: "DSP Chip",
-    category: "IC",
-    stock: 60,
-    minStock: 15,
-    unit: "PCS",
-    status: "Healthy",
-    description: "High-performance fixed-point DSP with dual MAC units and 256KB on-chip memory.",
-    brands: [
-      { id: "analog-devices", name: "Analog Devices", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹450.00", leadTime: "7 Days" },
-    ],
-  },
-  "microcontroller": {
-    id: "microcontroller",
-    name: "Microcontroller",
-    category: "MCU",
-    stock: 95,
-    minStock: 20,
-    unit: "PCS",
-    status: "Healthy",
-    description: "ARM Cortex-M4 MCU with 512KB flash, 128KB SRAM, hardware FPU.",
-    brands: [
-      { id: "stmicroelectronics", name: "STMicroelectronics", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹280.00", leadTime: "5 Days" },
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹285.00", leadTime: "4 Days" },
-    ],
-  },
-  "sram-512kb": {
-    id: "sram-512kb",
-    name: "SRAM 512KB",
-    category: "Memory",
-    stock: 140,
-    minStock: 30,
-    unit: "PCS",
-    status: "Healthy",
-    description: "512KB asynchronous SRAM, 10ns access time, 3.3V, 44-pin TSOP.",
-    brands: [
-      { id: "infineon", name: "Infineon", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "semiconductors-corp", name: "Semiconductors Corp", price: "₹75.00", leadTime: "5 Days" },
-    ],
-  },
-  "oscillator-24mhz": {
-    id: "oscillator-24mhz",
-    name: "Oscillator 24MHz",
-    category: "Frequency",
-    stock: 320,
-    minStock: 50,
-    unit: "PCS",
-    status: "Healthy",
-    description: "24MHz crystal oscillator, ±20ppm stability, 3.3V, 4-pin SMD.",
-    brands: [
-      { id: "kyocera", name: "Kyocera", status: "Approved" },
-    ],
-    suppliers: [
-      { id: "abc-electronics", name: "ABC Electronics", price: "₹18.00", leadTime: "3 Days" },
-    ],
-  },
-}
-
-const PCBS_DATA: Record<string, PCBData> = {
-  "audio-pcb": {
-    name: "Audio PCB",
-    description: "Voice and audio signal processing board",
-    componentsCount: 58,
-    stockCount: 120,
-    usedIn: ["ROIP400", "Voice Logger"],
-    components: [
-      { name: "Audio Codec", type: "IC", qty: 1, approvedBrands: [{ id: "silicon-labs", name: "Silicon Labs" }], lookupId: "audio-codec", partNumber: "TLV320AIC3104", solderType: "SMD", footprint: "QFN-32", spq: 1000, unitPrice: 125.0, availableQty: 120 },
-      { name: "Resistor 10K", type: "Passive", qty: 20, approvedBrands: [{ id: "yageo", name: "Yageo" }, { id: "vishay", name: "Vishay" }], lookupId: "resistor-10k", partNumber: "RC0603JR-0710KL", solderType: "SMD", footprint: "R0603", spq: 5000, unitPrice: 0.8, availableQty: 15000 },
-      { name: "Capacitor 100uF", type: "Passive", qty: 10, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-100uf", partNumber: "EEU-FR1E101", solderType: "DIP", footprint: "Radial 6.3x11mm", spq: 500, unitPrice: 1.45, availableQty: 8000 },
-      { name: "LED Green", type: "Opto", qty: 4, approvedBrands: [{ id: "everlight", name: "Everlight" }, { id: "lite-on", name: "Lite-On" }], lookupId: "led-green", partNumber: "EL-513GD", solderType: "DIP", footprint: "5mm Radial", spq: 1000, unitPrice: 2.1, availableQty: 500 },
-      { name: "Connector", type: "Mechanical", qty: 3, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "connector", partNumber: "10118192-0001LF", solderType: "DIP", footprint: "Header 2.54mm", spq: 250, unitPrice: 18.0, availableQty: 3200 },
-    ],
-  },
-  "gsm-pcb": {
-    name: "GSM PCB",
-    description: "Mobile network connectivity module board",
-    componentsCount: 75,
-    stockCount: 80,
-    usedIn: ["ROIP400"],
-    components: [
-      { name: "GSM Chip", type: "IC", qty: 1, approvedBrands: [{ id: "quectel", name: "Quectel" }], lookupId: "gsm-chip", partNumber: "MC60", solderType: "SMD", footprint: "LGA-68", spq: 250, unitPrice: 375.0, availableQty: 85 },
-      { name: "SIM Holder", type: "Connector", qty: 1, approvedBrands: [{ id: "molex", name: "Molex" }], lookupId: "sim-holder", partNumber: "78646-0001", solderType: "SMD", footprint: "SIM-6P", spq: 500, unitPrice: 15.0, availableQty: 300 },
-      { name: "Capacitor 10uF", type: "Passive", qty: 15, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitor-10uf", partNumber: "GRM21BR61H106", solderType: "SMD", footprint: "C0805", spq: 4000, unitPrice: 0.6, availableQty: 12000 },
-      { name: "Antenna Connector", type: "RF", qty: 2, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "antenna-connector", partNumber: "SMA-J-P-H-ST-EM1", solderType: "DIP", footprint: "SMA-TH", spq: 200, unitPrice: 22.0, availableQty: 450 },
-    ],
-  },
-  "display-pcb": {
-    name: "Display PCB",
-    description: "LCD screen driver interface board",
-    componentsCount: 40,
-    stockCount: 150,
-    usedIn: ["ROIP400"],
-    components: [
-      { name: "Display IC", type: "IC", qty: 1, approvedBrands: [{ id: "sitronix", name: "Sitronix" }], lookupId: "display-ic", partNumber: "ST7789V", solderType: "SMD", footprint: "QFN-48", spq: 1000, unitPrice: 85.0, availableQty: 250 },
-      { name: "LED Backlight Driver", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "led-backlight-driver", partNumber: "TPS61165DRVR", solderType: "SMD", footprint: "SOT-23-6", spq: 1000, unitPrice: 42.0, availableQty: 200 },
-      { name: "LEDs", type: "Opto", qty: 12, approvedBrands: [{ id: "lite-on", name: "Lite-On" }, { id: "everlight", name: "Everlight" }], lookupId: "leds", partNumber: "LTW-3528", solderType: "SMD", footprint: "3528", spq: 2000, unitPrice: 1.8, availableQty: 6000 },
-      { name: "Ribbon Connector", type: "Mechanical", qty: 1, approvedBrands: [{ id: "amphenol", name: "Amphenol" }], lookupId: "ribbon-connector", partNumber: "FH12-40S-0.5SH", solderType: "SMD", footprint: "FPC-40P", spq: 500, unitPrice: 12.0, availableQty: 800 },
-    ],
-  },
-  "power-pcb": {
-    name: "Power PCB",
-    description: "Voltage regulation and power distribution board",
-    componentsCount: 32,
-    stockCount: 200,
-    usedIn: ["ROIP400"],
-    components: [
-      { name: "Power IC", type: "IC", qty: 1, approvedBrands: [{ id: "texas-instruments", name: "Texas Instruments" }], lookupId: "power-ic", partNumber: "TPS54360DDAR", solderType: "SMD", footprint: "HSOP-8", spq: 1000, unitPrice: 95.0, availableQty: 180 },
-      { name: "Inductor 4.7uH", type: "Passive", qty: 3, approvedBrands: [{ id: "tdk", name: "TDK" }], lookupId: "inductor-4.7uh", partNumber: "SPM6530T-4R7M", solderType: "SMD", footprint: "6x6mm", spq: 1000, unitPrice: 3.2, availableQty: 4500 },
-      { name: "Capacitors 22uF", type: "Passive", qty: 8, approvedBrands: [{ id: "murata", name: "Murata" }, { id: "panasonic", name: "Panasonic" }], lookupId: "capacitors-22uf", partNumber: "GRM31CR61C226", solderType: "SMD", footprint: "C1206", spq: 3000, unitPrice: 1.1, availableQty: 9500 },
-      { name: "Fuse 2A", type: "Protection", qty: 2, approvedBrands: [{ id: "littelfuse", name: "Littelfuse" }], lookupId: "fuse-2a", partNumber: "0467002.NR", solderType: "SMD", footprint: "C1206", spq: 2000, unitPrice: 5.5, availableQty: 2200 },
-    ],
-  },
-  "main-pcb": {
-    name: "Main PCB",
-    description: "Primary controller and DSP board",
-    componentsCount: 80,
-    stockCount: 50,
-    usedIn: ["Voice Logger"],
-    components: [
-      { name: "DSP Chip", type: "IC", qty: 1, approvedBrands: [{ id: "analog-devices", name: "Analog Devices" }], lookupId: "dsp-chip", partNumber: "ADSP-21489KSWZ", solderType: "SMD", footprint: "LQFP-176", spq: 500, unitPrice: 450.0, availableQty: 60 },
-      { name: "Microcontroller", type: "MCU", qty: 1, approvedBrands: [{ id: "stmicroelectronics", name: "STMicroelectronics" }], lookupId: "microcontroller", partNumber: "STM32F407VGT6", solderType: "SMD", footprint: "LQFP-100", spq: 250, unitPrice: 280.0, availableQty: 95 },
-      { name: "SRAM 512KB", type: "Memory", qty: 2, approvedBrands: [{ id: "infineon", name: "Infineon" }], lookupId: "sram-512kb", partNumber: "CY62157EV30LL", solderType: "SMD", footprint: "TSOP-44", spq: 500, unitPrice: 75.0, availableQty: 140 },
-      { name: "Oscillator 24MHz", type: "Frequency", qty: 1, approvedBrands: [{ id: "kyocera", name: "Kyocera" }], lookupId: "oscillator-24mhz", partNumber: "CX3225SB24000", solderType: "SMD", footprint: "3225", spq: 1000, unitPrice: 18.0, availableQty: 320 },
-    ],
-  },
-}
-
 function PCBStructureContent() {
   const searchParams = useSearchParams()
   const pcbId = searchParams.get("pcb") || "audio-pcb"
@@ -484,23 +53,65 @@ function PCBStructureContent() {
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
 
-  // Fallback to audio-pcb if invalid pcbId
-  const pcb = PCBS_DATA[pcbId] || PCBS_DATA["audio-pcb"]
+  const formatINR = (n: number) =>
+    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  // Fallback to first PCB if invalid pcbId — data comes from the central store
+  const pcbEntity = getPcb(pcbId) || PCBS[0]
+
+  // Build the view model (ComponentItem[]) from the linked component records
+  const pcb = {
+    name: pcbEntity.name,
+    description: pcbEntity.description,
+    componentsCount: pcbEntity.componentsCount,
+    stockCount: pcbEntity.stockCount,
+    usedIn: productsUsingPcb(pcbEntity.id).map((p) => p.name),
+    components: pcbBom(pcbEntity).map(({ component, qty }): ComponentItem => ({
+      name: component.name,
+      type: component.category,
+      qty,
+      lookupId: component.id,
+      approvedBrands: componentBrands(component).map((b) => ({ id: b.id, name: b.name })),
+      partNumber: component.brandVariants[0]?.partNo,
+      solderType: component.solderType,
+      footprint: component.footprint,
+      spq: component.spq,
+      unitPrice: bestPrice(component),
+      availableQty: component.stock,
+    })),
+  }
 
   const handleComponentClick = (comp: ComponentItem) => {
-    if (comp.lookupId && DRAWER_COMPONENTS_DATA[comp.lookupId]) {
+    if (comp.lookupId && getComponent(comp.lookupId)) {
       setSelectedCompId(comp.lookupId)
     }
   }
 
-  const selectedComponentDetail = selectedCompId ? DRAWER_COMPONENTS_DATA[selectedCompId] : null
+  const selectedComponent = selectedCompId ? getComponent(selectedCompId) : null
+  const selectedComponentDetail: DrawerComponentDetail | null = selectedComponent
+    ? {
+        id: selectedComponent.id,
+        name: selectedComponent.name,
+        category: selectedComponent.category,
+        stock: selectedComponent.stock,
+        minStock: selectedComponent.minStock,
+        unit: selectedComponent.unit,
+        status: componentStockStatus(selectedComponent) === "Healthy" ? "Healthy" : "Low",
+        description: selectedComponent.description,
+        brands: componentBrands(selectedComponent).map((b) => ({ id: b.id, name: b.name, status: "Approved" })),
+        suppliers: selectedComponent.offers.map((o) => ({
+          id: o.supplierId,
+          name: getSupplierName(o.supplierId),
+          price: formatINR(o.price),
+          leadTime: formatLeadTime(o.leadTimeDays),
+        })),
+      }
+    : null
 
   // Compute total component instances
   const totalParts = pcb.components.reduce((sum, c) => sum + c.qty, 0)
 
   // Excel/BOM view helpers
-  const formatINR = (n: number) =>
-    "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
   const lineTotal = (c: ComponentItem) => (c.unitPrice ?? 0) * c.qty * buildQty
   const bomTotalValue = pcb.components.reduce((sum, c) => sum + lineTotal(c), 0)
 
@@ -649,7 +260,7 @@ function PCBStructureContent() {
               {/* Children Component Nodes */}
               <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-6 before:w-[2px] before:border-l-2 before:border-dashed before:border-border">
                 {pcb.components.map((component) => {
-                  const isClickable = !!component.lookupId && !!DRAWER_COMPONENTS_DATA[component.lookupId]
+                  const isClickable = !!component.lookupId && !!getComponent(component.lookupId)
                   return (
                     <div key={component.name} className="relative flex items-start gap-3.5 group">
                       {/* Connection Line */}
@@ -737,7 +348,7 @@ function PCBStructureContent() {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {pcb.components.map((c, idx) => {
-                    const isClickable = !!c.lookupId && !!DRAWER_COMPONENTS_DATA[c.lookupId]
+                    const isClickable = !!c.lookupId && !!getComponent(c.lookupId)
                     const qtyNeeded = c.qty * buildQty
                     const shortage = c.availableQty !== undefined && c.availableQty < qtyNeeded
                     return (

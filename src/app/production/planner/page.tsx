@@ -9,6 +9,7 @@ import {
   ShieldAlert, ShoppingBag, Nut, PlayCircle, ChevronDown,
   ChevronUp, Check, Package, Plus, ArrowLeft, ArrowRight, RotateCcw,
 } from "lucide-react"
+import { PLANNER_SHORTAGES as SHORTAGES } from "@/mockdata/production"
 
 // Types
 interface PurchaseRequest {
@@ -24,12 +25,6 @@ interface PurchaseRequest {
   status: "Draft" | "Pending Approval" | "Sent" | "Approved"
   date: string
 }
-
-// Calculated shortages from the MRP run
-const SHORTAGES = [
-  { item: "Audio Codec", brand: "TI", missing: 50 },
-  { item: "LED Green", brand: "Panasonic", missing: 200 },
-]
 
 export default function ProductionPlannerPage() {
   const [product, setProduct] = React.useState("roip-400")

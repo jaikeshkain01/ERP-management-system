@@ -10,6 +10,11 @@ import {
   Boxes, Tag, Truck, BarChart3, FileText, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
+import {
+  COMPONENTS, getBrandName, getSupplierName, componentUsage,
+  cheapestOffer as mCheapest, fastestOffer as mFastest,
+  isSingleSupplier, formatINR as mFormatINR, formatLeadTime,
+} from "@/mockdata"
 
 interface Specification {
   key: string
@@ -59,225 +64,42 @@ interface ComponentData {
   purchaseInsights: PurchaseInsights
 }
 
-const COMPONENTS_DATA: ComponentData[] = [
-  {
-    id: "resistor-10k",
-    genericPN: "RES-10K",
-    name: "Resistor 10K",
-    category: "Passive",
-    stock: 7000,
-    minStock: 5000,
-    unit: "PCS",
-    solderType: "SMD",
-    footprint: "0603",
-    spq: 5000,
-    specs: [
-      { key: "Tolerance", value: "±5%" },
-      { key: "Power Rating", value: "0.25W" },
-      { key: "Voltage", value: "50V" }
-    ],
-    brandVariants: [
-      { brand: "Yageo", brandPartNo: "RC0603JR", stock: 3000 },
-      { brand: "Vishay", brandPartNo: "CRCW0603", stock: 2500 },
-      { brand: "Panasonic", brandPartNo: "ERJ3EKF", stock: 1500 }
-    ],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Yageo", price: "₹0.80" },
-      { supplier: "Mouser", brand: "Vishay", price: "₹0.95" },
-      { supplier: "DigiKey", brand: "Panasonic", price: "₹1.10" }
-    ],
-    usage: [
-      { product: "ROIP400", pcb: "Audio PCB" },
-      { product: "ROIP400", pcb: "Display PCB" },
-      { product: "Voice Logger", pcb: "Audio PCB" }
-    ],
+// Catalog view model derived from the centralized component store.
+const COMPONENTS_DATA: ComponentData[] = COMPONENTS.map((c) => {
+  const cheapest = mCheapest(c)
+  const fastest = mFastest(c)
+  return {
+    id: c.id,
+    genericPN: c.genericPN,
+    name: c.name,
+    category: c.category,
+    stock: c.stock,
+    minStock: c.minStock,
+    unit: c.unit,
+    solderType: c.solderType,
+    footprint: c.footprint,
+    spq: c.spq,
+    specs: c.specs,
+    brandVariants: c.brandVariants.map((v) => ({
+      brand: getBrandName(v.brandId),
+      brandPartNo: v.partNo,
+      stock: v.stock,
+    })),
+    suppliers: c.offers.map((o) => ({
+      supplier: getSupplierName(o.supplierId),
+      brand: getBrandName(o.brandId),
+      price: mFormatINR(o.price),
+    })),
+    usage: componentUsage(c.id).map((u) => ({ product: u.product.name, pcb: u.pcb.name })),
     purchaseInsights: {
-      cheapestSupplier: "ABC Electronics",
-      cheapestPrice: "₹0.80",
-      fastestSupplier: "XYZ Components",
-      fastestDelivery: "2 Days",
-      singleSupplierRisk: "NO"
-    }
-  },
-  {
-    id: "capacitor-100uf",
-    genericPN: "CAP-100UF",
-    name: "Capacitor 100uF",
-    category: "Passive",
-    stock: 400,
-    minStock: 500,
-    unit: "PCS",
-    solderType: "DIP",
-    footprint: "Radial 6.3x11mm",
-    spq: 500,
-    specs: [
-      { key: "Tolerance", value: "±20%" },
-      { key: "Power Rating", value: "0.5W" },
-      { key: "Voltage", value: "25V" }
-    ],
-    brandVariants: [
-      { brand: "Nichicon", brandPartNo: "UVR1E101MED", stock: 250 },
-      { brand: "Rubycon", brandPartNo: "25YXG100M", stock: 150 }
-    ],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Nichicon", price: "₹1.50" },
-      { supplier: "Mouser", brand: "Rubycon", price: "₹1.80" },
-      { supplier: "DigiKey", brand: "Nichicon", price: "₹1.70" },
-      { supplier: "Arrow", brand: "Rubycon", price: "₹1.90" }
-    ],
-    usage: [
-      { product: "ROIP400", pcb: "Audio PCB" },
-      { product: "Voice Logger", pcb: "Main PCB" }
-    ],
-    purchaseInsights: {
-      cheapestSupplier: "ABC Electronics",
-      cheapestPrice: "₹1.50",
-      fastestSupplier: "XYZ Components",
-      fastestDelivery: "1 Day",
-      singleSupplierRisk: "NO"
-    }
-  },
-  {
-    id: "audio-codec",
-    genericPN: "AUDIO-CODEC",
-    name: "Audio Codec IC",
-    category: "IC",
-    stock: 50,
-    minStock: 120,
-    unit: "PCS",
-    solderType: "SMD",
-    footprint: "QFN-32",
-    spq: 1000,
-    specs: [
-      { key: "Type", value: "Stereo Audio Codec" },
-      { key: "Interface", value: "I2C, I2S" },
-      { key: "Resolution", value: "24-bit" }
-    ],
-    brandVariants: [
-      { brand: "Texas Instruments", brandPartNo: "TLV320AIC3104", stock: 50 }
-    ],
-    suppliers: [
-      { supplier: "ABC Electronics", brand: "Texas Instruments", price: "₹68.00" }
-    ],
-    usage: [
-      { product: "ROIP400", pcb: "Audio PCB" },
-      { product: "Voice Logger", pcb: "Audio PCB" }
-    ],
-    purchaseInsights: {
-      cheapestSupplier: "ABC Electronics",
-      cheapestPrice: "₹68.00",
-      fastestSupplier: "ABC Electronics",
-      fastestDelivery: "3 Days",
-      singleSupplierRisk: "YES"
-    }
-  },
-  {
-    id: "gsm-chip",
-    genericPN: "GSM-CHIP",
-    name: "GSM Chipset",
-    category: "RF Module",
-    stock: 350,
-    minStock: 200,
-    unit: "PCS",
-    solderType: "SMD",
-    footprint: "LGA-68",
-    spq: 250,
-    specs: [
-      { key: "Technology", value: "Quad-band GSM/GPRS" },
-      { key: "Voltage Range", value: "3.3V - 4.6V" },
-      { key: "Dimension", value: "18.7 x 16.0 mm" }
-    ],
-    brandVariants: [
-      { brand: "Quectel", brandPartNo: "MC60", stock: 350 }
-    ],
-    suppliers: [
-      { supplier: "XYZ Components", brand: "Quectel", price: "₹380.00" }
-    ],
-    usage: [
-      { product: "ROIP400", pcb: "GSM PCB" }
-    ],
-    purchaseInsights: {
-      cheapestSupplier: "XYZ Components",
-      cheapestPrice: "₹380.00",
-      fastestSupplier: "XYZ Components",
-      fastestDelivery: "2 Days",
-      singleSupplierRisk: "YES"
-    }
-  },
-  {
-    id: "mcu-stm32",
-    genericPN: "MCU-STM32",
-    name: "STM32 Microcontroller",
-    category: "IC",
-    stock: 1200,
-    minStock: 1000,
-    unit: "PCS",
-    solderType: "SMD",
-    footprint: "LQFP-64",
-    spq: 90,
-    specs: [
-      { key: "Core", value: "ARM Cortex-M4" },
-      { key: "Frequency", value: "84MHz" },
-      { key: "Flash Memory", value: "512KB" }
-    ],
-    brandVariants: [
-      { brand: "STMicroelectronics", brandPartNo: "STM32F401RET6", stock: 700 },
-      { brand: "GigaDevice", brandPartNo: "GD32F401RET6", stock: 500 }
-    ],
-    suppliers: [
-      { supplier: "Mouser", brand: "STMicroelectronics", price: "₹125.00" },
-      { supplier: "DigiKey", brand: "STMicroelectronics", price: "₹128.00" },
-      { supplier: "XYZ Components", brand: "GigaDevice", price: "₹110.00" }
-    ],
-    usage: [
-      { product: "Voice Logger", pcb: "Main PCB" }
-    ],
-    purchaseInsights: {
-      cheapestSupplier: "XYZ Components",
-      cheapestPrice: "₹110.00",
-      fastestSupplier: "DigiKey",
-      fastestDelivery: "2 Days",
-      singleSupplierRisk: "NO"
-    }
-  },
-  {
-    id: "led-green",
-    genericPN: "LED-GRN",
-    name: "LED Green Indicator",
-    category: "Optoelectronics",
-    stock: 300,
-    minStock: 1000,
-    unit: "PCS",
-    solderType: "DIP",
-    footprint: "5mm Radial",
-    spq: 1000,
-    specs: [
-      { key: "Color", value: "Green" },
-      { key: "Forward Voltage", value: "2.1V" },
-      { key: "Luminous Intensity", value: "120mcd" }
-    ],
-    brandVariants: [
-      { brand: "Everlight", brandPartNo: "EL-513-GRN", stock: 150 },
-      { brand: "Lite-On", brandPartNo: "LTL-4231N", stock: 150 }
-    ],
-    suppliers: [
-      { supplier: "LED Depot", brand: "Everlight", price: "₹2.20" },
-      { supplier: "XYZ Components", brand: "Lite-On", price: "₹2.10" },
-      { supplier: "ABC Electronics", brand: "Everlight", price: "₹2.40" }
-    ],
-    usage: [
-      { product: "ROIP400", pcb: "Display PCB" },
-      { product: "Voice Logger", pcb: "Interface PCB" }
-    ],
-    purchaseInsights: {
-      cheapestSupplier: "XYZ Components",
-      cheapestPrice: "₹2.10",
-      fastestSupplier: "XYZ Components",
-      fastestDelivery: "1 Day",
-      singleSupplierRisk: "NO"
-    }
+      cheapestSupplier: cheapest ? getSupplierName(cheapest.supplierId) : "—",
+      cheapestPrice: cheapest ? mFormatINR(cheapest.price) : "—",
+      fastestSupplier: fastest ? getSupplierName(fastest.supplierId) : "—",
+      fastestDelivery: fastest ? formatLeadTime(fastest.leadTimeDays) : "—",
+      singleSupplierRisk: isSingleSupplier(c) ? "YES" : "NO",
+    },
   }
-]
+})
 
 const getStatusInfo = (comp: ComponentData) => {
   if (comp.stock <= comp.minStock * 0.5) {

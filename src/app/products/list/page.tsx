@@ -5,11 +5,12 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { 
-  Cpu, Filter, Nut, Package, Plus, Search, 
-  CheckCircle2, ArrowRight, Award, Layers, 
+import {
+  Cpu, Filter, Nut, Package, Plus, Search,
+  CheckCircle2, ArrowRight, Award, Layers,
   XCircle, AlertTriangle, RefreshCw
 } from "lucide-react"
+import { PRODUCTS, productUniqueComponents, productBrandCount } from "@/mockdata"
 
 interface ProductData {
   id: string
@@ -22,38 +23,17 @@ interface ProductData {
   status: "Ready" | "Blocked" | "Limited"
 }
 
-const PRODUCTS_DATA: ProductData[] = [
-  {
-    id: "roip-400",
-    name: "ROIP 400",
-    description: "Radio over IP Gateway Terminal",
-    pcbs: 4,
-    components: 285,
-    brands: 42,
-    buildableQty: 120,
-    status: "Ready",
-  },
-  {
-    id: "voice-logger",
-    name: "Voice Logger",
-    description: "Multi-channel voice recording system",
-    pcbs: 3,
-    components: 160,
-    brands: 24,
-    buildableQty: 0,
-    status: "Blocked",
-  },
-  {
-    id: "dispatcher",
-    name: "Dispatcher Console",
-    description: "IP Dispatcher terminal with touch-screen",
-    pcbs: 5,
-    components: 412,
-    brands: 56,
-    buildableQty: 20,
-    status: "Limited",
-  }
-]
+// View model derived from the centralized product → PCB → component graph.
+const PRODUCTS_DATA: ProductData[] = PRODUCTS.map((p) => ({
+  id: p.id,
+  name: p.name,
+  description: p.description,
+  pcbs: p.pcbIds.length,
+  components: productUniqueComponents(p).length,
+  brands: productBrandCount(p),
+  buildableQty: p.buildableQty,
+  status: p.status,
+}))
 
 export default function ProductListPage() {
   const [searchQuery, setSearchQuery] = React.useState("")

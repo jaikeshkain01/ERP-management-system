@@ -12,6 +12,11 @@ import {
   Boxes, Truck, Layers, Gauge, Zap, ShieldAlert, Clock, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
+import {
+  COMPONENTS, getBrandName, getSupplierName, componentUsage,
+  productsUsingComponent, pcbsUsingComponent, componentStockStatus,
+  cheapestOffer as mCheapest, formatINR as mINR, formatLeadTime,
+} from "@/mockdata"
 
 interface SupplierOffer {
   manufacturer: string
@@ -62,128 +67,55 @@ interface ComponentDetailData {
   specs: { key: string; value: string }[]
 }
 
-const COMPONENTS_DATA: Record<string, ComponentDetailData> = {
-  "resistor-10k": {
-    name: "Resistor 10K",
-    category: "Passive",
-    genericPN: "RES-10K",
-    solderType: "SMD",
-    footprint: "0603",
-    spq: 5000,
-    minStock: 5000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "10k Ohm metal film chip resistor, 0.25W power rating, ±1% tolerance.",
-    usedInList: ["ROIP400", "Voice Logger"],
-    mfgVariants: [
-      { manufacturer: "Yageo", mfgPartNo: "RC0603JR-0710KL", stock: 5000 },
-      { manufacturer: "Vishay", mfgPartNo: "CRCW060310K0FKEA", stock: 2000 },
-    ],
-    suppliers: [
-      { manufacturer: "Yageo", name: "ABC Electronics", price: "₹0.80", moq: 1000, leadTime: "3 Days", preferred: true },
-      { manufacturer: "Vishay", name: "Mouser", price: "₹0.95", moq: 500, leadTime: "7 Days" },
-    ],
-    usedInProductsCount: 3,
-    usedInPCBsCount: 8,
-    totalUsageProduct: "ROIP 400",
-    totalUsageQty: 25,
-    productUsageTable: [
-      { product: "ROIP 400", pcb: "Audio PCB", qty: 20 },
-      { product: "ROIP 400", pcb: "Display PCB", qty: 5 },
-      { product: "Voice Logger", pcb: "Audio PCB", qty: 10 },
-      { product: "Dispatcher", pcb: "Power PCB", qty: 8 },
-    ],
-    whereUsedTree: [
-      { product: "ROIP 400", pcbs: ["Audio PCB", "Display PCB"] },
-      { product: "Voice Logger", pcbs: ["Audio PCB"] },
-      { product: "Dispatcher", pcbs: ["Power PCB"] },
-    ],
-    specs: [
-      { key: "Tolerance", value: "±1%" },
-      { key: "Power Rating", value: "0.25W" },
-      { key: "Voltage", value: "50V" }
+// Detail view model derived from the centralized component store.
+const COMPONENTS_DATA: Record<string, ComponentDetailData> = Object.fromEntries(
+  COMPONENTS.map((c) => {
+    const usage = componentUsage(c.id)
+    const cheapest = mCheapest(c)
+    const whereMap = new Map<string, string[]>()
+    usage.forEach((u) => {
+      const arr = whereMap.get(u.product.name) ?? []
+      if (!arr.includes(u.pcb.name)) arr.push(u.pcb.name)
+      whereMap.set(u.product.name, arr)
+    })
+    return [
+      c.id,
+      {
+        name: c.name,
+        category: c.category,
+        genericPN: c.genericPN,
+        solderType: c.solderType,
+        footprint: c.footprint,
+        spq: c.spq,
+        minStock: c.minStock,
+        unit: c.unit,
+        status: componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
+        description: c.description,
+        usedInList: productsUsingComponent(c.id).map((p) => p.code),
+        mfgVariants: c.brandVariants.map((v) => ({
+          manufacturer: getBrandName(v.brandId),
+          mfgPartNo: v.partNo,
+          stock: v.stock,
+        })),
+        suppliers: c.offers.map((o) => ({
+          manufacturer: getBrandName(o.brandId),
+          name: getSupplierName(o.supplierId),
+          price: mINR(o.price),
+          moq: c.spq,
+          leadTime: formatLeadTime(o.leadTimeDays),
+          preferred: !!cheapest && o.supplierId === cheapest.supplierId && o.price === cheapest.price,
+        })),
+        usedInProductsCount: productsUsingComponent(c.id).length,
+        usedInPCBsCount: pcbsUsingComponent(c.id).length,
+        totalUsageProduct: usage[0]?.product.name ?? "—",
+        totalUsageQty: usage.reduce((s, u) => s + u.qty, 0),
+        productUsageTable: usage.map((u) => ({ product: u.product.name, pcb: u.pcb.name, qty: u.qty })),
+        whereUsedTree: Array.from(whereMap.entries()).map(([product, pcbs]) => ({ product, pcbs })),
+        specs: c.specs,
+      } satisfies ComponentDetailData,
     ]
-  },
-  "led-green": {
-    name: "LED Green",
-    category: "Optoelectronics",
-    genericPN: "LED-GRN",
-    solderType: "DIP",
-    footprint: "5mm",
-    spq: 500,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Low",
-    description: "5mm green LED light emitting diode, through-hole, 2.1V forward voltage.",
-    usedInList: ["ROIP400", "Voice Logger"],
-    mfgVariants: [
-      { manufacturer: "Everlight", mfgPartNo: "EL-513-GRN", stock: 300 },
-      { manufacturer: "Lite-On", mfgPartNo: "LTL-4231N", stock: 200 },
-    ],
-    suppliers: [
-      { manufacturer: "Everlight", name: "LED Depot", price: "₹2.20", moq: 500, leadTime: "2 Days", preferred: true },
-      { manufacturer: "Lite-On", name: "XYZ Components", price: "₹2.10", moq: 2000, leadTime: "4 Days" },
-      { manufacturer: "Everlight", name: "ABC Electronics", price: "₹2.40", moq: 100, leadTime: "1 Day" },
-    ],
-    usedInProductsCount: 2,
-    usedInPCBsCount: 4,
-    totalUsageProduct: "ROIP 400",
-    totalUsageQty: 12,
-    productUsageTable: [
-      { product: "ROIP 400", pcb: "Display PCB", qty: 10 },
-      { product: "ROIP 400", pcb: "Audio PCB", qty: 2 },
-      { product: "Voice Logger", pcb: "Interface PCB", qty: 5 },
-    ],
-    whereUsedTree: [
-      { product: "ROIP 400", pcbs: ["Display PCB", "Audio PCB"] },
-      { product: "Voice Logger", pcbs: ["Interface PCB"] },
-    ],
-    specs: [
-      { key: "Color", value: "Green" },
-      { key: "Forward Voltage", value: "2.1V" },
-      { key: "Luminous Intensity", value: "120mcd" }
-    ]
-  },
-  "capacitor-100uf": {
-    name: "Capacitor 100uF",
-    category: "Passive",
-    genericPN: "CAP-100UF",
-    solderType: "DIP",
-    footprint: "Radial 6.3x11mm",
-    spq: 2000,
-    minStock: 1000,
-    unit: "PCS",
-    status: "Healthy",
-    description: "100uF aluminum electrolytic capacitor, 25V, radial lead, 20% tolerance.",
-    usedInList: ["ROIP400", "Voice Logger"],
-    mfgVariants: [
-      { manufacturer: "Nichicon", mfgPartNo: "UVR1E101MED", stock: 4000 },
-      { manufacturer: "Rubycon", mfgPartNo: "25YXG100MEFC6.3X11", stock: 4000 },
-    ],
-    suppliers: [
-      { manufacturer: "Nichicon", name: "PowerTech", price: "₹1.50", moq: 500, leadTime: "2 Days", preferred: true },
-      { manufacturer: "Rubycon", name: "XYZ Components", price: "₹1.40", moq: 2500, leadTime: "5 Days" },
-      { manufacturer: "Nichicon", name: "ABC Electronics", price: "₹1.65", moq: 1000, leadTime: "3 Days" },
-    ],
-    usedInProductsCount: 2,
-    usedInPCBsCount: 5,
-    totalUsageProduct: "ROIP 400",
-    totalUsageQty: 15,
-    productUsageTable: [
-      { product: "ROIP 400", pcb: "Audio PCB", qty: 15 },
-      { product: "Voice Logger", pcb: "Memory PCB", qty: 8 },
-    ],
-    whereUsedTree: [
-      { product: "ROIP 400", pcbs: ["Audio PCB"] },
-      { product: "Voice Logger", pcbs: ["Memory PCB"] },
-    ],
-    specs: [
-      { key: "Capacitance", value: "100uF" },
-      { key: "Voltage Rating", value: "25V" },
-      { key: "Tolerance", value: "±20%" }
-    ]
-  },
-}
+  }),
+)
 
 function ComponentDetailsContent() {
   const searchParams = useSearchParams()

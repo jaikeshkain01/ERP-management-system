@@ -4,40 +4,21 @@ import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { CheckCircle2, XCircle, ShieldAlert, AlertCircle, RefreshCw, Check, FileText } from "lucide-react"
-
-interface ReadinessItem {
-  component: string
-  required: number
-  available: number
-  status: boolean
-}
-
-interface ShortageSupplier {
-  brand: string
-  supplierId: string
-  supplierName: string
-  price: string
-  leadTime: string
-}
+import {
+  READINESS_ITEMS, READINESS_SOURCING, READINESS_MISSING_QTY,
+  READINESS_SHORT_COMPONENT,
+} from "@/mockdata/production"
 
 export default function ProductionReadinessPage() {
-  const [readinessItems, setReadinessItems] = React.useState<ReadinessItem[]>([
-    { component: "Resistor 10K", required: 15000, available: 15000, status: true },
-    { component: "Capacitor 100uF", required: 1000, available: 8000, status: true },
-    { component: "LED Green", required: 700, available: 500, status: false },
-  ])
+  const [readinessItems] = React.useState(READINESS_ITEMS)
 
   const [selectedSupplierIdx, setSelectedSupplierIdx] = React.useState<number>(0)
   const [toast, setToast] = React.useState<{ message: string; prId: string } | null>(null)
   const [auditRunning, setAuditRunning] = React.useState(false)
 
-  const missingQty = 700 - 500 // 200
+  const missingQty = READINESS_MISSING_QTY
 
-  const suppliers: ShortageSupplier[] = [
-    { brand: "Panasonic", supplierId: "abc-electronics", supplierName: "ABC Electronics", price: "₹2.10", leadTime: "3 Days" },
-    { brand: "Panasonic", supplierId: "xyz-components", supplierName: "XYZ Components", price: "₹2.20", leadTime: "2 Days" },
-    { brand: "Samsung", supplierId: "mouser", supplierName: "Mouser", price: "₹2.30", leadTime: "5 Days" }
-  ]
+  const suppliers = READINESS_SOURCING
 
   const handleCreatePR = () => {
     const s = suppliers[selectedSupplierIdx] || suppliers[0]
@@ -46,7 +27,7 @@ export default function ProductionReadinessPage() {
     const totalCost = (missingQty * unitPrice).toFixed(2)
     
     setToast({
-      message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of LED Green (Brand: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
+      message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of ${READINESS_SHORT_COMPONENT} (Brand: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
       prId
     })
 
@@ -189,7 +170,7 @@ export default function ProductionReadinessPage() {
               <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg">
                 <span className="text-xs uppercase font-extrabold tracking-wider text-destructive/85 block">Missing Stock</span>
                 <div className="flex items-baseline justify-between mt-2">
-                  <span className="text-sm font-bold text-foreground">LED Green</span>
+                  <span className="text-sm font-bold text-foreground">{READINESS_SHORT_COMPONENT}</span>
                   <span className="text-lg font-mono font-extrabold text-destructive">-{missingQty.toLocaleString()} Units</span>
                 </div>
               </div>

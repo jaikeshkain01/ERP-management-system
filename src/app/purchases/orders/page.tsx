@@ -5,46 +5,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle } from "lucide-react"
 import Link from "next/link"
-
-interface PurchaseOrder {
-  poId: string
-  prId: string
-  componentName: string
-  brandName: string
-  supplierName: string
-  qty: number
-  totalCost: string
-  status: "Sent" | "Dispatched" | "Completed"
-  date: string
-}
-
-const DEFAULT_POS: PurchaseOrder[] = [
-  {
-    poId: "PO-984302",
-    prId: "PR-728109",
-    componentName: "Resistor 10K",
-    brandName: "Yageo",
-    supplierName: "ABC Electronics",
-    qty: 5000,
-    totalCost: "₹4,000.00",
-    status: "Completed",
-    date: "2026-06-20"
-  },
-  {
-    poId: "PO-102948",
-    prId: "PR-392048",
-    componentName: "Capacitor 100uF",
-    brandName: "Murata",
-    supplierName: "XYZ Components",
-    qty: 1000,
-    totalCost: "₹1,450.00",
-    status: "Dispatched",
-    date: "2026-06-21"
-  }
-]
+import { PURCHASE_ORDERS, type PurchaseOrder } from "@/mockdata/purchases"
 
 function PurchaseOrdersContent() {
-  const [poList, setPoList] = React.useState<PurchaseOrder[]>(DEFAULT_POS)
+  const [poList, setPoList] = React.useState<PurchaseOrder[]>(PURCHASE_ORDERS)
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
@@ -59,7 +23,7 @@ function PurchaseOrdersContent() {
           console.error("Failed to parse purchase orders", e)
         }
       } else {
-        localStorage.setItem("mockup2_erp_purchase_orders", JSON.stringify(DEFAULT_POS))
+        localStorage.setItem("mockup2_erp_purchase_orders", JSON.stringify(PURCHASE_ORDERS))
       }
     }
   }, [])

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, Nut, Cpu, Package, Activity, Layers, AlertTriangle, ShieldCheck, Check, Clock, TrendingUp } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts"
+import { COMPONENTS, productsUsingComponent, pcbsUsingComponent } from "@/mockdata"
 
 interface MonthUsage {
   month: string
@@ -27,89 +28,41 @@ interface ComponentUsageData {
   trendData: MonthUsage[]
 }
 
-const COMPONENTS_USAGE_DATA: Record<string, ComponentUsageData> = {
-  "resistor-10k": {
-    id: "resistor-10k",
-    displayName: "Resistor 10K",
-    category: "Resistor",
-    usedInProductsCount: 3,
-    usedInPCBsCount: 8,
-    annualConsumption: 52000,
-    currentStock: 15000,
-    coverageDays: "105 Days",
-    coverageNum: 105,
-    unit: "PCS",
-    description: "Axial carbon film resistor, 10k Ohm value, used for signal pull-ups, logic gate biasing, and general filtering on Audio, GSM, and Power PCBs.",
-    trendData: [
-      { month: "Jan", usage: 4100 },
-      { month: "Feb", usage: 4300 },
-      { month: "Mar", usage: 4500 },
-      { month: "Apr", usage: 4400 },
-      { month: "May", usage: 4700 },
-      { month: "Jun", usage: 4900 },
-      { month: "Jul", usage: 4600 },
-      { month: "Aug", usage: 4300 },
-      { month: "Sep", usage: 4200 },
-      { month: "Oct", usage: 4500 },
-      { month: "Nov", usage: 4100 },
-      { month: "Dec", usage: 3800 }
-    ]
-  },
-  "led-green": {
-    id: "led-green",
-    displayName: "LED Green",
-    category: "LED",
-    usedInProductsCount: 2,
-    usedInPCBsCount: 4,
-    annualConsumption: 12000,
-    currentStock: 500,
-    coverageDays: "15 Days",
-    coverageNum: 15,
-    unit: "PCS",
-    description: "Front panel status indicator green LED. Crucial interface check light for ROIP and Voice Logger interfaces.",
-    trendData: [
-      { month: "Jan", usage: 980 },
-      { month: "Feb", usage: 1050 },
-      { month: "Mar", usage: 920 },
-      { month: "Apr", usage: 1100 },
-      { month: "May", usage: 1020 },
-      { month: "Jun", usage: 990 },
-      { month: "Jul", usage: 970 },
-      { month: "Aug", usage: 1010 },
-      { month: "Sep", usage: 1050 },
-      { month: "Oct", usage: 980 },
-      { month: "Nov", usage: 950 },
-      { month: "Dec", usage: 980 }
-    ]
-  },
-  "capacitor-100uf": {
-    id: "capacitor-100uf",
-    displayName: "Capacitor 100uF",
-    category: "Capacitor",
-    usedInProductsCount: 2,
-    usedInPCBsCount: 5,
-    annualConsumption: 24000,
-    currentStock: 4000,
-    coverageDays: "60 Days",
-    coverageNum: 60,
-    unit: "PCS",
-    description: "Electrolytic capacitor. Power rail filter and ripple suppressor for Audio modules and Memory expansion boards.",
-    trendData: [
-      { month: "Jan", usage: 1950 },
-      { month: "Feb", usage: 2050 },
-      { month: "Mar", usage: 1850 },
-      { month: "Apr", usage: 2100 },
-      { month: "May", usage: 2000 },
-      { month: "Jun", usage: 1980 },
-      { month: "Jul", usage: 1950 },
-      { month: "Aug", usage: 2020 },
-      { month: "Sep", usage: 2100 },
-      { month: "Oct", usage: 2000 },
-      { month: "Nov", usage: 2000 },
-      { month: "Dec", usage: 2000 }
-    ]
-  }
+const USAGE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// Deterministic 12-month trend derived from annual consumption (SSR-stable).
+const buildTrend = (annual: number): MonthUsage[] => {
+  const base = Math.round(annual / 12)
+  return USAGE_MONTHS.map((month, i) => ({
+    month,
+    usage: Math.round(base * (0.85 + ((i * 13) % 7) / 20)),
+  }))
 }
+
+// Usage view model derived from the centralized component store.
+const COMPONENTS_USAGE_DATA: Record<string, ComponentUsageData> = Object.fromEntries(
+  COMPONENTS.map((c) => {
+    const coverageNum =
+      c.annualConsumption > 0 ? Math.round(c.stock / (c.annualConsumption / 365)) : 0
+    return [
+      c.id,
+      {
+        id: c.id,
+        displayName: c.name,
+        category: c.category,
+        usedInProductsCount: productsUsingComponent(c.id).length,
+        usedInPCBsCount: pcbsUsingComponent(c.id).length,
+        annualConsumption: c.annualConsumption,
+        currentStock: c.stock,
+        coverageDays: `${coverageNum} Days`,
+        coverageNum,
+        unit: c.unit,
+        description: c.description,
+        trendData: buildTrend(c.annualConsumption),
+      } satisfies ComponentUsageData,
+    ]
+  }),
+)
 
 export default function ComponentUsageAnalysisPage() {
   const [searchTerm, setSearchTerm] = React.useState("")
