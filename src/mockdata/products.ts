@@ -1,7 +1,8 @@
 import type { Product } from "./types"
 
-// Canonical products. `pcbIds` references PCBS, which in turn reference
-// COMPONENTS — giving a full product → PCB → component → brand/supplier graph.
+// Canonical products. `pcbs[]` references PCBS with a per-unit board quantity
+// (a product may need >1 of the same board), plus assembly sequence. PCBs in turn
+// reference COMPONENTS — giving a full product → PCB → component → brand/supplier graph.
 export const PRODUCTS: Product[] = [
   {
     id: "roip-400",
@@ -12,7 +13,12 @@ export const PRODUCTS: Product[] = [
     status: "Ready",
     estimatedCost: 18450,
     buildableQty: 120,
-    pcbIds: ["audio-pcb", "gsm-pcb", "display-pcb", "power-pcb"],
+    pcbs: [
+      { pcbId: "audio-pcb", qty: 1, sequence: 1 },
+      { pcbId: "gsm-pcb", qty: 1, sequence: 2 },
+      { pcbId: "display-pcb", qty: 1, sequence: 3 },
+      { pcbId: "power-pcb", qty: 1, sequence: 4 },
+    ],
   },
   {
     id: "voice-logger",
@@ -23,7 +29,11 @@ export const PRODUCTS: Product[] = [
     status: "Blocked",
     estimatedCost: 12800,
     buildableQty: 0,
-    pcbIds: ["main-pcb", "memory-pcb", "interface-pcb"],
+    pcbs: [
+      { pcbId: "main-pcb", qty: 1, sequence: 1 },
+      { pcbId: "memory-pcb", qty: 1, sequence: 2 },
+      { pcbId: "interface-pcb", qty: 1, sequence: 3 },
+    ],
   },
   {
     id: "dispatcher",
@@ -34,6 +44,12 @@ export const PRODUCTS: Product[] = [
     status: "Limited",
     estimatedCost: 24500,
     buildableQty: 20,
-    pcbIds: ["audio-pcb", "display-pcb", "main-pcb", "power-pcb", "gsm-pcb"],
+    pcbs: [
+      { pcbId: "audio-pcb", qty: 1, sequence: 1 },
+      { pcbId: "display-pcb", qty: 2, sequence: 2, remarks: "Dual-screen console" },
+      { pcbId: "main-pcb", qty: 1, sequence: 3 },
+      { pcbId: "power-pcb", qty: 1, sequence: 4 },
+      { pcbId: "gsm-pcb", qty: 1, sequence: 5 },
+    ],
   },
 ]

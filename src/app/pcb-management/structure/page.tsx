@@ -9,7 +9,7 @@ import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck,
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import {
-  PCBS, getPcb, getComponent, getSupplierName, pcbBom, componentBrands,
+  PCBS, getPcb, getComponent, getSupplierName, getBrandName, pcbBom, componentBrands,
   componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime,
 } from "@/mockdata"
 
@@ -25,6 +25,9 @@ interface ComponentItem {
   approvedBrands?: ComponentBrand[]
   lookupId?: string
   // Extended BOM (Excel view) fields
+  refDes?: string
+  preferredBrand?: string
+  remarks?: string
   partNumber?: string
   solderType?: "SMD" | "DIP"
   footprint?: string
@@ -66,12 +69,15 @@ function PCBStructureContent() {
     componentsCount: pcbEntity.componentsCount,
     stockCount: pcbEntity.stockCount,
     usedIn: productsUsingPcb(pcbEntity.id).map((p) => p.name),
-    components: pcbBom(pcbEntity).map(({ component, qty }): ComponentItem => ({
+    components: pcbBom(pcbEntity).map(({ component, qty, refDes, preferredBrandId, remarks }): ComponentItem => ({
       name: component.name,
       type: component.category,
       qty,
       lookupId: component.id,
       approvedBrands: componentBrands(component).map((b) => ({ id: b.id, name: b.name })),
+      refDes,
+      preferredBrand: preferredBrandId ? getBrandName(preferredBrandId) : undefined,
+      remarks,
       partNumber: component.brandVariants[0]?.partNo,
       solderType: component.solderType,
       footprint: component.footprint,
@@ -122,8 +128,10 @@ function PCBStructureContent() {
       sheetName: pcb.name.slice(0, 28) || "BOM",
       columns: [
         { header: "#", value: (_c, i) => i + 1, type: "Number", width: 4 },
+        { header: "Ref Des", value: (c) => c.refDes ?? "", width: 14 },
         { header: "Type", value: (c) => c.type, width: 14 },
         { header: "Name", value: (c) => c.name, width: 24 },
+        { header: "Preferred Brand", value: (c) => c.preferredBrand ?? "", width: 20 },
         { header: "Part Number", value: (c) => c.partNumber ?? "", width: 20 },
         { header: "Solder Type", value: (c) => c.solderType ?? "", width: 11 },
         { header: "Footprint", value: (c) => c.footprint ?? "", width: 20 },
@@ -139,19 +147,21 @@ function PCBStructureContent() {
       ],
       rows: pcb.components,
       totalsRow: [
-        "",
-        "TOTAL",
-        `${pcb.components.length} items`,
-        "",
-        "",
-        "",
-        totalParts,
-        ...(scaled ? [totalParts * buildQty] : []),
-        "",
-        "",
-        "",
-        Number(bomTotalValue.toFixed(2)),
-        "",
+        "",                                 // #
+        "",                                 // Ref Des
+        "TOTAL",                            // Type
+        `${pcb.components.length} items`,    // Name
+        "",                                 // Preferred Brand
+        "",                                 // Part Number
+        "",                                 // Solder Type
+        "",                                 // Footprint
+        totalParts,                         // Qty / Board
+        ...(scaled ? [totalParts * buildQty] : []), // Qty Needed
+        "",                                 // SPQ
+        "",                                 // Manufacturer
+        "",                                 // Unit Price
+        Number(bomTotalValue.toFixed(2)),   // Total Price
+        "",                                 // Available Qty
       ],
     })
   }
@@ -277,6 +287,11 @@ function PCBStructureContent() {
                           }`}
                         >
                           <Nut className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary transition-colors" />
+                          {component.refDes && (
+                            <span className="font-mono text-[10px] font-bold text-blue-600 dark:text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded">
+                              {component.refDes}
+                            </span>
+                          )}
                           <span>{component.name}</span>
                           {/* Quantity badge */}
                           <span className="font-mono text-primary font-bold ml-1 text-[11px]">
@@ -330,6 +345,7 @@ function PCBStructureContent() {
                 <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
                   <tr>
                     <th scope="col" className="px-3 py-3 text-center w-10">#</th>
+                    <th scope="col" className="px-3 py-3">Ref Des</th>
                     <th scope="col" className="px-3 py-3">Type</th>
                     <th scope="col" className="px-3 py-3 min-w-[140px]">Name</th>
                     <th scope="col" className="px-3 py-3">Part Number</th>
@@ -360,6 +376,9 @@ function PCBStructureContent() {
                         }`}
                       >
                         <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">{idx + 1}</td>
+                        <td className="px-3 py-2.5 font-mono text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                          {c.refDes ?? "—"}
+                        </td>
                         <td className="px-3 py-2.5">
                           <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
                             {c.type}
@@ -416,7 +435,7 @@ function PCBStructureContent() {
                   {/* Totals Row */}
                   <tr className="bg-muted/40 font-bold border-t-2 border-border">
                     <td className="px-3 py-3" />
-                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={5}>
+                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={6}>
                       Total — {pcb.components.length} line items
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-primary">{totalParts}</td>

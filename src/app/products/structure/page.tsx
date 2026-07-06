@@ -9,7 +9,7 @@ import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, A
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import {
-  PRODUCTS, getProduct, getComponent, getSupplierName, productPcbs, pcbBom,
+  PRODUCTS, getProduct, getComponent, getSupplierName, productPcbList, pcbBom,
   componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
   productTotalParts, formatINR as fmtINR, formatLeadTime, type Component as MComponent,
 } from "@/mockdata"
@@ -25,6 +25,7 @@ interface ComponentItem {
 
 interface PCBItem {
   name: string
+  qty: number
   components: ComponentItem[]
 }
 
@@ -94,18 +95,20 @@ function ProductStructureContent() {
     name: productEntity.name,
     code: productEntity.code,
     version: productEntity.version,
-    pcbsCount: productEntity.pcbIds.length,
+    pcbsCount: productEntity.pcbs.length,
     uniqueComponentsCount: productUniqueComponents(productEntity).length,
     totalComponentsCount: productTotalParts(productEntity),
     estimatedCost: formatINR(productEntity.estimatedCost).replace(/\.00$/, ""),
     description: productEntity.description,
-    structure: productPcbs(productEntity).map((pcb): PCBItem => ({
+    // Component qty is per finished unit = per-board qty × boards per unit (pcb qty).
+    structure: productPcbList(productEntity).map(({ pcb, qty: pcbQty }): PCBItem => ({
       name: pcb.name,
+      qty: pcbQty,
       components: pcbBom(pcb).map(({ component, qty }): ComponentItem => ({
         name: component.name,
         type: component.category,
         suppliers: component.offers.map((o) => getSupplierName(o.supplierId)),
-        qty,
+        qty: qty * pcbQty,
         brandsCount: componentBrands(component).length,
         lookupId: component.id,
       })),
@@ -297,6 +300,11 @@ function ProductStructureContent() {
                     <div className="flex items-center gap-3 bg-secondary/80 border border-border p-3 rounded-lg w-fit shadow-xs relative z-10">
                       <Cpu className="h-4 w-4 text-foreground/80" />
                       <span className="font-bold text-foreground text-sm">{pcb.name}</span>
+                      {pcb.qty > 1 && (
+                        <span className="font-mono text-xs font-bold text-primary bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
+                          × {pcb.qty}
+                        </span>
+                      )}
                     </div>
 
                     {/* PCB Child Component Nodes */}

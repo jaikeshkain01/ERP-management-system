@@ -28,7 +28,7 @@ const PRODUCTS_DATA: ProductData[] = PRODUCTS.map((p) => ({
   id: p.id,
   name: p.name,
   description: p.description,
-  pcbs: p.pcbIds.length,
+  pcbs: p.pcbs.length,
   components: productUniqueComponents(p).length,
   brands: productBrandCount(p),
   buildableQty: p.buildableQty,

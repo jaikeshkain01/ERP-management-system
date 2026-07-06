@@ -82,14 +82,19 @@ export const componentStockValue = (c: Component): number => c.stock * bestPrice
 export interface PcbBomLine {
   component: Component
   qty: number
+  refDes?: string
+  preferredBrandId?: string
+  remarks?: string
 }
 
-/** Resolve a PCB's BOM lines to full component records. */
+/** Resolve a PCB's BOM lines to full component records (keeps line metadata). */
 export const pcbBom = (pcb: Pcb): PcbBomLine[] =>
   pcb.lines
-    .map((l) => {
+    .map((l): PcbBomLine | null => {
       const component = getComponent(l.componentId)
-      return component ? { component, qty: l.qty } : null
+      return component
+        ? { component, qty: l.qty, refDes: l.refDes, preferredBrandId: l.preferredBrandId, remarks: l.remarks }
+        : null
     })
     .filter((x): x is PcbBomLine => x !== null)
 
@@ -102,15 +107,33 @@ export const pcbBomValue = (pcb: Pcb): number =>
 
 /** Products that include a given PCB. */
 export const productsUsingPcb = (pcbId: string): Product[] =>
-  PRODUCTS.filter((p) => p.pcbIds.includes(pcbId))
+  PRODUCTS.filter((p) => p.pcbs.some((r) => r.pcbId === pcbId))
 
 /** Short product code labels a PCB is used in (for compact "Used In" badges). */
 export const pcbUsedInLabels = (pcbId: string): string[] =>
   productsUsingPcb(pcbId).map((p) => p.code)
 
 // ----- Product-level selectors -----
+export interface ProductPcbEntry {
+  pcb: Pcb
+  qty: number
+  sequence: number
+  remarks?: string
+}
+
+/** A product's PCBs with per-unit board qty + assembly sequence, ordered. */
+export const productPcbList = (product: Product): ProductPcbEntry[] =>
+  product.pcbs
+    .map((ref): ProductPcbEntry | null => {
+      const pcb = getPcb(ref.pcbId)
+      return pcb ? { pcb, qty: ref.qty, sequence: ref.sequence ?? 0, remarks: ref.remarks } : null
+    })
+    .filter((e): e is ProductPcbEntry => e !== null)
+    .sort((a, b) => a.sequence - b.sequence)
+
+/** Distinct boards used by a product (ignores qty). */
 export const productPcbs = (product: Product): Pcb[] =>
-  product.pcbIds.map((id) => getPcb(id)).filter((p): p is Pcb => p !== undefined)
+  productPcbList(product).map((e) => e.pcb)
 
 export interface ProductBomLine {
   pcb: Pcb
@@ -118,10 +141,14 @@ export interface ProductBomLine {
   qty: number
 }
 
-/** Flattened product → PCB → component BOM. */
+/**
+ * Flattened product → PCB → component BOM.
+ * Component qty is per finished unit = board qty (pcb line) × boards per unit
+ * (product_pcbs qty).
+ */
 export const productBom = (product: Product): ProductBomLine[] =>
-  productPcbs(product).flatMap((pcb) =>
-    pcbBom(pcb).map(({ component, qty }) => ({ pcb, component, qty })),
+  productPcbList(product).flatMap(({ pcb, qty: boardQty }) =>
+    pcbBom(pcb).map(({ component, qty }) => ({ pcb, component, qty: qty * boardQty })),
   )
 
 /** Distinct components used anywhere in a product. */

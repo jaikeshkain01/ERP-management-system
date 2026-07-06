@@ -2,7 +2,13 @@ import type { Component } from "./types"
 
 // Canonical component catalog — the hub entity. PCBs, products, brands,
 // suppliers, purchase and production records all reference these by `id`.
-export const COMPONENTS: Component[] = [
+//
+// NOTE: the `stock` written on each record below is authored per brand variant
+// only. Component-level `stock` is DERIVED (see COMPONENTS export at the bottom)
+// as the sum of `brandVariants[].stock` — a single source of truth, mirroring the
+// backend Inventory design (docs/ARCHITECTURE.md §7a). Never edit a component's
+// top-level stock directly; adjust the brand variants.
+const COMPONENT_CATALOG: Component[] = [
   {
     id: "resistor-10k",
     genericPN: "RES-10K",
@@ -537,3 +543,11 @@ export const COMPONENTS: Component[] = [
     ],
   },
 ]
+
+// Single source of truth for quantity: a component's stock is the sum of its
+// brand-variant stocks — it is never authored independently. This prevents the
+// component/variant drift that the backend Inventory module also guards against.
+export const COMPONENTS: Component[] = COMPONENT_CATALOG.map((c) => ({
+  ...c,
+  stock: c.brandVariants.reduce((sum, v) => sum + v.stock, 0),
+}))

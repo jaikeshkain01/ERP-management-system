@@ -76,6 +76,11 @@ export type PcbStatus = "Active" | "Prototype" | "Deprecated"
 export interface PcbLine {
   componentId: string
   qty: number
+  /** Board reference designators for the placements, e.g. "R1-R20", "C1-C10", "U1". */
+  refDes?: string
+  /** Preferred manufacturer brand for this placement (→ Brand). */
+  preferredBrandId?: string
+  remarks?: string
 }
 
 export interface Pcb {
@@ -93,6 +98,14 @@ export interface Pcb {
 
 export type ProductStatus = "Ready" | "Blocked" | "Limited"
 
+/** A PCB used by a product, with how many boards per finished unit. */
+export interface ProductPcbRef {
+  pcbId: string
+  qty: number
+  sequence?: number
+  remarks?: string
+}
+
 export interface Product {
   id: string
   name: string
@@ -102,5 +115,5 @@ export interface Product {
   status: ProductStatus
   estimatedCost: number
   buildableQty: number
-  pcbIds: string[]
+  pcbs: ProductPcbRef[]
 }
