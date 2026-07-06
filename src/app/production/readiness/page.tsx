@@ -8,9 +8,13 @@ import {
   READINESS_ITEMS, READINESS_SOURCING, READINESS_MISSING_QTY,
   READINESS_SHORT_COMPONENT,
 } from "@/mockdata/production"
+import { useModules } from "@/components/module-provider"
 
 export default function ProductionReadinessPage() {
   const [readinessItems] = React.useState(READINESS_ITEMS)
+  const { isEnabled } = useModules()
+  const inventoryOn = isEnabled("inventory")
+  const purchasingOn = isEnabled("purchasing")
 
   const [selectedSupplierIdx, setSelectedSupplierIdx] = React.useState<number>(0)
   const [toast, setToast] = React.useState<{ message: string; prId: string } | null>(null)
@@ -94,15 +98,17 @@ export default function ProductionReadinessPage() {
             Verify if raw material stock is sufficient to execute scheduled batches.
           </p>
         </div>
-        <Button 
-          variant="outline" 
-          onClick={runAudit} 
-          disabled={auditRunning}
-          className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
-        >
-          <RefreshCw className={`h-4 w-4 ${auditRunning ? "animate-spin" : ""}`} />
-          <span>{auditRunning ? "Auditing BOM..." : "Re-run Audit"}</span>
-        </Button>
+        {inventoryOn && (
+          <Button
+            variant="outline"
+            onClick={runAudit}
+            disabled={auditRunning}
+            className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
+          >
+            <RefreshCw className={`h-4 w-4 ${auditRunning ? "animate-spin" : ""}`} />
+            <span>{auditRunning ? "Auditing BOM..." : "Re-run Audit"}</span>
+          </Button>
+        )}
       </div>
 
       {/* Master Detail Layout */}
@@ -120,7 +126,7 @@ export default function ProductionReadinessPage() {
                   <tr>
                     <th scope="col" className="px-6 py-3 font-semibold">Component</th>
                     <th scope="col" className="px-6 py-3 font-semibold">Required</th>
-                    <th scope="col" className="px-6 py-3 font-semibold">Available</th>
+                    {inventoryOn && <th scope="col" className="px-6 py-3 font-semibold">Available</th>}
                     <th scope="col" className="px-6 py-3 font-semibold text-right">Status</th>
                   </tr>
                 </thead>
@@ -129,9 +135,11 @@ export default function ProductionReadinessPage() {
                     <tr key={item.component} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-4 font-semibold">{item.component}</td>
                       <td className="px-6 py-4 font-mono">{item.required.toLocaleString()}</td>
-                      <td className="px-6 py-4 font-mono text-muted-foreground">{item.available.toLocaleString()}</td>
+                      {inventoryOn && <td className="px-6 py-4 font-mono text-muted-foreground">{item.available.toLocaleString()}</td>}
                       <td className="px-6 py-4 text-right">
-                        {item.status ? (
+                        {!inventoryOn ? (
+                          <span className="text-sm text-muted-foreground">Audit unavailable</span>
+                        ) : item.status ? (
                           <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold text-sm">
                             <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                             <span>Ready</span>
@@ -153,7 +161,14 @@ export default function ProductionReadinessPage() {
 
         {/* Right Side: Sourcing & Sourcing Options Panel */}
         <div className="space-y-6">
-          {/* Readiness Blocked Panel */}
+          {!inventoryOn ? (
+            <Card className="border border-border shadow-sm">
+              <CardContent className="p-6 flex gap-3 text-sm text-muted-foreground">
+                <AlertCircle className="h-5 w-5 shrink-0 text-muted-foreground/60 mt-0.5" />
+                <span>Stock auditing requires the Inventory module. Shortage detection and blocked-batch alerts are unavailable.</span>
+              </CardContent>
+            </Card>
+          ) : (
           <Card className="border-destructive/30 bg-destructive/5 dark:bg-red-950/10 shadow-md">
             <CardHeader className="pb-4">
               <div className="flex items-center gap-2 text-destructive">
@@ -176,6 +191,7 @@ export default function ProductionReadinessPage() {
               </div>
 
               {/* Recommended Suppliers Procurement Table */}
+              {purchasingOn && (
               <div className="space-y-2 pt-2">
                 <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
                   Procurement Sourcing Options
@@ -217,6 +233,14 @@ export default function ProductionReadinessPage() {
                   </table>
                 </div>
               </div>
+              )}
+
+              {!purchasingOn && (
+                <div className="flex gap-2 text-xs text-muted-foreground/85 pt-1">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+                  <span>Purchasing module required to raise requests.</span>
+                </div>
+              )}
 
               <div className="space-y-2 text-xs text-muted-foreground/85 pt-1">
                 <div className="flex gap-2">
@@ -225,16 +249,19 @@ export default function ProductionReadinessPage() {
                 </div>
               </div>
             </CardContent>
+            {purchasingOn && (
             <CardContent className="pt-0 pb-6">
-              <Button 
-                onClick={handleCreatePR} 
+              <Button
+                onClick={handleCreatePR}
                 className="w-full font-bold gap-2 cursor-pointer bg-primary hover:bg-primary/90 text-primary-foreground border-transparent"
               >
                 <FileText className="h-4 w-4" />
                 <span>Generate Purchase Request</span>
               </Button>
             </CardContent>
+            )}
           </Card>
+          )}
         </div>
       </div>
     </div>

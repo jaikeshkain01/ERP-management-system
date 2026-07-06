@@ -5,6 +5,8 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { UniversalSearch } from "@/components/universal-search";
+import { ModuleProvider } from "@/components/module-provider";
+import { ModuleGate } from "@/components/module-gate";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -33,28 +35,30 @@ export default function RootLayout({
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
       >
-        <SidebarProvider>
-          <TooltipProvider>
-            <div className="flex min-h-screen w-full bg-sidebar">
-              <AppSidebar />
-              <div className="flex flex-1 flex-col overflow-hidden bg-background">
-                <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
-                  <div className="flex items-center gap-2">
-                    <SidebarTrigger className="-ml-1" />
-                    <div className="h-4 w-[1px] bg-border mx-2" />
-                    <div className="flex items-center text-sm font-medium text-muted-foreground">
-                      StackIOT Technologies Pvt. Ltd.
+        <ModuleProvider>
+          <SidebarProvider>
+            <TooltipProvider>
+              <div className="flex min-h-screen w-full bg-sidebar">
+                <AppSidebar />
+                <div className="flex flex-1 flex-col overflow-hidden bg-background">
+                  <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
+                    <div className="flex items-center gap-2">
+                      <SidebarTrigger className="-ml-1" />
+                      <div className="h-4 w-[1px] bg-border mx-2" />
+                      <div className="flex items-center text-sm font-medium text-muted-foreground">
+                        StackIOT Technologies Pvt. Ltd.
+                      </div>
                     </div>
-                  </div>
-                  <UniversalSearch />
-                </header>
-                <main className="flex-1 overflow-y-auto p-6 md:p-8">
-                  {children}
-                </main>
+                    <UniversalSearch />
+                  </header>
+                  <main className="flex-1 overflow-y-auto p-6 md:p-8">
+                    <ModuleGate>{children}</ModuleGate>
+                  </main>
+                </div>
               </div>
-            </div>
-          </TooltipProvider>
-        </SidebarProvider>
+            </TooltipProvider>
+          </SidebarProvider>
+        </ModuleProvider>
       </body>
     </html>
   );

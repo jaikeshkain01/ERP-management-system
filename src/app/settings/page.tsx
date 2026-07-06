@@ -2,6 +2,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter }
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Settings, Save, Shield, HelpCircle, Bell } from "lucide-react"
+import { ModulesSettingsCard } from "@/components/modules-settings-card"
 
 export default function SettingsPage() {
   return (
@@ -18,6 +19,9 @@ export default function SettingsPage() {
           Manage system-wide configuration defaults, safety alert thresholds, and authentication parameters.
         </p>
       </div>
+
+      {/* Licensed module toggles */}
+      <ModulesSettingsCard />
 
       <div className="grid gap-6 md:grid-cols-2">
         {/* Left Side: General Profile Preference */}

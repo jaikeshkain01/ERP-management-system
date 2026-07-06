@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation"
 import {
   BarChart3,
   Cpu,
+  Home,
   LayoutDashboard,
   Nut,
   Package,
@@ -41,12 +42,15 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { useModules } from "@/components/module-provider"
+import type { ModuleId } from "@/lib/modules"
 
 type NavItem = {
   title: string
   url: string
   icon: React.ComponentType<{ className?: string }>
-  items?: Array<{ title: string; url: string }>
+  moduleId?: ModuleId
+  items?: Array<{ title: string; url: string; moduleId?: ModuleId }>
 }
 
 type NavigationGroup = {
@@ -59,8 +63,9 @@ const navigationGroups: NavigationGroup[] = [
   {
     label: "Overview",
     items: [
-      { title: "Dashboard", url: "/", icon: LayoutDashboard },
-      { title: "Reports", url: "/reports", icon: BarChart3 },
+      { title: "Home", url: "/", icon: Home },
+      { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
+      { title: "Reports", url: "/reports", icon: BarChart3, moduleId: "reports" },
     ],
   },
   {
@@ -72,7 +77,7 @@ const navigationGroups: NavigationGroup[] = [
         icon: Package,
         items: [
           { title: "Product List", url: "/products/list" },
-          { title: "Product Structure", url: "/products/structure" },
+          { title: "Product Structure", url: "/products/structure", moduleId: "bom" },
         ],
       },
       {
@@ -81,7 +86,7 @@ const navigationGroups: NavigationGroup[] = [
         icon: Cpu,
         items: [
           { title: "PCB List", url: "/pcb-management/list" },
-          { title: "PCB Structure", url: "/pcb-management/structure" },
+          { title: "PCB Structure", url: "/pcb-management/structure", moduleId: "bom" },
         ],
       },
       {
@@ -97,6 +102,7 @@ const navigationGroups: NavigationGroup[] = [
         title: "Inventory",
         url: "/components/inventory",
         icon: Boxes,
+        moduleId: "inventory",
         items: [
           { title: "Inventory", url: "/components/inventory" },
           { title: "Usage Analysis", url: "/components/usage" },
@@ -111,6 +117,7 @@ const navigationGroups: NavigationGroup[] = [
         title: "Production",
         url: "/production",
         icon: Factory,
+        moduleId: "production",
         items: [
           { title: "Production Planner", url: "/production/planner" },
           { title: "Production Readiness", url: "/production/readiness" },
@@ -136,6 +143,7 @@ const navigationGroups: NavigationGroup[] = [
         title: "Purchase",
         url: "/purchases",
         icon: ShoppingCart,
+        moduleId: "purchasing",
         items: [
           { title: "Purchase Requests", url: "/purchases/requests" },
           { title: "Purchase Orders", url: "/purchases/orders" },
@@ -147,7 +155,25 @@ const navigationGroups: NavigationGroup[] = [
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
+  const { isEnabled } = useModules()
   const [searchQuery, setSearchQuery] = React.useState("")
+
+  // Drop nav entries belonging to disabled modules; unannotated entries are base tier
+  const moduleFilteredGroups = React.useMemo(() => {
+    return navigationGroups
+      .map((group) => {
+        const items = group.items
+          .filter((item) => !item.moduleId || isEnabled(item.moduleId))
+          .map((item) => {
+            if (!item.items) return item
+            const subItems = item.items.filter((sub) => !sub.moduleId || isEnabled(sub.moduleId))
+            return { ...item, items: subItems }
+          })
+          .filter((item) => !item.items || item.items.length > 0)
+        return { ...group, items }
+      })
+      .filter((group) => group.items.length > 0)
+  }, [isEnabled])
 
   // Helper to determine if a route or any of its sub-routes is active
   const isItemActive = (item: NavItem) => {
@@ -181,9 +207,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   // Filter navigation items based on search query
   const filteredGroups = React.useMemo(() => {
-    if (!searchQuery.trim()) return navigationGroups
+    if (!searchQuery.trim()) return moduleFilteredGroups
     const q = searchQuery.toLowerCase()
-    return navigationGroups
+    return moduleFilteredGroups
       .map((group) => {
         const filteredItems = group.items.filter((item) => {
           if (item.title.toLowerCase().includes(q)) return true
@@ -195,7 +221,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         return { ...group, items: filteredItems }
       })
       .filter((group) => group.items.length > 0)
-  }, [searchQuery])
+  }, [searchQuery, moduleFilteredGroups])
 
   return (
     <Sidebar {...props}>

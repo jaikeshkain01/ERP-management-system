@@ -10,6 +10,7 @@ import {
   ChevronUp, Check, Package, Plus, ArrowLeft, ArrowRight, RotateCcw,
 } from "lucide-react"
 import { PLANNER_SHORTAGES as SHORTAGES } from "@/mockdata/production"
+import { useModules } from "@/components/module-provider"
 
 // Types
 interface PurchaseRequest {
@@ -27,6 +28,9 @@ interface PurchaseRequest {
 }
 
 export default function ProductionPlannerPage() {
+  const { isEnabled } = useModules()
+  const inventoryOn = isEnabled("inventory")
+  const purchasingOn = isEnabled("purchasing")
   const [product, setProduct] = React.useState("roip-400")
   const [quantity, setQuantity] = React.useState(100)
   const [targetDate, setTargetDate] = React.useState("2026-07-15")
@@ -55,7 +59,7 @@ export default function ProductionPlannerPage() {
     e.preventDefault()
     setCalculated(true)
     setCurrentStep(0)
-    const count = SHORTAGES.length
+    const count = inventoryOn ? SHORTAGES.length : 0
     if (count > 0) {
       showToast(`Calculation complete — ${count} component shortage${count > 1 ? "s" : ""} detected!`, "warning")
     } else {
@@ -101,13 +105,21 @@ export default function ProductionPlannerPage() {
     { key: "shortage", label: "Shortages", title: "Shortages Found", desc: "Automated shortage audit on the launched batch", icon: ShieldAlert },
     { key: "purchase", label: "Purchase", title: "Purchase Recommendations", desc: "Sourcing suggestions for the missing parts", icon: ShoppingBag },
     { key: "impact", label: "Impact", title: "Inventory Impact", desc: "Estimated stock levels before and after the run", icon: Nut },
-  ]
+  ].filter((s) => {
+    // Shortage audit and stock impact are Inventory-module features;
+    // purchase recommendations belong to the Purchasing module
+    if ((s.key === "shortage" || s.key === "impact") && !inventoryOn) return false
+    if (s.key === "purchase" && !purchasingOn) return false
+    return true
+  })
   const totalSteps = steps.length
-  const step = steps[currentStep]
+  // Clamp so a live module toggle mid-wizard can't index past the shrunken step list
+  const stepIndex = Math.min(currentStep, totalSteps - 1)
+  const step = steps[stepIndex]
   const StepIcon = step.icon
-  const isLast = currentStep === totalSteps - 1
+  const isLast = stepIndex === totalSteps - 1
 
-  const hasShortage = SHORTAGES.length > 0
+  const hasShortage = inventoryOn && SHORTAGES.length > 0
   const shortageStepIndex = steps.findIndex((s) => s.key === "shortage")
 
   // ─── Step body renderer ──────────────────────────────────────────────────
@@ -585,8 +597,8 @@ export default function ProductionPlannerPage() {
                 <div className="flex min-w-max items-center">
                   {steps.map((s, idx) => {
                     const SIcon = s.icon
-                    const done = idx < currentStep
-                    const active = idx === currentStep
+                    const done = idx < stepIndex
+                    const active = idx === stepIndex
                     const flagged = s.key === "shortage" && hasShortage
                     return (
                       <React.Fragment key={s.key}>
@@ -619,7 +631,7 @@ export default function ProductionPlannerPage() {
                           </span>
                         </button>
                         {idx < totalSteps - 1 && (
-                          <div className={`h-0.5 w-8 sm:w-12 mb-5 rounded-full transition-colors ${idx < currentStep ? "bg-primary/40" : "bg-border"}`} />
+                          <div className={`h-0.5 w-8 sm:w-12 mb-5 rounded-full transition-colors ${idx < stepIndex ? "bg-primary/40" : "bg-border"}`} />
                         )}
                       </React.Fragment>
                     )
@@ -638,7 +650,7 @@ export default function ProductionPlannerPage() {
                   <CardTitle className="text-lg font-bold flex items-center gap-2">
                     {step.title}
                     <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-                      Step {currentStep + 1} / {totalSteps}
+                      Step {stepIndex + 1} / {totalSteps}
                     </span>
                   </CardTitle>
                   <CardDescription>{step.desc}</CardDescription>
@@ -653,15 +665,15 @@ export default function ProductionPlannerPage() {
             <Button
               variant="outline"
               className="gap-2 font-semibold cursor-pointer"
-              disabled={currentStep === 0}
-              onClick={() => setCurrentStep((s) => Math.max(0, s - 1))}
+              disabled={stepIndex === 0}
+              onClick={() => setCurrentStep(Math.max(0, stepIndex - 1))}
             >
               <ArrowLeft className="h-4 w-4" />
               Previous
             </Button>
 
             <span className="text-xs font-semibold text-muted-foreground font-mono">
-              Step {currentStep + 1} of {totalSteps}
+              Step {stepIndex + 1} of {totalSteps}
             </span>
 
             {isLast ? (
@@ -675,7 +687,7 @@ export default function ProductionPlannerPage() {
             ) : (
               <Button
                 className="gap-2 font-semibold cursor-pointer"
-                onClick={() => setCurrentStep((s) => Math.min(totalSteps - 1, s + 1))}
+                onClick={() => setCurrentStep(Math.min(totalSteps - 1, stepIndex + 1))}
               >
                 Next Step
                 <ArrowRight className="h-4 w-4" />

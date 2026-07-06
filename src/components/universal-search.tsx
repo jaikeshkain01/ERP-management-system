@@ -14,6 +14,7 @@ import {
   SEARCH_BRANDS, SEARCH_SUPPLIERS,
   SearchComponent, SearchProduct, SearchPCB, SearchBrand, SearchSupplier
 } from "@/lib/search-data"
+import { useModules } from "@/components/module-provider"
 
 type SearchResultItem = 
   | { type: "component"; data: SearchComponent }
@@ -52,6 +53,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 
 export function UniversalSearch() {
   const router = useRouter()
+  const { isEnabled } = useModules()
   const [isOpen, setIsOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const [activeTab, setActiveTab] = React.useState<"all" | "components" | "products" | "brands">("all")
@@ -238,9 +240,10 @@ export function UniversalSearch() {
     if (item.type === "component") {
       router.push(`/components/details?component=${item.data.id}`)
     } else if (item.type === "product") {
-      router.push(`/products/structure?product=${item.data.id}`)
+      // Structure pages belong to the BOM module — fall back to the base list when disabled
+      router.push(isEnabled("bom") ? `/products/structure?product=${item.data.id}` : "/products/list")
     } else if (item.type === "pcb") {
-      router.push(`/pcb-management/structure?pcb=${item.data.id}`)
+      router.push(isEnabled("bom") ? `/pcb-management/structure?pcb=${item.data.id}` : "/pcb-management/list")
     } else if (item.type === "brand") {
       router.push(`/brands/list?brand=${item.data.name.toLowerCase().replace(/\s+/g, "-")}`)
     } else if (item.type === "supplier") {
@@ -347,7 +350,8 @@ export function UniversalSearch() {
                       Quick Navigation
                     </h3>
                     <div className="grid grid-cols-1 gap-3">
-                      <button 
+                      {isEnabled("production") && (
+                      <button
                         onClick={() => { setIsOpen(false); router.push("/production/readiness") }}
                         className="flex items-center justify-between p-4 rounded-xl bg-muted/30 border border-border/40 hover:border-primary/40 hover:bg-primary/5 hover:shadow-xs transition-all group text-left w-full"
                       >
@@ -362,8 +366,10 @@ export function UniversalSearch() {
                         </div>
                         <ArrowRight className="h-4 w-4 text-muted-foreground/60 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
                       </button>
+                      )}
 
-                      <button 
+                      {isEnabled("production") && (
+                      <button
                         onClick={() => { setIsOpen(false); router.push("/production/planner") }}
                         className="flex items-center justify-between p-4 rounded-xl bg-muted/30 border border-border/40 hover:border-primary/40 hover:bg-primary/5 hover:shadow-xs transition-all group text-left w-full"
                       >
@@ -378,8 +384,10 @@ export function UniversalSearch() {
                         </div>
                         <ArrowRight className="h-4 w-4 text-muted-foreground/60 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
                       </button>
+                      )}
 
-                      <button 
+                      {isEnabled("purchasing") && (
+                      <button
                         onClick={() => { setIsOpen(false); router.push("/purchases/requests") }}
                         className="flex items-center justify-between p-4 rounded-xl bg-muted/30 border border-border/40 hover:border-primary/40 hover:bg-primary/5 hover:shadow-xs transition-all group text-left w-full"
                       >
@@ -394,6 +402,7 @@ export function UniversalSearch() {
                         </div>
                         <ArrowRight className="h-4 w-4 text-muted-foreground/60 group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
                       </button>
+                      )}
                     </div>
                   </div>
 
