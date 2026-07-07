@@ -11,6 +11,7 @@ import {
   DropdownMenuContent,
 } from "@/components/ui/dropdown-menu"
 import { UniversalSearch } from "@/components/universal-search"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { useModules } from "@/components/module-provider"
 import { WORKSPACES, workspaceForPath } from "@/lib/modules"
 
@@ -20,10 +21,10 @@ export function TopBar() {
   const workspace = workspaceForPath(pathname)
 
   return (
-    <header className="flex h-16 shrink-0 items-center gap-3 border-b border-border bg-background px-4 md:px-6">
+    <header className="shell-chrome relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-chrome-border bg-chrome px-4 text-chrome-foreground md:px-6">
       {/* Logo + name */}
-      <Link href="/" className="flex items-center gap-3 shrink-0">
-        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 overflow-hidden">
+      <Link href="/" className="flex items-center gap-2.5 shrink-0">
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/95 shadow-sm overflow-hidden ring-1 ring-white/20">
           <Image
             src="/images/logo-square.png"
             alt="StackIOT"
@@ -32,19 +33,23 @@ export function TopBar() {
             className="object-contain p-0.5"
           />
         </div>
-        <div className="hidden flex-col sm:flex">
-          <span className="text-[13px] font-bold leading-tight tracking-tight text-foreground">
+        <div className="hidden flex-col leading-none sm:flex">
+          <span className="text-[13px] font-semibold tracking-tight text-chrome-strong">
             StackIOT Technologies
           </span>
-          <span className="text-[10px] font-medium text-muted-foreground">Enterprise Suite</span>
+          <span className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-chrome-muted">
+            Enterprise Suite
+          </span>
         </div>
       </Link>
+
+      <div className="mx-1 hidden h-6 w-px bg-chrome-border sm:block" />
 
       {/* Module switcher */}
       <DropdownMenu>
         <DropdownMenuTrigger
           aria-label="Switch workspace"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted data-[popup-open]:text-foreground"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-chrome-border text-chrome-foreground transition-colors hover:bg-chrome-hover hover:text-chrome-strong data-[popup-open]:bg-chrome-hover data-[popup-open]:text-chrome-strong"
         >
           <LayoutGrid className="h-4 w-4" />
         </DropdownMenuTrigger>
@@ -88,13 +93,13 @@ export function TopBar() {
 
       {/* Breadcrumb */}
       <div className="hidden items-center gap-1.5 text-sm sm:flex">
-        <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors">
+        <Link href="/" className="text-chrome-muted hover:text-chrome-strong transition-colors">
           Home
         </Link>
         {workspace && (
           <>
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-            <span className="font-medium text-foreground">{workspace.label}</span>
+            <ChevronRight className="h-3.5 w-3.5 text-chrome-muted/60" />
+            <span className="font-medium text-chrome-strong">{workspace.label}</span>
           </>
         )}
       </div>
@@ -104,14 +109,15 @@ export function TopBar() {
         <div className="hidden sm:flex">
           <UniversalSearch />
         </div>
+        <ThemeToggle />
         <Link
           href="/settings"
           aria-label="Settings"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-chrome-foreground transition-colors hover:bg-chrome-hover hover:text-chrome-strong"
         >
           <Settings className="h-[18px] w-[18px]" />
         </Link>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+        <div className="ml-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-chrome-accent/25 text-xs font-semibold text-chrome-strong ring-1 ring-chrome-border">
           JW
         </div>
       </div>

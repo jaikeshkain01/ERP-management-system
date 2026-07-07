@@ -216,7 +216,7 @@ export default function PCBListPage() {
 
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md bg-secondary text-secondary-foreground border border-border/60">
-                    <Layers className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <Layers className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Layers</span>

@@ -22,23 +22,23 @@ export function WorkspaceTabs() {
   const Icon = workspace.icon
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-4 border-b border-border bg-background px-4 md:px-6">
-      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+    <div className="relative z-20 flex h-11 shrink-0 items-center gap-4 border-b border-border bg-card px-4 shadow-[0_1px_2px_-1px_rgba(15,36,54,0.08)] md:px-6">
+      <div className="flex items-center gap-2 text-[13px] font-semibold tracking-tight text-foreground">
         <Icon className="h-4 w-4 text-primary" />
         <span className="hidden sm:inline">{workspace.label}</span>
       </div>
       <div className="h-4 w-px bg-border" />
-      <nav className="flex items-center gap-1 overflow-x-auto">
+      <nav className="flex items-center gap-0.5 overflow-x-auto">
         {tabs.map((tab) => {
           const active = tab.href === activeHref
           return (
             <Link
               key={tab.href}
               href={tab.href}
-              className={`whitespace-nowrap border-b-2 px-2.5 py-2.5 text-[13px] transition-colors ${
+              className={`relative whitespace-nowrap border-b-2 px-3 py-2.5 text-[13px] transition-colors ${
                 active
-                  ? "border-primary font-medium text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
+                  ? "border-primary font-semibold text-primary"
+                  : "border-transparent font-medium text-muted-foreground hover:text-foreground"
               }`}
             >
               {tab.title}

@@ -101,7 +101,7 @@ function PurchaseOrdersContent() {
           </CardHeader>
           <CardContent className="flex items-baseline justify-between pt-1">
             <span className="text-3xl font-black text-foreground tracking-tight">{totalDispatched + totalSent}</span>
-            <span className="text-xs font-semibold text-blue-600 dark:text-blue-500 uppercase">Shipped / Ordered</span>
+            <span className="text-xs font-semibold text-primary uppercase">Shipped / Ordered</span>
           </CardContent>
         </Card>
 
@@ -120,7 +120,7 @@ function PurchaseOrdersContent() {
             <CardTitle className="text-sm font-semibold text-muted-foreground">Total Spend Volume</CardTitle>
           </CardHeader>
           <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-2xl font-black text-primary font-mono">₹{totalSpend.toLocaleString()}</span>
+            <span className="text-2xl font-black text-primary">₹{totalSpend.toLocaleString()}</span>
             <span className="text-xs font-semibold text-muted-foreground uppercase">Committed Costs</span>
           </CardContent>
         </Card>

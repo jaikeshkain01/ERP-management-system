@@ -173,7 +173,7 @@ function PurchaseRequestsContent() {
             <CardTitle className="text-sm font-semibold text-muted-foreground">Estimated Pipeline Value</CardTitle>
           </CardHeader>
           <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-2xl font-black text-primary font-mono">₹{totalCostVal.toLocaleString()}</span>
+            <span className="text-2xl font-black text-primary">₹{totalCostVal.toLocaleString()}</span>
             <span className="text-xs font-semibold text-muted-foreground uppercase">INR Total</span>
           </CardContent>
         </Card>
@@ -207,7 +207,7 @@ function PurchaseRequestsContent() {
                 </div>
                 <div className="text-right sm:text-left">
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">Needed Quantity</span>
-                  <span className="text-2xl font-black text-destructive font-mono mt-1 block">500 Units</span>
+                  <span className="text-2xl font-black text-destructive mt-1 block">500 Units</span>
                 </div>
               </div>
 

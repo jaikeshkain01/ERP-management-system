@@ -37,7 +37,7 @@ export default function Dashboard() {
     { title: "Components", value: "1,250", desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10" },
     { title: "Suppliers", value: "35", desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10" },
     { title: "Brands", value: "420", desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10" },
-    { title: "Inventory Value", value: "₹ 2.4 Cr", desc: "Physical asset valuation", icon: Landmark, color: "text-emerald-600 bg-emerald-500/10", moduleId: "inventory" },
+    { title: "Inventory Value", value: "₹ 2.4 Cr", desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory" },
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
@@ -217,7 +217,7 @@ export default function Dashboard() {
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{item.title}</span>
           </CardHeader>
           <CardContent className="p-4 pt-0">
-            <div className="text-2xl font-black text-primary font-mono">{item.value}</div>
+            <div className="text-2xl font-black text-primary">{item.value}</div>
             <p className="text-[10px] text-muted-foreground leading-normal mt-1">{item.desc}</p>
           </CardContent>
         </Card>
@@ -256,7 +256,7 @@ export default function Dashboard() {
                   <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${
                     order.status === "Completed"
                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                      : "bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400"
+                      : "bg-primary/10 border-primary/20 text-primary"
                   }`}>
                     {order.status}
                   </span>
@@ -503,12 +503,15 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
+          Operational Control Center
+        </span>
+        <h1 className="text-[26px] font-bold leading-tight tracking-tight text-foreground md:text-3xl">
           Dashboard
         </h1>
-        <p className="text-muted-foreground text-sm md:text-base">
-          StackIOT Technologies Pvt. Ltd. — Enterprise operational control center. Real-time BOM readiness auditing, logistics analytics, and supply indicators.
+        <p className="max-w-3xl text-sm text-muted-foreground">
+          StackIOT Technologies Pvt. Ltd. — real-time BOM readiness auditing, logistics analytics, and supply-chain risk indicators.
         </p>
       </div>
 
@@ -517,16 +520,16 @@ export default function Dashboard() {
         {kpis.map((kpi, idx) => {
           const Icon = kpi.icon
           return (
-            <Card key={idx} className="relative overflow-hidden transition-all duration-300 hover:shadow-md group">
-              <div className="absolute top-0 right-0 h-16 w-16 -mr-3 -mt-3 rounded-full bg-primary/5 transition-all group-hover:scale-110" />
+            <Card key={idx} className="group relative overflow-hidden transition-all hover:border-primary/40 hover:shadow-[0_6px_20px_-12px_rgba(15,36,54,0.35)]">
+              <span className="absolute inset-y-0 left-0 w-0.5 bg-primary opacity-0 transition-opacity group-hover:opacity-100" />
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
-                <div className={`h-8 w-8 flex items-center justify-center rounded-lg ${kpi.color}`}>
+                <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
+                <div className={`h-8 w-8 flex items-center justify-center rounded-md ${kpi.color}`}>
                   <Icon className="h-4.5 w-4.5" />
                 </div>
               </CardHeader>
               <CardContent className="px-4 pb-4">
-                <div className="text-2xl font-black text-foreground tracking-tight">{kpi.value}</div>
+                <div className="text-2xl font-bold tracking-tight text-foreground">{kpi.value}</div>
                 <p className="text-[10px] text-muted-foreground truncate mt-1">{kpi.desc}</p>
               </CardContent>
             </Card>

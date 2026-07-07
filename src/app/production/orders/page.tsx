@@ -39,7 +39,7 @@ export default function ProductionOrdersPage() {
 
   const columns: { status: StatusColumn; label: string; color: string }[] = [
     { status: "Draft", label: "Draft", color: "bg-muted/80 text-muted-foreground border-border" },
-    { status: "Ready", label: "Ready", color: "bg-blue-500/10 text-blue-600 border-blue-500/20" },
+    { status: "Ready", label: "Ready", color: "bg-primary/10 text-primary border-primary/20" },
     { status: "In Progress", label: "In Progress", color: "bg-amber-500/10 text-amber-600 border-amber-500/20" },
     { status: "Completed", label: "Completed", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" },
   ]

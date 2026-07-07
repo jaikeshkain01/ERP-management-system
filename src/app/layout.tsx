@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { TopBar } from "@/components/top-bar";
@@ -30,10 +31,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
+    <html lang="en" className="h-full" suppressHydrationWarning>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
       >
+        {/* No-flash theme: apply the saved (or system) theme before first paint.
+            (next/script beforeInteractive logs a benign dev-only warning in this
+            React version; it is stripped from production builds.) */}
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(t==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`}
+        </Script>
         <ModuleProvider>
           <TooltipProvider>
             <div className="flex min-h-screen w-full flex-col bg-background">

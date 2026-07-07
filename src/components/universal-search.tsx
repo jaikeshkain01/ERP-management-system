@@ -257,14 +257,14 @@ export function UniversalSearch() {
   return (
     <>
       {/* Trigger Search Button in Navbar */}
-      <button 
+      <button
         type="button"
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-3 bg-background hover:bg-muted/45 border border-slate-300 dark:border-zinc-700 rounded-lg py-1.5 pl-3.5 pr-3 text-left w-64 md:w-80 text-muted-foreground/90 hover:text-foreground transition-all select-none group shadow-sm hover:border-primary/50"
+        className="flex items-center gap-2.5 bg-white/[0.06] hover:bg-white/[0.11] border border-chrome-border rounded-md py-1.5 pl-3 pr-2 text-left w-64 md:w-80 transition-all select-none group hover:border-white/25"
       >
-        <Search className="h-4 w-4 text-muted-foreground/80 group-hover:text-primary transition-colors shrink-0" />
-        <span className="text-xs text-muted-foreground/85 truncate flex-1">Search Product, PCB, Component...</span>
-        <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[9px] font-medium text-muted-foreground opacity-100">
+        <Search className="h-4 w-4 text-chrome-muted group-hover:text-chrome-strong transition-colors shrink-0" />
+        <span className="text-xs text-chrome-muted truncate flex-1">Search Product, PCB, Component...</span>
+        <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-chrome-border bg-white/[0.07] px-1.5 font-mono text-[9px] font-medium text-chrome-muted">
           <span className="text-xs">⌘</span>K
         </kbd>
       </button>      {/* Modern Search Overlay Modal */}
