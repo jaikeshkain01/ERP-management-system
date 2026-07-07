@@ -51,7 +51,7 @@ export function Launchpad() {
           <Link
             key={ws.id}
             href={ws.href}
-            className="group relative flex flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-5 shadow-[0_1px_2px_0_rgba(15,36,54,0.04)] transition-all hover:-translate-y-px hover:border-primary/50 hover:shadow-[0_6px_20px_-10px_rgba(15,36,54,0.35)]"
+            className="group relative flex flex-col gap-4 overflow-hidden rounded-md border border-border bg-card p-5 transition-colors hover:border-primary/60 hover:bg-accent/40"
           >
             {/* Left accent rail */}
             <span className="absolute inset-y-0 left-0 w-0.5 bg-primary opacity-0 transition-opacity group-hover:opacity-100" />

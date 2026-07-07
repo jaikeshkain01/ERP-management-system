@@ -61,116 +61,128 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* Flat industrial panels: small shadows become near-invisible hairlines so
+     inline cards sit on the page instead of floating. Large shadows (lg/xl/2xl)
+     are left at Tailwind defaults for genuine overlays (dropdowns, modals). */
+  --shadow-3xs: 0 0 0 0 transparent;
+  --shadow-2xs: 0 1px 0 0 rgb(20 25 35 / 0.02);
+  --shadow-xs: 0 1px 1px -1px rgb(20 25 35 / 0.05);
+  --shadow-sm: 0 1px 2px -1px rgb(20 25 35 / 0.06);
+  --shadow-md: 0 1px 2px -1px rgb(20 25 35 / 0.07), 0 2px 3px -2px rgb(20 25 35 / 0.05);
 }
 
 :root {
-  /* ── Steel & Slate — light industrial workspace ───────────────── */
-  --background: #F4F6F9;
-  --foreground: #16202E;
+  /* ── StackIOT Industrial — brand azure on neutral flat panels ──── */
+  /* Accent derived from the company logo (azure/cerulean). Neutrals are
+     genuinely neutral (not blue-tinted) so the brand blue reads as a
+     deliberate accent, not a wash. Surfaces are flat, border-defined. */
+  --background: #F1F2F4;
+  --foreground: #1A1D23;
 
   --card: #FFFFFF;
-  --card-foreground: #16202E;
+  --card-foreground: #1A1D23;
 
   --popover: #FFFFFF;
-  --popover-foreground: #16202E;
+  --popover-foreground: #1A1D23;
 
-  /* Engineered blue — restrained, precise */
-  --primary: #2563EB;
+  /* Brand azure — deep enough to carry white text and to work as link/text */
+  --primary: #0E72B0;
   --primary-foreground: #FFFFFF;
 
-  --secondary: #EAEFF5;
-  --secondary-foreground: #1F2C3D;
+  --secondary: #E7E9EC;
+  --secondary-foreground: #262A31;
 
-  --muted: #EDF1F6;
-  --muted-foreground: #5B6B80;
+  --muted: #EAECEF;
+  --muted-foreground: #616974;
 
-  --accent: #E5EDF9;
-  --accent-foreground: #1D4ED8;
+  --accent: #E0EDF6;
+  --accent-foreground: #0B5A8C;
 
-  --destructive: #DC2626;
+  --destructive: #C13B3B;
   --destructive-foreground: #FFFFFF;
 
-  --success: #059669;
+  --success: #217A46;
   --success-foreground: #FFFFFF;
 
-  --warning: #D97706;
+  --warning: #B4700F;
   --warning-foreground: #FFFFFF;
 
-  /* Cool steel hairlines */
-  --border: #D8E0EA;
-  --input: #D8E0EA;
-  --ring: #2563EB;
+  /* Neutral hairlines (not blue) */
+  --border: #D5D8DD;
+  --input: #D5D8DD;
+  --ring: #0E72B0;
 
-  /* Engineered chart palette */
-  --chart-1: #2563EB;
-  --chart-2: #059669;
-  --chart-3: #D97706;
-  --chart-4: #DC2626;
-  --chart-5: #0E7490;
+  /* Restrained, engineered chart palette */
+  --chart-1: #0E72B0;
+  --chart-2: #217A46;
+  --chart-3: #B4700F;
+  --chart-4: #C13B3B;
+  --chart-5: #5B6B78;
 
-  --radius: 0.375rem;
+  --radius: 0.25rem;
 
-  /* Application shell chrome — deep steel navy command bar */
+  /* Application shell chrome — deep steel navy command bar (kept) */
   --chrome: #0F2436;
   --chrome-foreground: #C7D4E2;
   --chrome-strong: #F2F6FB;
   --chrome-muted: #7E93A8;
   --chrome-border: rgba(255, 255, 255, 0.09);
   --chrome-hover: rgba(255, 255, 255, 0.08);
-  --chrome-accent: #4B8BF4;
+  --chrome-accent: #2C9BD6;
 
   /* Legacy sidebar aliases (kept for any shadcn primitives that read them) */
   --sidebar: #0F2436;
   --sidebar-foreground: #C7D4E2;
-  --sidebar-primary: #4B8BF4;
+  --sidebar-primary: #2C9BD6;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: rgba(255, 255, 255, 0.08);
   --sidebar-accent-foreground: #FFFFFF;
   --sidebar-border: rgba(255, 255, 255, 0.09);
-  --sidebar-ring: #4B8BF4;
+  --sidebar-ring: #2C9BD6;
 }
 
 .dark {
-  /* ── Steel & Slate — dark control surface ─────────────────────── */
-  --background: #0A121E;
-  --foreground: #DCE6F1;
+  /* ── StackIOT Industrial — dark neutral control surface ───────── */
+  --background: #0D1217;
+  --foreground: #DBE0E6;
 
-  --card: #101B29;
-  --card-foreground: #DCE6F1;
+  --card: #141A21;
+  --card-foreground: #DBE0E6;
 
-  --popover: #101B29;
-  --popover-foreground: #DCE6F1;
+  --popover: #141A21;
+  --popover-foreground: #DBE0E6;
 
-  --primary: #4B8BF4;
-  --primary-foreground: #06101C;
+  --primary: #2C9BD6;
+  --primary-foreground: #06121C;
 
-  --secondary: #18273A;
-  --secondary-foreground: #DCE6F1;
+  --secondary: #1C242D;
+  --secondary-foreground: #DBE0E6;
 
-  --muted: #16233450;
-  --muted-foreground: #8397AD;
+  --muted: #1A222B;
+  --muted-foreground: #8A939E;
 
-  --accent: #17293F;
-  --accent-foreground: #6AA5FF;
+  --accent: #14303F;
+  --accent-foreground: #5CB4E4;
 
-  --destructive: #F0616D;
+  --destructive: #E5645F;
   --destructive-foreground: #FFFFFF;
 
-  --success: #34D399;
-  --success-foreground: #06101C;
+  --success: #3FA968;
+  --success-foreground: #06121C;
 
-  --warning: #FBBF24;
-  --warning-foreground: #06101C;
+  --warning: #E0A020;
+  --warning-foreground: #06121C;
 
-  --border: #1E2E42;
-  --input: #22344B;
-  --ring: #4B8BF4;
+  --border: #232C36;
+  --input: #283340;
+  --ring: #2C9BD6;
 
-  --chart-1: #4B8BF4;
-  --chart-2: #34D399;
-  --chart-3: #FBBF24;
-  --chart-4: #F0616D;
-  --chart-5: #22D3EE;
+  --chart-1: #2C9BD6;
+  --chart-2: #3FA968;
+  --chart-3: #E0A020;
+  --chart-4: #E5645F;
+  --chart-5: #7E8B98;
 
   --chrome: #081320;
   --chrome-foreground: #B7C7D8;
@@ -178,16 +190,16 @@
   --chrome-muted: #6E839A;
   --chrome-border: rgba(255, 255, 255, 0.07);
   --chrome-hover: rgba(255, 255, 255, 0.06);
-  --chrome-accent: #4B8BF4;
+  --chrome-accent: #2C9BD6;
 
   --sidebar: #081320;
   --sidebar-foreground: #B7C7D8;
-  --sidebar-primary: #4B8BF4;
+  --sidebar-primary: #2C9BD6;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: rgba(255, 255, 255, 0.06);
   --sidebar-accent-foreground: #FFFFFF;
   --sidebar-border: rgba(255, 255, 255, 0.07);
-  --sidebar-ring: #4B8BF4;
+  --sidebar-ring: #2C9BD6;
 }
 
 @layer base {

@@ -520,7 +520,7 @@ export default function Dashboard() {
         {kpis.map((kpi, idx) => {
           const Icon = kpi.icon
           return (
-            <Card key={idx} className="group relative overflow-hidden transition-all hover:border-primary/40 hover:shadow-[0_6px_20px_-12px_rgba(15,36,54,0.35)]">
+            <Card key={idx} className="group relative overflow-hidden transition-colors hover:border-primary/50 hover:bg-accent/30">
               <span className="absolute inset-y-0 left-0 w-0.5 bg-primary opacity-0 transition-opacity group-hover:opacity-100" />
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
                 <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
