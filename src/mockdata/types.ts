@@ -47,6 +47,25 @@ export interface Component {
   offers: ComponentOffer[]
 }
 
+/** Direction of a stock movement in the inventory ledger. */
+export type StockDirection = "in" | "out"
+
+/**
+ * A single stock movement. Current stock is the running sum of these
+ * (perpetual inventory): `in` adds, `out` subtracts. Each move is tagged with
+ * the brand variant it applies to; stock-in also records the sourcing supplier.
+ */
+export interface StockTransaction {
+  id: string
+  componentId: string
+  brandId: string
+  supplierId?: string
+  direction: StockDirection
+  qty: number // always positive; direction gives the sign
+  date: string // ISO string
+  note?: string
+}
+
 export interface Brand {
   id: string
   name: string

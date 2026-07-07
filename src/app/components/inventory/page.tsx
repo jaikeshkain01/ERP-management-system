@@ -8,12 +8,17 @@ import { Input } from "@/components/ui/input"
 import {
   AlertCircle, AlertTriangle, ChevronDown, DollarSign,
   Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
-  Boxes, ArrowUpRight, Truck, Tag,
+  Boxes, ArrowUpRight, Truck, Tag, ArrowDownToLine, ArrowUpFromLine, CheckCircle2,
 } from "lucide-react"
 import {
-  COMPONENTS, getBrandName, getSupplierName, bestPrice,
+  COMPONENTS, getComponent, getBrandName, getSupplierName, bestPrice,
   productsUsingComponent, formatINR as mINR, formatLeadTime,
 } from "@/mockdata"
+import type { StockDirection } from "@/mockdata/types"
+import { useStockLedger } from "@/lib/use-stock-ledger"
+import { effectiveComponentStock, effectiveBrandStocks, type NewTransactionInput } from "@/lib/stock-ledger"
+import { StockMoveModal } from "@/components/inventory/stock-move-modal"
+import { TransactionHistoryTable } from "@/components/inventory/transaction-history-table"
 
 // --- Types ---
 type StockStatus = "Healthy" | "Low" | "Critical" | "Out of Stock"
@@ -51,31 +56,41 @@ interface InventoryItem {
 }
 
 // --- Inventory view model derived from the centralized component store ---
-const INVENTORY: InventoryItem[] = COMPONENTS.map((c) => ({
-  id: c.id,
-  name: c.name,
-  genericPN: c.genericPN,
-  category: c.category,
-  stock: c.stock,
-  minStock: c.minStock,
-  reorderQty: c.reorderQty,
-  unit: c.unit,
-  unitCost: bestPrice(c),
-  bin: c.bin,
-  solderType: c.solderType,
-  footprint: c.footprint,
-  lastCount: c.lastCount,
-  brands: c.brandVariants.map((v) => ({ brand: getBrandName(v.brandId), partNo: v.partNo, stock: v.stock })),
-  suppliers: c.offers.map((o) => ({
-    supplier: getSupplierName(o.supplierId),
-    brand: getBrandName(o.brandId),
-    price: mINR(o.price),
-    leadTime: formatLeadTime(o.leadTimeDays),
-  })),
-  usedIn: productsUsingComponent(c.id).map((p) => p.name),
-}))
+// Stock/brand quantities come from the live transaction ledger (perpetual
+// inventory), so recording a stock-in/out updates every derived figure.
+import type { StockTransaction } from "@/mockdata/types"
 
-const CATEGORIES = ["All", ...Array.from(new Set(INVENTORY.map((i) => i.category)))]
+function buildInventory(txns: StockTransaction[]): InventoryItem[] {
+  return COMPONENTS.map((c) => ({
+    id: c.id,
+    name: c.name,
+    genericPN: c.genericPN,
+    category: c.category,
+    stock: effectiveComponentStock(c.id, txns),
+    minStock: c.minStock,
+    reorderQty: c.reorderQty,
+    unit: c.unit,
+    unitCost: bestPrice(c),
+    bin: c.bin,
+    solderType: c.solderType,
+    footprint: c.footprint,
+    lastCount: c.lastCount,
+    brands: effectiveBrandStocks(c, txns).map((b) => ({
+      brand: getBrandName(b.brandId),
+      partNo: b.partNo ?? "—",
+      stock: b.stock,
+    })),
+    suppliers: c.offers.map((o) => ({
+      supplier: getSupplierName(o.supplierId),
+      brand: getBrandName(o.brandId),
+      price: mINR(o.price),
+      leadTime: formatLeadTime(o.leadTimeDays),
+    })),
+    usedIn: productsUsingComponent(c.id).map((p) => p.name),
+  }))
+}
+
+const CATEGORIES = ["All", ...Array.from(new Set(COMPONENTS.map((c) => c.category)))]
 
 // --- Helpers ---
 function getStatus(item: InventoryItem): StockStatus {
@@ -114,10 +129,24 @@ export default function InventoryPage() {
   const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
   const [expanded, setExpanded] = React.useState<string | null>(null)
 
+  const { transactions, addTransaction } = useStockLedger()
+  const [move, setMove] = React.useState<{ componentId: string; mode: StockDirection } | null>(null)
+  const [toast, setToast] = React.useState<string | null>(null)
+
+  const INVENTORY = React.useMemo(() => buildInventory(transactions), [transactions])
+
   const submitSearch = () => setQuery(draftQuery.trim())
   const clearSearch = () => {
     setDraftQuery("")
     setQuery("")
+  }
+
+  const handleMoveSubmit = (input: NewTransactionInput) => {
+    addTransaction(input)
+    const verb = input.direction === "in" ? "Stocked in" : "Stocked out"
+    setToast(`${verb} ${input.qty.toLocaleString()} × ${getBrandName(input.brandId)}`)
+    setMove(null)
+    setTimeout(() => setToast(null), 3000)
   }
 
   // --- Derived stats (over the whole dataset, not filtered) ---
@@ -131,7 +160,7 @@ export default function InventoryPage() {
       { Healthy: 0, Low: 0, Critical: 0, "Out of Stock": 0 } as Record<StockStatus, number>
     )
     return { totalValue, counts, skuCount: INVENTORY.length }
-  }, [])
+  }, [INVENTORY])
 
   // --- Filtered rows ---
   const rows = React.useMemo(() => {
@@ -148,7 +177,7 @@ export default function InventoryPage() {
       const matchesStatus = statusFilter === "All" || getStatus(item) === statusFilter
       return matchesQuery && matchesCategory && matchesStatus
     })
-  }, [query, category, statusFilter])
+  }, [INVENTORY, query, category, statusFilter])
 
   const summaryCards = [
     {
@@ -361,6 +390,32 @@ export default function InventoryPage() {
                       {isOpen && (
                         <tr className="bg-muted/10">
                           <td colSpan={7} className="px-6 py-5">
+                            {/* Stock action header */}
+                            <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
+                              <div className="flex items-center gap-2 text-sm">
+                                <Boxes className="h-4 w-4 text-primary" />
+                                <span className="font-semibold">Stock Ledger</span>
+                                <span className="text-muted-foreground">— record a movement for {item.name}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                                  onClick={(e) => { e.stopPropagation(); setMove({ componentId: item.id, mode: "in" }) }}
+                                >
+                                  <ArrowDownToLine className="h-3.5 w-3.5" /> Stock In
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                  onClick={(e) => { e.stopPropagation(); setMove({ componentId: item.id, mode: "out" }) }}
+                                >
+                                  <ArrowUpFromLine className="h-3.5 w-3.5" /> Stock Out
+                                </Button>
+                              </div>
+                            </div>
+
                             <div className="grid gap-6 lg:grid-cols-3">
                               {/* Specs / meta */}
                               <div className="space-y-3">
@@ -465,6 +520,11 @@ export default function InventoryPage() {
                                 </Button>
                               </div>
                             </div>
+
+                            {/* Transaction history */}
+                            <div className="mt-6">
+                              <TransactionHistoryTable componentId={item.id} transactions={transactions} />
+                            </div>
                           </td>
                         </tr>
                       )}
@@ -508,6 +568,30 @@ export default function InventoryPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Stock in/out modal */}
+      {move && (() => {
+        const comp = getComponent(move.componentId)
+        if (!comp) return null
+        return (
+          <StockMoveModal
+            mode={move.mode}
+            componentId={comp.id}
+            componentName={comp.name}
+            brandStocks={effectiveBrandStocks(comp, transactions)}
+            onSubmit={handleMoveSubmit}
+            onClose={() => setMove(null)}
+          />
+        )
+      })()}
+
+      {/* Toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium shadow-lg animate-in fade-in slide-in-from-bottom-2">
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
