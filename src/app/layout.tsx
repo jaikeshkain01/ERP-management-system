@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { UniversalSearch } from "@/components/universal-search";
+import { TopBar } from "@/components/top-bar";
+import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { ModuleProvider } from "@/components/module-provider";
 import { ModuleGate } from "@/components/module-gate";
 
@@ -36,31 +35,17 @@ export default function RootLayout({
         className={`${inter.variable} ${jetbrainsMono.variable} h-full antialiased`}
       >
         <ModuleProvider>
-          <SidebarProvider>
-            <TooltipProvider>
-              <div className="flex min-h-screen w-full bg-sidebar">
-                <AppSidebar />
-                <div className="flex flex-1 flex-col overflow-hidden bg-background">
-                  <header className="flex h-16 shrink-0 items-center justify-between border-b border-border px-6">
-                    <div className="flex items-center gap-2">
-                      <SidebarTrigger className="-ml-1" />
-                      <div className="h-4 w-[1px] bg-border mx-2" />
-                      <div className="flex items-center text-sm font-medium text-muted-foreground">
-                        StackIOT Technologies Pvt. Ltd.
-                      </div>
-                    </div>
-                    <UniversalSearch />
-                  </header>
-                  <main className="flex-1 overflow-y-auto p-6 md:p-8">
-                    <ModuleGate>{children}</ModuleGate>
-                  </main>
-                </div>
-              </div>
-            </TooltipProvider>
-          </SidebarProvider>
+          <TooltipProvider>
+            <div className="flex min-h-screen w-full flex-col bg-background">
+              <TopBar />
+              <WorkspaceTabs />
+              <main className="flex-1 overflow-y-auto p-6 md:p-8">
+                <ModuleGate>{children}</ModuleGate>
+              </main>
+            </div>
+          </TooltipProvider>
         </ModuleProvider>
       </body>
     </html>
   );
 }
-
