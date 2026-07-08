@@ -4,16 +4,23 @@
 > the entity model behind the UI (`src/mockdata`), how entities link, and a proposed
 > backend contract that mirrors the current front-end shapes.
 
-**Stack:** Next.js 16 (App Router, all pages `"use client"` except redirects), React 19,
+**Stack:** Next.js 16.2.9 (App Router, all pages `"use client"` except redirects), React 19,
 Tailwind v4, shadcn/base-ui components, `recharts` for charts, `lucide-react` icons.
-**Persistence today:** none — data is in-memory (`src/mockdata`) with a few pages caching
-user edits in `localStorage`. The backend replaces both.
+**Persistence today:** no server — canonical data is in-memory (`src/mockdata`), and several
+pages cache user edits in `localStorage`. Two subsystems are already prototyped client-side and
+mirror the backend design below: the **inventory ledger** (`src/mockdata/transactions.ts` +
+`src/lib/stock-ledger.ts`, see §7a) and the **module-licensing toggles** (`src/lib/modules.ts`,
+see §4). The backend replaces all of it.
 
 ---
 
 ## 1. Domain model (source of truth: `src/mockdata`)
 
-Five **canonical entities**. Everything references everything else by `id`.
+Five **canonical entities**. Everything references everything else by `id`. Entity/type
+definitions live in `src/mockdata/types.ts`; each entity has its own seed file
+(`components.ts`, `brands.ts`, …), selectors live in `index.ts`, and two non-entity files back
+the prototyped subsystems: `transactions.ts` (inventory ledger, §7a) and `launchpad.ts`
+(home-screen tiles, §4).
 
 ### Component  (`components.ts`) — the hub
 | Field | Type | Notes |
@@ -33,7 +40,7 @@ Five **canonical entities**. Everything references everything else by `id`.
 | `footprint` | string | e.g. `R0603` |
 | `spq` | number | Standard pack qty (also used as MOQ proxy) |
 | `annualConsumption` | number | Drives usage/coverage analytics |
-| `specs` | `{ key, value }[]` | Free-form spec sheet; **order-significant** (array position = display order; backend uses `component_specs.display_order`) |
+| `specs` | `{ key, value }[]` | Free-form spec sheet; **order-significant** (array position = display order; backend stores it as an ordered `components.specs` jsonb array) |
 | `brandVariants` | `{ brandId, partNo, stock }[]` | **→ Brand** (a brand's part number + stock for this component) |
 | `offers` | `{ supplierId, brandId, price, leadTimeDays }[]` | **→ Supplier + Brand** (a supplier's current price for a brand variant). Backend table: **`supplier_component_prices`** — adds `currency`, `moq`, `spq`, `valid_from/valid_to` (temporal price book); the mock holds only the *current* price. |
 
@@ -101,8 +108,15 @@ Relationship summary (all associations are **many-to-many** and carry attributes
 
 ## 3. Transactional & analytics data (not canonical entities)
 
-These live in `src/mockdata/{production,purchases,dashboard,reports}.ts`. They reference
-the canonical entities by id/name and are the records a backend will own as **mutable tables**.
+These live in `src/mockdata/{production,purchases,dashboard,reports,transactions}.ts`. They
+reference the canonical entities by id/name and are the records a backend will own as **mutable
+tables**.
+
+> **`transactions.ts` (StockTransaction)** is the one that's more than a display stub — it seeds
+> a real append-only inventory ledger (`{componentId, brandId, supplierId?, direction, qty,
+> date, note}`) that the Inventory page reads and appends to. It's the front-end prototype of
+> §7a's `inventory_transactions`; stock shown in the UI is derived from it, not from
+> `component.stock`. See §5 (Inventory) and §7a.
 
 ### ProductionOrder (`production.ts` → `PRODUCTION_ORDERS`)
 `id` (e.g. `PO-001`), `product` (name), `qty`, `status` (`Draft|Ready|In Progress|Completed`).
@@ -137,20 +151,52 @@ usage impact, inventory distribution counts) plus a few presentational logs
 
 ---
 
-## 4. Route map & navigation
+## 4. Route map, navigation & module licensing
 
-Sidebar groups (`src/components/app-sidebar.tsx`):
+**Hub-and-spoke, no sidebar** (deliberate). The shell (`src/app/layout.tsx`) is a chrome bar
+(`components/top-bar.tsx`) + a contextual tab strip (`components/workspace-tabs.tsx`) wrapping
+the page. `/` is the **Launchpad** (`app/page.tsx` → `components/launchpad.tsx`): a tile grid of
+workspaces you launch into. Everything is driven by two registries in **`src/lib/modules.ts`** —
+never hard-coded per screen.
 
-| Group | Screens |
-|---|---|
-| **Overview** | Dashboard `/`, Reports `/reports` |
-| **Supply Chain** | Products (`/products/list`, `/products/structure`), PCB Management (`/pcb-management/list`, `/pcb-management/structure`), Components (`/components/list`, `/components/details`), Inventory (`/components/inventory`, `/components/usage`) |
-| **Manufacturing** | Production (`/production/planner`, `/production/readiness`, `/production/orders`) |
-| **Procurement** | Suppliers & Brands (`/suppliers/list`, `/suppliers/details`, `/brands/list`), Purchase (`/purchases/requests`, `/purchases/orders`) |
-| **Footer** | Settings `/settings` |
+### Workspaces (`WORKSPACES`)
+Each workspace is a top-bar entry with an entry `href` and zero or more `tabs`. A workspace with
+an empty `tabs` array renders no tab strip (single-page). `workspaceForPath` / `activeTabHref`
+resolve the current path to the active workspace + tab (most-specific href wins, so
+`/components/inventory` → Inventory while `/components/list` → Components).
 
-Redirects: `/brands → /brands/list`, `/purchases → /purchases/requests`.
-Also `/components/add` (create form) and `/products`, `/pcb-management`, `/components`, `/production`, `/suppliers` group-parent URLs (no standalone page).
+| Workspace | `moduleId` (lock) | Entry | Tabs |
+|---|---|---|---|
+| **Dashboard** | — (free) | `/dashboard` | *(single page)* |
+| **Components** | — (free) | `/components/list` | Component List, Component Details (`/components/details`), Add Component (`/components/add`) |
+| **Inventory & Stock** | `inventory` | `/components/inventory` | Inventory, Usage Analysis (`/components/usage`) |
+| **Products** | — (free) | `/products/list` | Product List, Product Structure (`/products/structure`, tab-gated by `bom`) |
+| **PCB Management** | — (free) | `/pcb-management/list` | PCB List, PCB Structure (`/pcb-management/structure`, tab-gated by `bom`) |
+| **Production** | `production` | `/production/planner` | Planner, Readiness, Orders |
+| **Purchasing** | `purchasing` | `/purchases/requests` | Requests, Orders (`/purchases/orders`) |
+| **Suppliers & Brands** | — (free) | `/suppliers/list` | Suppliers, Supplier Details (`/suppliers/details`), Brands (`/brands/list`) |
+| **Reports & Analytics** | `reports` | `/reports` | *(single page)* |
+
+`/settings` sits outside the workspace registry (chrome-level). Redirects: `/brands →
+/brands/list`, `/purchases → /purchases/requests`. Group-parent URLs `/products`,
+`/pcb-management`, `/components`, `/production`, `/suppliers` have no standalone page.
+
+### Module licensing (`MODULES`, `BASE_AREAS`)
+The ERP is sold per module: a **free base tier** (`BASE_AREAS` — Components, Products, PCB
+Management, Suppliers & Brands) plus **5 toggleable paid modules** (`MODULES`): `inventory`,
+`bom`, `purchasing`, `production`, `reports`. Each module owns `routePrefixes`; `moduleForPath`
+maps any path to its owning module (or null for free routes).
+
+- **Enable state** lives in `localStorage[mockup2_erp_enabled_modules]` (`DEFAULT_ENABLED` = all
+  on), managed by `components/module-provider.tsx` (`useModules`) and toggled from Settings via
+  `components/modules-settings-card.tsx`.
+- **Gating:** `components/module-gate.tsx` blocks a locked module's routes; the Launchpad shows
+  locked tiles as unavailable; `workspace-tabs` hides workspaces/tabs whose `moduleId` is off
+  (e.g. Product/PCB Structure tabs disappear when `bom` is off, but the list pages stay — those
+  are free base areas).
+- **Backend mapping:** this is presentational today. The real system becomes a per-tenant
+  license/entitlement check; `moduleForPath` is the front-end analog of a route-level permission
+  guard.
 
 ---
 
@@ -159,7 +205,11 @@ Also `/components/add` (create form) and `/products`, `/pcb-management`, `/compo
 Legend — **Reads:** entities/selectors consumed. **Writes:** persistence. **Params:** URL query.
 **Links:** outbound navigation to other screens.
 
-### Dashboard — `/` (`app/page.tsx`)
+### Launchpad — `/` (`app/page.tsx`)
+- **Reads:** `WORKSPACES` / `MODULES` / `BASE_AREAS` (`src/lib/modules.ts`) + `useModules` for lock state; tile copy from `@/mockdata/launchpad`. Home screen — a tile grid that launches into each workspace; locked (unlicensed) modules render as unavailable.
+- **Links:** each tile → its workspace entry `href`.
+
+### Dashboard — `/dashboard` (`app/dashboard/page.tsx`)
 - **Reads:** `@/mockdata/dashboard` (PRODUCT_STATUS, LOW_STOCK, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT, INVENTORY_CHART, + static panels). Tabs: Overview / Manufacturing / Inventory / Procurement.
 - **Links:** quick-links to components (list/add/inventory), production/planner, purchases/requests, suppliers/list, pcb-management/list, reports; blockers → purchases/requests; low-stock & risk → components/list.
 - **Backend:** a `/dashboard/summary` aggregate endpoint (counts, low-stock, single-supplier, top-consumed, product build status).
@@ -192,8 +242,9 @@ Legend — **Reads:** entities/selectors consumed. **Writes:** persistence. **Pa
 - **Writes:** `localStorage["mockup2_erp_components_details"]` (edit price / add supplier / add variant / edit / delete).
 - **Params:** `component`. **Links:** `/brands/list?brand=`, `/suppliers/details?supplier=`, `/components/list`.
 
-### Inventory — `/components/inventory`
-- **Reads:** `COMPONENTS` → `{stock, minStock, reorderQty, unitCost=bestPrice, bin, lastCount, brands, suppliers, usedIn}`. Status = derived; value = stock × unitCost. Search + category + status filters.
+### Inventory — `/components/inventory` *(module: `inventory`)*
+- **Reads:** the **client-side stock ledger** via `useStockLedger` (`src/lib/use-stock-ledger.ts`), which seeds from `buildSeedTransactions()` and hydrates from `localStorage`. Stock is **derived from the ledger** — `effectiveComponentStock` / `effectiveBrandStocks` (`src/lib/stock-ledger.ts`) — not read off `component.stock`. Per-component detail shows a running-balance transaction history (`componentTxns` → `LedgerRow`). Other fields (`minStock, reorderQty, unitCost=bestPrice, bin, lastCount, brands, suppliers, usedIn`) still come from `COMPONENTS`. Status = derived; value = stock × unitCost. Search + category + status filters.
+- **Writes:** appends `StockTransaction`s (`addTransaction`, IN/OUT movements) to `localStorage["mockup2_erp_stock_transactions"]`. This is the front-end prototype of §7a's append-only ledger.
 
 ### Usage Analysis — `/components/usage`
 - **Reads:** `COMPONENTS` → `{usedInProductsCount, usedInPCBsCount, annualConsumption, currentStock, coverageDays}` + a deterministic 12-month trend (from `annualConsumption`).
@@ -237,7 +288,7 @@ Legend — **Reads:** entities/selectors consumed. **Writes:** persistence. **Pa
 - **Reads:** `PRODUCTION_YIELD` time-series + static KPI stats + product distribution.
 
 ### Settings — `/settings`
-- Static form (no data).
+- **Reads/Writes:** `ModulesSettingsCard` (`components/modules-settings-card.tsx`) toggles the licensed modules via `useModules` → `localStorage["mockup2_erp_enabled_modules"]` (§4). Remainder is a static form (no data).
 
 ### Universal Search (`src/components/universal-search.tsx`)
 - **Reads:** `src/lib/search-data.ts`, which is now **fully derived from `@/mockdata`** (products, PCBs, components, brands, suppliers). Global command-palette search across all entities.
@@ -253,6 +304,8 @@ Legend — **Reads:** entities/selectors consumed. **Writes:** persistence. **Pa
 | `mockup2_erp_suppliers_details` | Supplier Details | `POST /suppliers/{id}/prices` |
 | `mockup2_erp_purchase_requests` | Purchase Requests, Production Readiness, Planner | `POST /purchase-requests` |
 | `mockup2_erp_purchase_orders` | Purchase Orders | `POST /purchase-orders` |
+| `mockup2_erp_stock_transactions` | Inventory (stock movements) | `POST /inventory/transactions` (append-only ledger, §7a) |
+| `mockup2_erp_enabled_modules` | Settings (module toggles) | per-tenant license / entitlement service (§4) |
 
 Production Orders (Kanban) is currently in-memory only → back it with `PATCH /production-orders/{id}` on drag.
 
@@ -261,22 +314,31 @@ Production Orders (Kanban) is currently in-memory only → back it with `PATCH /
 ## 7. Proposed backend contract
 
 > **The full runnable PostgreSQL DDL is in [`docs/schema.sql`](schema.sql)**, organized by
-> module: **Authentication** (users, roles, permissions) · **Masters** (categories, brands,
-> suppliers, warehouses, components, pcbs, products) · **Relationships** (product_pcbs, pcb_lines,
-> component_specs, component_brand_variants, supplier_component_prices) · **Inventory**
-> (inventory, inventory_transactions) · **Production** (production_orders, _items, allocations,
-> consumptions) · **Purchase** (purchase_requests/_items, purchase_orders/_items, goods_receipts).
-> The sections below are the conceptual contract; `schema.sql` is the source of truth for columns,
-> types, constraints, and triggers.
+> module: **Tenancy** (companies) · **Authentication** (users, company_memberships, roles,
+> role_permissions) · **Masters** (brands, suppliers, warehouses, storage_locations, components,
+> pcbs, products) · **Relationships** (product_pcbs, pcb_lines, component_brand_variants,
+> supplier_component_prices) · **Inventory** (inventory_balances, inventory_transactions) · **Production**
+> (production_orders, _items, production_material_moves) · **Purchase** (purchase_requests/_items,
+> purchase_orders/_items) · **Workflow/logs** (approvals, notifications, audit_logs). The sections
+> below are the conceptual contract; `schema.sql` is the source of truth for columns, types,
+> constraints, and triggers. **30 tables total.**
 
-### Conventions — audit columns & soft delete (ALL tables)
+> **The system is multi-tenant** — one installation serves many companies. This is the
+> highest-priority structural axis and is described in **§7f**; it touches nearly every table
+> (`company_id`), so it is designed in from the start rather than retrofitted.
 
-Every table carries these standard columns (omitted from the definitions below to cut noise):
+### Conventions — tenancy, audit columns & soft delete (ALL tables)
+
+Every **tenant-owned** table carries these standard columns (omitted from the definitions below
+to cut noise):
 ```
+company_id               -> companies(id) -- tenant owner (NOT NULL); see §7f
 created_by, updated_by   -> users(id)     -- who
 created_at, updated_at    -- when (updated_at bumped on every write)
 deleted_at                -- soft delete: NULL = active, non-NULL = archived
 ```
+- **`company_id` is on every table except the three global ones** (`companies`, `users`,
+  `permissions`). It's set on insert and never changes. See §7f for the full tenancy model.
 - **Never hard-DELETE.** Set `deleted_at`; every read filters `WHERE deleted_at IS NULL`.
 - **Unique constraints must be soft-delete-aware** — use a partial unique index
   `... WHERE deleted_at IS NULL`, so archiving a row doesn't block re-creating an active one
@@ -288,17 +350,22 @@ deleted_at                -- soft delete: NULL = active, non-NULL = archived
 
 ### Core tables (normalized)
 
+> **Every table below also carries `company_id` (§7f) + the audit columns** — omitted here to
+> keep the shapes readable. `companies`, `users`, and `permissions` are the only tables without
+> `company_id`.
+
 > **Stock is NOT stored on catalog tables.** `components.stock` and
 > `component_brand_variants.stock` in the front-end mock are display conveniences only.
 > In the backend, on-hand quantity lives in **one place — the Inventory module** (§7a),
-> keyed by brand variant + warehouse. Everything else (a component's total stock, a
+> keyed by brand variant + bin (§7g). Everything else (a component's total stock, a
 > variant's stock, low-stock flags) is **derived** from it. See §7a.
 
 ```
 products(id, name, code, version, description, status, estimated_cost, buildable_qty*)
 pcbs(id, name, description, layers, status, components_count)          -- stock_count is derived (finished-goods inventory)
 components(id, generic_pn, name, category, description, min_stock,
-           reorder_qty, unit, solder_type, footprint, spq, annual_consumption)
+           reorder_qty, unit, solder_type, footprint, spq, annual_consumption,
+           specs)   -- category = plain label; specs = ordered [{key,value}] jsonb
            -- NO stock/bin/last_count here — those are inventory concerns
 brands(id, name, description, headquarter, founded, status, rating)
 suppliers(id, name, description, contact, email, phone, address, terms, rating, status)
@@ -307,7 +374,7 @@ suppliers(id, name, description, contact, email, phone, address, terms, rating, 
 product_pcbs(id, product_id, pcb_id, qty, sequence, remarks)       -- M:N; boards per unit
 pcb_lines(id, pcb_id, component_id, qty, ref_des, preferred_brand_id, remarks)  -- BOM; parts per board
                                                                    -- preferred_brand_id -> brands(id)
-component_specs(id, component_id, key, value, display_order)      -- ORDER BY display_order for stable UI
+-- (component specs are an ordered jsonb array on components.specs, not a table)
 component_brand_variants(id, component_id, brand_id, part_no)      -- M:N + attrs; surrogate id, NO stock
 -- supplier price book (renamed from "component_offers" — that's what it is).
 -- Prices change often, so each row is time-bounded; the "current" price is the row
@@ -371,8 +438,9 @@ Draft → Submitted → Manager Approved → Procurement Approved → PO Created
 
 ### 7b. Production order lifecycle (child tables)
 
-One order header, three child stages. Each stage has different records and different
-inventory effects (§7a) — don't collapse them into the header.
+One order header, one demand table, and one material-moves table (allocations and consumptions
+are two `kind`s of the same row — merged to keep the schema lean without losing the stage
+distinction, which is now the `kind` column + `released_at`).
 
 ```
 -- STAGE 1 — PLAN: BOM demand exploded for the order (what it needs)
@@ -382,20 +450,14 @@ production_order_items(
   status               -- pending | allocated | consumed | short
 )
 
--- STAGE 2 — ALLOCATE: reserve specific inventory to each item (available → reserved)
-production_order_allocations(
-  id, production_order_item_id,
+-- STAGE 2/3 — MATERIAL MOVES: reservations and issues in one table, keyed by `kind`
+production_material_moves(
+  id, production_order_item_id, kind,   -- kind = 'allocation' | 'consumption'
   component_brand_variant_id  -> component_brand_variants(id),
-  warehouse_id                -> warehouses(id),
-  allocated_qty, allocated_at
-)   -- adjusts `reserved` in the projection; NOT a ledger transaction
-
--- STAGE 3 — CONSUME: issue what was actually used on the floor (reserved → issued)
-production_order_consumptions(
-  id, production_order_item_id, allocation_id,
-  component_brand_variant_id, warehouse_id,
-  consumed_qty, consumed_at
-)   -- appends inventory_transactions(type='CONSUMPTION')
+  warehouse_id, location_id,            -- reserve-from / issue-from bin (§7g)
+  qty, released_at, moved_at
+)   -- kind='allocation'  → adjusts `reserved` in the projection (released_at frees it); NOT a ledger txn
+    -- kind='consumption' → appends inventory_transactions(type='CONSUMPTION')
 
 -- STAGE 4 — COMPLETE: order status → Completed; finished units append
 --            inventory_transactions(type='PRODUCTION') to the finished-goods warehouse.
@@ -404,7 +466,7 @@ production_order_consumptions(
 **Lifecycle & inventory linkage:**
 ```
 Draft ─plan→ Ready ─allocate→ (reserved) ─consume→ In Progress ─finish→ Completed
-             items         allocations              consumptions      finished-goods receipt
+             items      moves(kind=allocation)   moves(kind=consumption)  finished-goods receipt
 ```
 - **Allocate** never moves physical stock — it shifts `available → reserved` (§7a). Shortages
   (required_qty > allocatable) surface here (item.status = `short`) and drive the readiness/PR flow.
@@ -420,31 +482,44 @@ Draft ─plan→ Ready ─allocate→ (reserved) ─consume→ In Progress ─fi
 > `inventory_transactions` row.** Stock levels are a *projection* of that ledger, so the
 > books always reconcile and you get a full audit trail for free.
 
-Quantity is tracked per **brand variant × warehouse**.
+> **Already prototyped client-side.** The front-end implements a simplified version of this
+> ledger today: `StockTransaction` rows (`src/mockdata/transactions.ts`) with `IN`/`OUT`
+> movements, a deterministic seed whose per-brand totals reconcile to the catalog, and
+> derivation helpers (`effectiveComponentStock`, `effectiveBrandStocks`, `componentTxns` running
+> balance) in `src/lib/stock-ledger.ts`. The mock is keyed by `component + brand` (no warehouse
+> dimension yet) and has only `IN`/`OUT` (no `TRANSFER`/`ADJUSTMENT`/`CONSUMPTION`/`PRODUCTION`).
+> The backend generalizes it to brand-variant × warehouse with the full type enum below.
+
+Quantity is tracked per **brand variant × bin** — the bin being the leaf of the
+**Warehouse → Zone → Rack → Bin** location hierarchy (§7g). `warehouse_id` is denormalized
+onto balances/movements for fast warehouse-level roll-ups; the free-text `bin = "A-12"` of the
+mock is gone.
 ```
-warehouses(id, name, code, location)
+warehouses(id, name, code, location, is_finished_goods)
+storage_locations(id, warehouse_id, parent_id, kind, code, is_default)  -- §7g self-ref tree (zone/rack/bin)
 
 -- THE LEDGER — the source of truth. Immutable, append-only.
 inventory_transactions(
   id,
   type,                          -- IN | OUT | TRANSFER | ADJUSTMENT | RETURN | CONSUMPTION | PRODUCTION
   component_brand_variant_id  -> component_brand_variants(id),
-  warehouse_id                -> warehouses(id),   -- destination (for TRANSFER)
-  from_warehouse_id,          -- source; set only for TRANSFER
+  location_id                 -> storage_locations(id),  -- the bin (leaf location)
+  warehouse_id                -> warehouses(id),      -- denormalized from location (roll-up + FK guard)
   qty_delta,                     -- signed: +in / −out
-  ref_type, ref_id,              -- source doc, e.g. ('purchase_order','PO-984302'), ('production_order','PO-001')
+  transfer_group_id,             -- a TRANSFER = two rows (−source, +dest location) sharing this id
+  ref_type, ref_id, grn_no,      -- source doc; goods-in = type='IN' ref_type='purchase_order_item' (+grn_no)
   reason, note, created_at, created_by
 )
 
 -- READ-MODEL (projection of the ledger + open allocations). Rebuildable; never hand-edited.
 inventory_balances(
-  component_brand_variant_id, warehouse_id,
+  component_brand_variant_id, location_id, warehouse_id,
   on_hand,          -- = Σ inventory_transactions.qty_delta
-  reserved,         -- = Σ open production_order_allocations
+  reserved,         -- = Σ open production_material_moves (kind='allocation')
   available,        -- = on_hand − reserved
   damaged,          -- from ADJUSTMENT/RETURN into a damaged bucket
-  bin, last_counted_at,
-  UNIQUE(component_brand_variant_id, warehouse_id)
+  last_counted_at,
+  UNIQUE(component_brand_variant_id, location_id)
 )
 ```
 
@@ -453,7 +528,7 @@ inventory_balances(
 |---|---|---|
 | `IN` | + | PO goods-receipt, opening stock |
 | `OUT` | − | manual issue / write-off / sale |
-| `TRANSFER` | ±  | move between warehouses (source `from_warehouse_id` −, dest `warehouse_id` +) |
+| `TRANSFER` | ±  | move between bins/warehouses (two rows sharing `transfer_group_id`: −source bin, +dest bin) |
 | `ADJUSTMENT` | ± | cycle-count correction (physical vs system) |
 | `RETURN` | ± | return to supplier (−) or return from floor (+) |
 | `CONSUMPTION` | − | issued to a production order (build) |
@@ -461,10 +536,11 @@ inventory_balances(
 
 **Derivation rules (compute, never store as the truth):**
 ```
-variant on-hand (one warehouse) = Σ inventory_transactions.qty_delta
-variant on-hand (all)           = Σ across warehouses
+variant on-hand (one bin)        = Σ inventory_transactions.qty_delta for that bin
+variant on-hand (one warehouse)  = Σ across the warehouse's bins
+variant on-hand (all)            = Σ across warehouses
 component current stock          = Σ on-hand over the component's brand variants
-reserved                        = Σ open production_order_allocations  (§7b)
+reserved                        = Σ open production_material_moves (kind='allocation')  (§7b)
 available                       = on_hand − reserved
 low / critical                  = current stock vs components.min_stock
 ```
@@ -521,8 +597,184 @@ crossing `min_stock` (an `OUT`/`CONSUMPTION` ledger write) → `low_stock`; PR `
 `approval_request` to the approver. Partial index on `(user_id) WHERE is_read = false` keeps the
 unread badge cheap.
 
+### 7f. Multi-tenancy (one installation → many companies)
+
+**The highest-priority structural decision.** The front-end mock assumes a single company, but
+the backend is multi-tenant from day one — because adding a tenant key *later* means touching
+almost every table, backfilling data, and reworking every unique constraint and query. Cheap now,
+very expensive to retrofit.
+
+**Model — shared schema, row-level tenancy.** One database, one schema; rows are partitioned by a
+`company_id` discriminator. (Not schema-per-tenant or db-per-tenant — those complicate migrations
+and cross-tenant ops for no gain at this scale.)
+
+```
+companies(id, code, name)          -- the TENANT ROOT (global; has no company_id itself)
+```
+
+- **`company_id uuid NOT NULL REFERENCES companies(id)` on every tenant-owned table.** Set on
+  insert, immutable thereafter.
+- **Three global tables have no `company_id`:**
+  - `users` — a shared identity pool. A user reaches companies through **`company_memberships`**
+    (a user can belong to *multiple* companies; one is flagged `is_default` for login).
+  - There is **no permissions catalog table** — the `resource × action` permission set is an app
+    constant (§7h). The **`roles`** are **per-company** and grant `(resource, action)` pairs
+    directly via `role_permissions` (both carry `company_id`); a user's role in a company lives on
+    `company_memberships.role_id` (no separate `user_roles` table — one role per user per company,
+    multi-role deferred). Each tenant manages its own roles and grants.
+
+**Per-company uniqueness.** Every business-key unique index is prefixed with `company_id`, so the
+same human code lives once *per tenant* — `RES-10K`, `ROIP400`, `PR-0001`, warehouse `A-12` can
+each recur across companies without collision. (`uq_components_generic_pn (company_id, generic_pn)`,
+`uq_products_code (company_id, code)`, `uq_pr_no (company_id, pr_no)`, …)
+
+**No cross-tenant edges — composite foreign keys.** A FK between two tenant tables is composite:
+`FOREIGN KEY (company_id, component_id) REFERENCES components (company_id, id)`. This makes it
+*structurally impossible* for, say, a `pcb_line` in company A to reference a `component` in company
+B. It requires a `UNIQUE (company_id, id)` on every tenant table (declared alongside the PK, as the
+composite-FK target). FKs pointing at the *global* `users` table stay single-column.
+
+**Runtime isolation — Postgres Row-Level Security.** Composite FKs prevent bad *writes*; RLS
+prevents bad *reads*. Each request opens its transaction with the active context:
+```sql
+SET LOCAL app.current_company_id = '<uuid>';
+SET LOCAL app.current_user_id    = '<uuid>';
+```
+Every tenant table has RLS `ENABLE`d + `FORCE`d with a `tenant_isolation` policy
+(`USING company_id = current_company_id()` + matching `WITH CHECK`). A query that *forgets* its
+`WHERE company_id = …` still cannot see or write another tenant's rows — the database enforces it.
+The app connects as a role that is **not** the table owner and **not** `BYPASSRLS`.
+- `companies` → RLS limits a user to companies they're a member of.
+- `company_memberships` → a user sees **all** their own memberships (for the company switcher),
+  and admins manage members of the active company.
+- `users` → global, no RLS; access mediated by the service layer.
+
+**API/session layer.** Login resolves the user's memberships → picks the active company (default
+or explicit switch) → every downstream request carries it (JWT claim / session), which the DB
+layer turns into the two `SET LOCAL` GUCs above. Endpoints below are **implicitly scoped to the
+active company**; none of them take a `companyId` param — it comes from the session, never the URL.
+
+### 7g. Warehouse location hierarchy (Warehouse → Zone → Rack → Bin)
+
+The mock stores a single free-text `bin` (e.g. `"A-12"`) per component. That doesn't scale once
+inventory grows: you can't slot stock, direct putaway, or run a pick path. The backend models a
+proper addressable tree.
+
+```
+Company → Warehouse → Zone → Rack → Bin      (ONE self-referencing table, not one per level)
+storage_locations(id, warehouse_id, parent_id, kind, code, is_default)
+                                     -- kind = 'zone' | 'rack' | 'bin' (enum, extensible)
+                                     -- parent_id → storage_locations(id); NULL at top level
+```
+
+- **One self-referencing table, not a table per level.** `kind` tags the node (zone/rack/bin) and
+  `parent_id` links up the tree. Depth is flexible — add `'aisle'`, `'shelf'`, … to the
+  `location_kind` enum without new tables. Fewer tables *and* more future-ready than a
+  fixed 3-level schema.
+- **Stock lives at the Bin (the leaf, `kind='bin'`).** `inventory_transactions.location_id` and the
+  `inventory_balances` row are keyed by location; `warehouse_id` is denormalized alongside for fast
+  warehouse-level roll-ups. A location still reads as the full path *Warehouse / Zone / Rack / Bin*.
+- **The tree can't cross a warehouse (or tenant).** `warehouse_id` is carried on every node and
+  threaded through the self-FK — `storage_locations(company_id, warehouse_id, parent_id) →
+  storage_locations(company_id, warehouse_id, id)`, and inventory→location the same way. A node can
+  never point at a parent in another warehouse. (Same composite-FK technique as tenancy, §7f.)
+- **Per-warehouse codes + `is_default`.** `code` is unique per warehouse (`A12` is one address);
+  one default/bulk bin per warehouse (partial-unique) so a site that doesn't slot finely still has
+  a valid `location_id` for every movement — `location_id` is `NOT NULL` on all movements.
+- **Movements carry the location:** `production_material_moves.location_id` (reserve/issue-from) and
+  every ledger row. Goods-in is a `type='IN'` ledger row into the putaway location (no separate
+  receipts table). A `TRANSFER` is two ledger rows (−source, +dest location) sharing
+  `transfer_group_id` — within or across warehouses.
+- **Backfill from the mock:** the flat `bin` string becomes a `storage_locations` row
+  (`kind='bin'`) under a default zone/rack per warehouse; existing stock lands in that bin.
+
+### 7h. Permissions (resource × action, not generic codes)
+
+Users → roles → permissions is already the shape (§7f). What was missing is **scope**: a
+permission isn't one opaque string, it's a **verb on a resource** — a matrix.
+
+```
+resource   ×   action  →  grant (a role_permissions row)
+Product        view       product.view
+Product        create     product.create
+Product        edit       product.edit
+Product        delete     product.delete
+Product        approve    product.approve
+```
+
+- **No catalog table — grants carry the pair.** `role_permissions(role_id, resource, action)`
+  stores each grant directly. `action` is a fixed enum `view | create | edit | delete | approve |
+  export`; `resource` names an entity or module (`product`, `inventory`, `purchase_request`,
+  `report`, `role`, …). The set of *valid* `(resource, action)` combinations is an application
+  constant (the verbs are an enum, the resources are known at build time), so a DB catalog earned
+  its keep — dropping it removed a table without losing any capability.
+- **Not every resource has every action** — only combinations that exist are ever granted.
+  `approve` is meaningful for documents with an approval step (purchase_request, purchase_order,
+  production_order — ties into the §7c approval workflow); `export` is for reports; plain masters
+  get the four CRUD verbs.
+- **Per-company grants.** A tenant's **`roles`** grant a subset via `role_permissions`; a user's
+  role per company lives on `company_memberships.role_id` (§7f). So "Procurement Lead" in company A
+  and B are distinct role rows granting different slices of the same matrix.
+- **Enforcement.** The API guards each route by the required `resource.action`
+  (e.g. `POST /products` needs `product.create`; the PR approve endpoint needs
+  `purchase_request.approve`). `GET /me` returns the caller's effective permission set so the UI
+  can hide/disable actions the role can't perform — the module-licensing gate (§4) and this
+  permission gate stack: a module must be *licensed* **and** the role must *permit* the action.
+- **Seeded** in `schema.sql`: the bootstrap Admin role is granted the whole matrix directly on
+  `role_permissions` (resource×action cross-join).
+
+### 7i. Audit log (field-level change history)
+
+The audit *columns* (`created_by`, `updated_by`, `created_at`, `updated_at` on every table, §7
+conventions) tell you **who last touched a row**. They don't tell you **what a field was before**,
+or who changed it two edits ago. `audit_logs` adds that — the answer to *"who changed the supplier
+price yesterday, and from what to what?"*
+
+```
+audit_logs(id, company_id, entity, entity_id, action, field, old_value, new_value, changed_by, changed_at)
+```
+
+- **One row per changed field, per write.** On `UPDATE`, the trigger diffs old vs new and appends a
+  row for each field that actually changed (`field`, `old_value`, `new_value` as `jsonb`). `INSERT`
+  and `DELETE` log a single whole-row snapshot.
+- **Trigger-populated, not app-populated.** A generic `log_field_changes()` trigger
+  (`AFTER INSERT/UPDATE/DELETE`) is attached to the audited tables, so coverage can't be forgotten
+  — no code path can change a supplier price without a trail. (Excludes machine-maintained
+  ledgers/projections like `inventory_balances`/`inventory_transactions`, which *are* their own audit trail.)
+- **Append-only & immutable**, like the inventory ledger — no `updated_*`/`deleted_at`. RLS gives
+  the app **SELECT only** (no insert/update/delete policy), so the log can't be doctored; only the
+  `SECURITY DEFINER` trigger writes it. Reads are company-scoped.
+- **`changed_by`** comes from the `app.current_user_id` session GUC (§7f), falling back to the
+  row's `updated_by`/`created_by`.
+- **Distinct from `approvals` (§7c):** `approvals` is the *decision* trail for a workflow (who
+  approved a PR); `audit_logs` is the *data* trail for every field on every table.
+- Indexed for the common questions: by `(entity, entity_id)` (a record's history), by `changed_by`
+  (a user's activity), and by `(entity, field)` (e.g. all supplier-price changes over time). A
+  monthly partition on `changed_at` is the documented scaling step.
+
 ### Suggested REST endpoints (mirror current UI reads)
 ```
+-- TENANCY RULE: no endpoint below takes a companyId — the active company comes
+-- from the authenticated session (JWT claim → app.current_company_id GUC), never
+-- from the URL, query, or body. A client CANNOT request another tenant's data by
+-- changing a parameter; there is no parameter to change. All paths are implicitly
+-- scoped to the active company (§7f). The ONLY company-aware endpoints are the
+-- session/auth ones, which switch WHICH company is active — not filter by it:
+
+-- Auth & tenant session
+POST /auth/login                                 -- returns token + the user's companies (memberships)
+GET  /me/companies                               -- companies this user can access (company_memberships)
+POST /session/company        { companyId }        -- switch the ACTIVE company (re-issues token/claim)
+GET  /me                                         -- current user + active company + effective permissions
+
+-- RBAC admin (roles per-company; permission matrix is an app constant — §7h)
+GET  /permissions                                -- the resource × action matrix (static app constant)
+GET  /roles                /roles/{id}           -- roles in the active company
+POST /roles                PATCH /roles/{id}     DELETE /roles/{id}
+PUT  /roles/{id}/permissions   { grants:[{resource,action}] }   -- set the role's granted (resource,action) pairs
+GET  /users                ?q                    -- members of the active company (via memberships)
+PUT  /memberships/{id}/role    { roleId }            -- set a user's role in the active company
+
 GET  /products            /products/{id}        /products/{id}/bom      -> flattened BOM (productBom)
 GET  /products/{id}/bom               ?version=1.1                      -- specific version (default: Active)
 GET  /products/{id}/versions          POST /products/{id}/versions      -- bom_versions (list / new draft)
@@ -536,15 +788,17 @@ GET  /suppliers           /suppliers/{id}       /suppliers/{id}/prices   -- supp
 GET  /dashboard/summary                          -- KPIs, low-stock, single-supplier, product status
 
 -- Inventory module (append-only ledger; never write stock directly)
-GET  /warehouses
-GET  /inventory                        ?componentId&variantId&warehouseId   -- balances (projection)
-POST /inventory/transactions                     -- IN | OUT | TRANSFER | ADJUSTMENT | RETURN | CONSUMPTION | PRODUCTION
-GET  /inventory/transactions           ?variantId&warehouseId&type&from&to  -- ledger / audit trail
+GET  /warehouses           /warehouses/{id}
+GET  /warehouses/{id}/locations                  -- the Zone→Rack→Bin tree (storage_locations, §7g)
+POST /locations            PATCH /locations/{id}  -- add/edit a zone/rack/bin node (kind + parent_id)
+GET  /inventory                        ?componentId&variantId&warehouseId&locationId  -- balances (projection)
+POST /inventory/transactions                     -- IN | OUT | TRANSFER | ADJUSTMENT | RETURN | CONSUMPTION | PRODUCTION (each carries location_id)
+GET  /inventory/transactions           ?variantId&warehouseId&locationId&type&from&to  -- ledger / audit trail
 GET  /reports/yield?range=6m
 POST /production-orders    PATCH /production-orders/{id}       -- header + status transitions
 GET  /production-orders/{id}/items                             -- STAGE 1 plan (BOM demand)
-POST /production-orders/{id}/allocations                       -- STAGE 2 reserve inventory
-POST /production-orders/{id}/consumptions                      -- STAGE 3 issue to build
+POST /production-orders/{id}/allocations                       -- STAGE 2 reserve (material move kind='allocation')
+POST /production-orders/{id}/consumptions                      -- STAGE 3 issue   (material move kind='consumption')
 POST /production-orders/{id}/complete                          -- STAGE 4 finished-goods receipt + close
 POST /purchase-requests    PATCH /purchase-requests/{id}    -- header
 POST /purchase-requests/{id}/items                          -- PR line items
@@ -552,13 +806,14 @@ POST /purchase-requests/{id}/submit                         -- Draft → Submitt
 POST /purchase-requests/{id}/decision                       -- Manager/Procurement approve or reject (writes `approvals`)
 POST /purchase-requests/{id}/approve                        -- (Procurement Approved) sources into PO(s), one per supplier
 
--- Approvals & notifications
-GET  /approvals            ?entityType&entityId              -- audit trail for a document
+-- Audit, approvals & notifications
+GET  /audit-logs           ?entity&entityId&field&changedBy&from&to   -- field-level history (§7i)
+GET  /approvals            ?entityType&entityId              -- approval-decision trail for a document
 GET  /notifications        ?unread=true                      -- current user's feed
 POST /notifications/{id}/read      POST /notifications/read-all
 POST /purchase-orders      PATCH /purchase-orders/{id}      -- header
 POST /purchase-orders/{id}/items                            -- PO line items
-POST /purchase-orders/{id}/receipts                         -- goods-in → inventory receipt (§7a)
+POST /purchase-orders/{id}/receipts                         -- goods-in → appends inventory_transactions(type='IN'); no GRN table (§7c)
 POST /components           POST /components/{id}/prices        -- + variants (supplier_component_prices)
 GET  /components/{id}/prices          ?asOf=YYYY-MM-DD          -- price book; defaults to current (valid today)
 ```

@@ -1,0 +1,1000 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model approvals {
+  id                                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                        String            @db.Uuid
+  entity_type                       String
+  entity_id                         String            @db.Uuid
+  step                              String
+  seq                               Int               @default(1)
+  decision                          approval_decision @default(Pending)
+  decided_by                        String?           @db.Uuid
+  decided_at                        DateTime?         @db.Timestamptz(6)
+  comment                           String?
+  created_by                        String?           @db.Uuid
+  updated_by                        String?           @db.Uuid
+  created_at                        DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at                        DateTime          @default(now()) @db.Timestamptz(6)
+  deleted_at                        DateTime?         @db.Timestamptz(6)
+  companies                         companies         @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_approvals_created_byTousers users?            @relation("approvals_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_approvals_decided_byTousers users?            @relation("approvals_decided_byTousers", fields: [decided_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_approvals_updated_byTousers users?            @relation("approvals_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([company_id], map: "ix_approvals_company")
+  @@index([company_id, entity_type, entity_id], map: "ix_approvals_entity")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model audit_logs {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id String?      @db.Uuid
+  entity     String
+  entity_id  String       @db.Uuid
+  action     audit_action
+  field      String?
+  old_value  Json?
+  new_value  Json?
+  changed_by String?      @db.Uuid
+  changed_at DateTime     @default(now()) @db.Timestamptz(6)
+  users      users?       @relation(fields: [changed_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  companies  companies?   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([changed_by, changed_at], map: "ix_audit_actor")
+  @@index([company_id, entity, entity_id, changed_at], map: "ix_audit_entity")
+  @@index([entity, field, changed_at], map: "ix_audit_field")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model bom_versions {
+  id                                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                           String              @db.Uuid
+  product_id                           String              @unique(map: "uq_bom_active", where: raw("((status = 'Active'::bom_status) AND (deleted_at IS NULL))")) @db.Uuid
+  version                              String
+  status                               bom_status          @default(Draft)
+  effective_from                       DateTime?           @db.Date
+  effective_to                         DateTime?           @db.Date
+  created_by                           String?             @db.Uuid
+  updated_by                           String?             @db.Uuid
+  created_at                           DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime            @default(now()) @db.Timestamptz(6)
+  deleted_at                           DateTime?           @db.Timestamptz(6)
+  companies                            companies           @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  products                             products            @relation(fields: [company_id, product_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_bom_versions_created_byTousers users?              @relation("bom_versions_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_bom_versions_updated_byTousers users?              @relation("bom_versions_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product_pcbs                         product_pcbs[]
+  production_orders                    production_orders[]
+
+  @@unique([company_id, id])
+  @@unique([product_id, version], map: "uq_bom_version", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_bom_versions_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model brands {
+  id                             String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                     String                      @db.Uuid
+  slug                           String
+  name                           String
+  description                    String?
+  headquarter                    String?
+  founded                        String?
+  status                         brand_status                @default(Approved)
+  rating                         Decimal?                    @db.Decimal(2, 1)
+  created_by                     String?                     @db.Uuid
+  updated_by                     String?                     @db.Uuid
+  created_at                     DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                     DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                     DateTime?                   @db.Timestamptz(6)
+  companies                      companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_brands_created_byTousers users?                      @relation("brands_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_brands_updated_byTousers users?                      @relation("brands_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  component_brand_variants       component_brand_variants[]
+  pcb_lines                      pcb_lines[]
+  purchase_order_items           purchase_order_items[]
+  purchase_request_items         purchase_request_items[]
+  supplier_component_prices      supplier_component_prices[]
+
+  @@unique([company_id, id])
+  @@unique([company_id, slug], map: "uq_brands_slug", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_brands_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model companies {
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                      String
+  name                      String
+  created_by                String?                     @db.Uuid
+  updated_by                String?                     @db.Uuid
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                DateTime?                   @db.Timestamptz(6)
+  approvals                 approvals[]
+  audit_logs                audit_logs[]
+  bom_versions              bom_versions[]
+  brands                    brands[]
+  company_memberships       company_memberships[]
+  component_brand_variants  component_brand_variants[]
+  components                components[]
+  inventory_balances        inventory_balances[]
+  inventory_transactions    inventory_transactions[]
+  notifications             notifications[]
+  pcb_lines                 pcb_lines[]
+  pcb_revisions             pcb_revisions[]
+  pcbs                      pcbs[]
+  product_pcbs              product_pcbs[]
+  production_material_moves production_material_moves[]
+  production_order_items    production_order_items[]
+  production_orders         production_orders[]
+  products                  products[]
+  purchase_order_items      purchase_order_items[]
+  purchase_orders           purchase_orders[]
+  purchase_request_items    purchase_request_items[]
+  purchase_requests         purchase_requests[]
+  role_permissions          role_permissions[]
+  roles                     roles[]
+  storage_locations         storage_locations[]
+  supplier_component_prices supplier_component_prices[]
+  suppliers                 suppliers[]
+  warehouses                warehouses[]
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model company_memberships {
+  id                                          String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                  String            @db.Uuid
+  user_id                                     String            @unique(map: "uq_membership_default", where: raw("(is_default AND (deleted_at IS NULL))")) @db.Uuid
+  role_id                                     String?           @db.Uuid
+  is_default                                  Boolean           @default(false)
+  status                                      membership_status @default(active)
+  created_by                                  String?           @db.Uuid
+  updated_by                                  String?           @db.Uuid
+  created_at                                  DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at                                  DateTime          @default(now()) @db.Timestamptz(6)
+  deleted_at                                  DateTime?         @db.Timestamptz(6)
+  companies                                   companies         @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_company_memberships_created_byTousers users?            @relation("company_memberships_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_company_memberships_updated_byTousers users?            @relation("company_memberships_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_company_memberships_user_idTousers    users             @relation("company_memberships_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  roles                                       roles?            @relation(fields: [company_id, role_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction, map: "fk_membership_role")
+
+  @@unique([company_id, user_id], map: "uq_membership", where: raw("(deleted_at IS NULL)"))
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model component_brand_variants {
+  id                                               String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                       String                      @db.Uuid
+  component_id                                     String                      @db.Uuid
+  brand_id                                         String                      @db.Uuid
+  part_no                                          String
+  created_by                                       String?                     @db.Uuid
+  updated_by                                       String?                     @db.Uuid
+  created_at                                       DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                                       DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                                       DateTime?                   @db.Timestamptz(6)
+  brands                                           brands                      @relation(fields: [company_id, brand_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  components                                       components                  @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                        companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_component_brand_variants_created_byTousers users?                      @relation("component_brand_variants_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_component_brand_variants_updated_byTousers users?                      @relation("component_brand_variants_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inventory_balances                               inventory_balances[]
+  inventory_transactions                           inventory_transactions[]
+  production_material_moves                        production_material_moves[]
+
+  @@unique([company_id, id])
+  @@unique([component_id, brand_id], map: "uq_cbv", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_component_brand_variants_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model components {
+  id                                 String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                         String                      @db.Uuid
+  generic_pn                         String
+  name                               String
+  category                           String?
+  description                        String?
+  unit                               String                      @default("PCS")
+  solder_type                        solder_type?
+  footprint                          String?
+  spq                                Int?
+  min_stock                          Decimal                     @default(0) @db.Decimal(14, 3)
+  reorder_qty                        Decimal                     @default(0) @db.Decimal(14, 3)
+  annual_consumption                 Decimal                     @default(0) @db.Decimal(14, 3)
+  specs                              Json                        @default("[]")
+  created_by                         String?                     @db.Uuid
+  updated_by                         String?                     @db.Uuid
+  created_at                         DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                         DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                         DateTime?                   @db.Timestamptz(6)
+  component_brand_variants           component_brand_variants[]
+  companies                          companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_components_created_byTousers users?                      @relation("components_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_components_updated_byTousers users?                      @relation("components_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pcb_lines                          pcb_lines[]
+  production_order_items             production_order_items[]
+  purchase_order_items               purchase_order_items[]
+  purchase_request_items             purchase_request_items[]
+  supplier_component_prices          supplier_component_prices[]
+
+  @@unique([company_id, id])
+  @@unique([company_id, generic_pn], map: "uq_components_generic_pn", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_components_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model inventory_balances {
+  id                                         String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                 String                   @db.Uuid
+  component_brand_variant_id                 String                   @db.Uuid
+  warehouse_id                               String                   @db.Uuid
+  location_id                                String                   @db.Uuid
+  on_hand                                    Decimal                  @default(0) @db.Decimal(14, 3)
+  reserved                                   Decimal                  @default(0) @db.Decimal(14, 3)
+  available                                  Decimal?                 @default(dbgenerated("(on_hand - reserved)")) @db.Decimal(14, 3)
+  damaged                                    Decimal                  @default(0) @db.Decimal(14, 3)
+  last_counted_at                            DateTime?                @db.Timestamptz(6)
+  created_by                                 String?                  @db.Uuid
+  updated_by                                 String?                  @db.Uuid
+  created_at                                 DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at                                 DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at                                 DateTime?                @db.Timestamptz(6)
+  component_brand_variants                   component_brand_variants @relation(fields: [company_id, component_brand_variant_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                  companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  warehouses                                 warehouses               @relation(fields: [company_id, warehouse_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  storage_locations                          storage_locations        @relation(fields: [company_id, warehouse_id, location_id], references: [company_id, warehouse_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_inventory_balances_created_byTousers users?                   @relation("inventory_balances_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_inventory_balances_updated_byTousers users?                   @relation("inventory_balances_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([component_brand_variant_id, location_id])
+  @@index([company_id], map: "ix_inventory_balances_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model inventory_transactions {
+  id                         String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                 String                   @db.Uuid
+  type                       inventory_txn_type
+  component_brand_variant_id String                   @db.Uuid
+  warehouse_id               String                   @db.Uuid
+  location_id                String                   @db.Uuid
+  qty_delta                  Decimal                  @db.Decimal(14, 3)
+  transfer_group_id          String?                  @db.Uuid
+  ref_type                   String?
+  ref_id                     String?                  @db.Uuid
+  grn_no                     String?
+  reason                     String?
+  note                       String?
+  created_by                 String?                  @db.Uuid
+  created_at                 DateTime                 @default(now()) @db.Timestamptz(6)
+  component_brand_variants   component_brand_variants @relation(fields: [company_id, component_brand_variant_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                  companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  warehouses                 warehouses               @relation(fields: [company_id, warehouse_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  storage_locations          storage_locations        @relation(fields: [company_id, warehouse_id, location_id], references: [company_id, warehouse_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users                      users?                   @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([created_at], map: "ix_inv_txn_created")
+  @@index([ref_type, ref_id], map: "ix_inv_txn_ref")
+  @@index([component_brand_variant_id, warehouse_id], map: "ix_inv_txn_variant_wh")
+  @@index([company_id], map: "ix_inventory_transactions_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model notifications {
+  id         String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id String            @db.Uuid
+  user_id    String            @db.Uuid
+  type       notification_type
+  title      String
+  body       String?
+  ref_type   String?
+  ref_id     String?           @db.Uuid
+  is_read    Boolean           @default(false)
+  read_at    DateTime?         @db.Timestamptz(6)
+  created_at DateTime          @default(now()) @db.Timestamptz(6)
+  companies  companies         @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users      users             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([company_id], map: "ix_notifications_company")
+  @@index([company_id, user_id], map: "ix_notifications_user_unread", where: raw("(is_read = false)"))
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model pcb_lines {
+  id                                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                        String        @db.Uuid
+  pcb_revision_id                   String        @db.Uuid
+  component_id                      String        @db.Uuid
+  qty                               Int
+  ref_des                           String?
+  preferred_brand_id                String?       @db.Uuid
+  remarks                           String?
+  created_by                        String?       @db.Uuid
+  updated_by                        String?       @db.Uuid
+  created_at                        DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at                        DateTime      @default(now()) @db.Timestamptz(6)
+  deleted_at                        DateTime?     @db.Timestamptz(6)
+  components                        components    @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                         companies     @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pcb_revisions                     pcb_revisions @relation(fields: [company_id, pcb_revision_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  brands                            brands?       @relation(fields: [company_id, preferred_brand_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcb_lines_created_byTousers users?        @relation("pcb_lines_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcb_lines_updated_byTousers users?        @relation("pcb_lines_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([pcb_revision_id, component_id], map: "uq_pcb_lines", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_pcb_lines_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model pcb_revisions {
+  id                                    String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                            String         @db.Uuid
+  pcb_id                                String         @unique(map: "uq_pcb_rev_active", where: raw("((status = 'Active'::bom_status) AND (deleted_at IS NULL))")) @db.Uuid
+  rev                                   String
+  status                                bom_status     @default(Draft)
+  effective_from                        DateTime?      @db.Date
+  effective_to                          DateTime?      @db.Date
+  created_by                            String?        @db.Uuid
+  updated_by                            String?        @db.Uuid
+  created_at                            DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at                            DateTime       @default(now()) @db.Timestamptz(6)
+  deleted_at                            DateTime?      @db.Timestamptz(6)
+  pcb_lines                             pcb_lines[]
+  companies                             companies      @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pcbs                                  pcbs           @relation(fields: [company_id, pcb_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcb_revisions_created_byTousers users?         @relation("pcb_revisions_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcb_revisions_updated_byTousers users?         @relation("pcb_revisions_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product_pcbs                          product_pcbs[]
+
+  @@unique([company_id, id])
+  @@unique([pcb_id, rev], map: "uq_pcb_rev", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_pcb_revisions_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model pcbs {
+  id                           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                   String         @db.Uuid
+  slug                         String
+  name                         String
+  description                  String?
+  layers                       Int?
+  status                       pcb_status     @default(Active)
+  created_by                   String?        @db.Uuid
+  updated_by                   String?        @db.Uuid
+  created_at                   DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at                   DateTime       @default(now()) @db.Timestamptz(6)
+  deleted_at                   DateTime?      @db.Timestamptz(6)
+  pcb_revisions                pcb_revisions[]
+  companies                    companies      @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcbs_created_byTousers users?         @relation("pcbs_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_pcbs_updated_byTousers users?         @relation("pcbs_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, slug], map: "uq_pcbs_slug", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_pcbs_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model product_pcbs {
+  id                                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                           String        @db.Uuid
+  bom_version_id                       String        @db.Uuid
+  pcb_revision_id                      String        @db.Uuid
+  qty                                  Int           @default(1)
+  sequence                             Int?
+  remarks                              String?
+  created_by                           String?       @db.Uuid
+  updated_by                           String?       @db.Uuid
+  created_at                           DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime      @default(now()) @db.Timestamptz(6)
+  deleted_at                           DateTime?     @db.Timestamptz(6)
+  bom_versions                         bom_versions  @relation(fields: [company_id, bom_version_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                            companies     @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  pcb_revisions                        pcb_revisions @relation(fields: [company_id, pcb_revision_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_product_pcbs_created_byTousers users?        @relation("product_pcbs_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_product_pcbs_updated_byTousers users?        @relation("product_pcbs_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([bom_version_id, pcb_revision_id], map: "uq_product_pcbs", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_product_pcbs_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model production_material_moves {
+  id                                                String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                        String                   @db.Uuid
+  production_order_item_id                          String                   @db.Uuid
+  kind                                              material_move_kind
+  component_brand_variant_id                        String                   @db.Uuid
+  warehouse_id                                      String                   @db.Uuid
+  location_id                                       String                   @db.Uuid
+  qty                                               Decimal                  @db.Decimal(14, 3)
+  released_at                                       DateTime?                @db.Timestamptz(6)
+  moved_at                                          DateTime                 @default(now()) @db.Timestamptz(6)
+  created_by                                        String?                  @db.Uuid
+  updated_by                                        String?                  @db.Uuid
+  created_at                                        DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at                                        DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at                                        DateTime?                @db.Timestamptz(6)
+  component_brand_variants                          component_brand_variants @relation(fields: [company_id, component_brand_variant_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                         companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  production_order_items                            production_order_items   @relation(fields: [company_id, production_order_item_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  warehouses                                        warehouses               @relation(fields: [company_id, warehouse_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  storage_locations                                 storage_locations        @relation(fields: [company_id, warehouse_id, location_id], references: [company_id, warehouse_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_material_moves_created_byTousers users?                   @relation("production_material_moves_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_material_moves_updated_byTousers users?                   @relation("production_material_moves_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@index([production_order_item_id], map: "ix_pmm_item")
+  @@index([company_id], map: "ix_production_material_moves_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model production_order_items {
+  id                                             String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                     String                      @db.Uuid
+  production_order_id                            String                      @db.Uuid
+  component_id                                   String                      @db.Uuid
+  required_qty                                   Decimal                     @db.Decimal(14, 3)
+  status                                         prod_item_status            @default(pending)
+  created_by                                     String?                     @db.Uuid
+  updated_by                                     String?                     @db.Uuid
+  created_at                                     DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                                     DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                                     DateTime?                   @db.Timestamptz(6)
+  production_material_moves                      production_material_moves[]
+  components                                     components                  @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                      companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  production_orders                              production_orders           @relation(fields: [company_id, production_order_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_order_items_created_byTousers users?                      @relation("production_order_items_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_order_items_updated_byTousers users?                      @relation("production_order_items_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@index([production_order_id], map: "ix_prod_items_order")
+  @@index([company_id], map: "ix_production_order_items_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model production_orders {
+  id                                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                String                   @db.Uuid
+  order_no                                  String
+  product_id                                String                   @db.Uuid
+  bom_version_id                            String?                  @db.Uuid
+  qty                                       Int
+  status                                    prod_order_status        @default(Draft)
+  target_date                               DateTime?                @db.Date
+  created_by                                String?                  @db.Uuid
+  updated_by                                String?                  @db.Uuid
+  created_at                                DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at                                DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at                                DateTime?                @db.Timestamptz(6)
+  production_order_items                    production_order_items[]
+  bom_versions                              bom_versions?            @relation(fields: [company_id, bom_version_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                 companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  products                                  products                 @relation(fields: [company_id, product_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_orders_created_byTousers users?                   @relation("production_orders_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_production_orders_updated_byTousers users?                   @relation("production_orders_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, order_no], map: "uq_prod_orders_no", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_production_orders_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model products {
+  id                               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                       String              @db.Uuid
+  slug                             String
+  code                             String
+  name                             String
+  version                          String?
+  description                      String?
+  status                           product_status      @default(Ready)
+  estimated_cost                   Decimal?            @db.Decimal(14, 2)
+  created_by                       String?             @db.Uuid
+  updated_by                       String?             @db.Uuid
+  created_at                       DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at                       DateTime            @default(now()) @db.Timestamptz(6)
+  deleted_at                       DateTime?           @db.Timestamptz(6)
+  bom_versions                     bom_versions[]
+  production_orders                production_orders[]
+  companies                        companies           @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_products_created_byTousers users?              @relation("products_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_products_updated_byTousers users?              @relation("products_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, code], map: "uq_products_code", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_products_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_order_items {
+  id                                           String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                   String                  @db.Uuid
+  purchase_order_id                            String                  @db.Uuid
+  pr_item_id                                   String?                 @db.Uuid
+  component_id                                 String                  @db.Uuid
+  brand_id                                     String?                 @db.Uuid
+  qty                                          Decimal                 @db.Decimal(14, 3)
+  unit_price                                   Decimal?                @db.Decimal(14, 4)
+  line_total                                   Decimal?                @db.Decimal(14, 2)
+  received_qty                                 Decimal                 @default(0) @db.Decimal(14, 3)
+  created_by                                   String?                 @db.Uuid
+  updated_by                                   String?                 @db.Uuid
+  created_at                                   DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                                   DateTime                @default(now()) @db.Timestamptz(6)
+  deleted_at                                   DateTime?               @db.Timestamptz(6)
+  brands                                       brands?                 @relation(fields: [company_id, brand_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  components                                   components              @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                    companies               @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_request_items                       purchase_request_items? @relation(fields: [company_id, pr_item_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_orders                              purchase_orders         @relation(fields: [company_id, purchase_order_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_order_items_created_byTousers users?                  @relation("purchase_order_items_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_order_items_updated_byTousers users?                  @relation("purchase_order_items_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@index([purchase_order_id], map: "ix_po_items_po")
+  @@index([company_id], map: "ix_purchase_order_items_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_orders {
+  id                                      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                              String                 @db.Uuid
+  po_no                                   String
+  pr_id                                   String?                @db.Uuid
+  supplier_id                             String                 @db.Uuid
+  status                                  po_status              @default(Draft)
+  order_date                              DateTime               @default(dbgenerated("CURRENT_DATE")) @db.Date
+  total_cost                              Decimal?               @db.Decimal(14, 2)
+  created_by                              String?                @db.Uuid
+  updated_by                              String?                @db.Uuid
+  created_at                              DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at                              DateTime               @default(now()) @db.Timestamptz(6)
+  deleted_at                              DateTime?              @db.Timestamptz(6)
+  purchase_order_items                    purchase_order_items[]
+  companies                               companies              @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_requests                       purchase_requests?     @relation(fields: [company_id, pr_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  suppliers                               suppliers              @relation(fields: [company_id, supplier_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_orders_created_byTousers users?                 @relation("purchase_orders_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_orders_updated_byTousers users?                 @relation("purchase_orders_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, po_no], map: "uq_po_no", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_purchase_orders_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_request_items {
+  id                                             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                     String                 @db.Uuid
+  purchase_request_id                            String                 @db.Uuid
+  component_id                                   String                 @db.Uuid
+  brand_id                                       String?                @db.Uuid
+  supplier_id                                    String?                @db.Uuid
+  qty                                            Decimal                @db.Decimal(14, 3)
+  unit_price                                     Decimal?               @db.Decimal(14, 4)
+  line_total                                     Decimal?               @db.Decimal(14, 2)
+  required_by                                    DateTime?              @db.Date
+  created_by                                     String?                @db.Uuid
+  updated_by                                     String?                @db.Uuid
+  created_at                                     DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at                                     DateTime               @default(now()) @db.Timestamptz(6)
+  deleted_at                                     DateTime?              @db.Timestamptz(6)
+  purchase_order_items                           purchase_order_items[]
+  brands                                         brands?                @relation(fields: [company_id, brand_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  components                                     components             @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                      companies              @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchase_requests                              purchase_requests      @relation(fields: [company_id, purchase_request_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  suppliers                                      suppliers?             @relation(fields: [company_id, supplier_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_request_items_created_byTousers users?                 @relation("purchase_request_items_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_request_items_updated_byTousers users?                 @relation("purchase_request_items_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@index([purchase_request_id], map: "ix_pr_items_pr")
+  @@index([company_id], map: "ix_purchase_request_items_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model purchase_requests {
+  id                                          String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                  String                   @db.Uuid
+  pr_no                                       String
+  status                                      pr_status                @default(Draft)
+  requested_by                                String?                  @db.Uuid
+  request_date                                DateTime                 @default(dbgenerated("CURRENT_DATE")) @db.Date
+  remarks                                     String?
+  total_cost                                  Decimal?                 @db.Decimal(14, 2)
+  created_by                                  String?                  @db.Uuid
+  updated_by                                  String?                  @db.Uuid
+  created_at                                  DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at                                  DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at                                  DateTime?                @db.Timestamptz(6)
+  purchase_orders                             purchase_orders[]
+  purchase_request_items                      purchase_request_items[]
+  companies                                   companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_requests_created_byTousers   users?                   @relation("purchase_requests_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_requests_requested_byTousers users?                   @relation("purchase_requests_requested_byTousers", fields: [requested_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchase_requests_updated_byTousers   users?                   @relation("purchase_requests_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, pr_no], map: "uq_pr_no", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_purchase_requests_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model role_permissions {
+  company_id String            @db.Uuid
+  role_id    String            @db.Uuid
+  resource   String
+  action     permission_action
+  created_by String?           @db.Uuid
+  created_at DateTime          @default(now()) @db.Timestamptz(6)
+  companies  companies         @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  roles      roles             @relation(fields: [company_id, role_id], references: [company_id, id], onDelete: Cascade, onUpdate: NoAction)
+  users      users?            @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([role_id, resource, action])
+  @@index([company_id], map: "ix_role_permissions_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model roles {
+  id                            String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                    String                @db.Uuid
+  name                          String
+  description                   String?
+  created_by                    String?               @db.Uuid
+  updated_by                    String?               @db.Uuid
+  created_at                    DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at                    DateTime              @default(now()) @db.Timestamptz(6)
+  deleted_at                    DateTime?             @db.Timestamptz(6)
+  company_memberships           company_memberships[]
+  role_permissions              role_permissions[]
+  companies                     companies             @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_roles_created_byTousers users?                @relation("roles_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_roles_updated_byTousers users?                @relation("roles_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, name], map: "uq_roles_name", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_roles_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model storage_locations {
+  id                                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                String                      @db.Uuid
+  warehouse_id                              String                      @db.Uuid
+  parent_id                                 String?                     @db.Uuid
+  kind                                      location_kind
+  code                                      String
+  name                                      String?
+  is_default                                Boolean                     @default(false)
+  created_by                                String?                     @db.Uuid
+  updated_by                                String?                     @db.Uuid
+  created_at                                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                                DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                                DateTime?                   @db.Timestamptz(6)
+  inventory_balances                        inventory_balances[]
+  inventory_transactions                    inventory_transactions[]
+  production_material_moves                 production_material_moves[]
+  companies                                 companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  warehouses                                warehouses                  @relation(fields: [company_id, warehouse_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  storage_locations                         storage_locations?          @relation("storage_locationsTostorage_locations", fields: [company_id, warehouse_id, parent_id], references: [company_id, warehouse_id, id], onDelete: NoAction, onUpdate: NoAction)
+  other_storage_locations                   storage_locations[]         @relation("storage_locationsTostorage_locations")
+  users_storage_locations_created_byTousers users?                      @relation("storage_locations_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_storage_locations_updated_byTousers users?                      @relation("storage_locations_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, warehouse_id, id])
+  @@unique([company_id, warehouse_id, code], map: "uq_location_code", where: raw("(deleted_at IS NULL)"))
+  @@unique([company_id, warehouse_id], map: "uq_location_default_bin", where: raw("(is_default AND (kind = 'bin'::location_kind) AND (deleted_at IS NULL))"))
+  @@index([company_id], map: "ix_storage_locations_company")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This table contains exclusion constraints and requires additional setup for migrations. Visit https://pris.ly/d/exclusion-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model supplier_component_prices {
+  id                                                String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                                        String     @db.Uuid
+  component_id                                      String     @db.Uuid
+  supplier_id                                       String     @db.Uuid
+  brand_id                                          String     @db.Uuid
+  price                                             Decimal    @db.Decimal(14, 4)
+  currency                                          String     @default("INR") @db.Char(3)
+  moq                                               Decimal?   @db.Decimal(14, 3)
+  spq                                               Decimal?   @db.Decimal(14, 3)
+  lead_time_days                                    Int?
+  valid_from                                        DateTime   @default(dbgenerated("CURRENT_DATE")) @db.Date
+  valid_to                                          DateTime?  @db.Date
+  created_by                                        String?    @db.Uuid
+  updated_by                                        String?    @db.Uuid
+  created_at                                        DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at                                        DateTime   @default(now()) @db.Timestamptz(6)
+  deleted_at                                        DateTime?  @db.Timestamptz(6)
+  brands                                            brands     @relation(fields: [company_id, brand_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  components                                        components @relation(fields: [company_id, component_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  companies                                         companies  @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  suppliers                                         suppliers  @relation(fields: [company_id, supplier_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction)
+  users_supplier_component_prices_created_byTousers users?     @relation("supplier_component_prices_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_supplier_component_prices_updated_byTousers users?     @relation("supplier_component_prices_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@index([company_id], map: "ix_supplier_component_prices_company")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model suppliers {
+  id                                String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                        String                      @db.Uuid
+  slug                              String
+  name                              String
+  description                       String?
+  contact                           String?
+  email                             String?
+  phone                             String?
+  address                           String?
+  terms                             String?
+  rating                            Decimal?                    @db.Decimal(2, 1)
+  status                            supplier_status             @default(Active)
+  created_by                        String?                     @db.Uuid
+  updated_by                        String?                     @db.Uuid
+  created_at                        DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                        DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                        DateTime?                   @db.Timestamptz(6)
+  purchase_orders                   purchase_orders[]
+  purchase_request_items            purchase_request_items[]
+  supplier_component_prices         supplier_component_prices[]
+  companies                         companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_suppliers_created_byTousers users?                      @relation("suppliers_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_suppliers_updated_byTousers users?                      @relation("suppliers_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, slug], map: "uq_suppliers_slug", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_suppliers_company")
+}
+
+/// This model contains an expression index which requires additional setup for migrations. Visit https://pris.ly/d/expression-indexes for more info.
+model users {
+  id                                                                    String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                                                                  String
+  email                                                                 String
+  password_hash                                                         String?
+  is_active                                                             Boolean                     @default(true)
+  created_by                                                            String?                     @db.Uuid
+  updated_by                                                            String?                     @db.Uuid
+  created_at                                                            DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                                                            DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                                                            DateTime?                   @db.Timestamptz(6)
+  approvals_approvals_created_byTousers                                 approvals[]                 @relation("approvals_created_byTousers")
+  approvals_approvals_decided_byTousers                                 approvals[]                 @relation("approvals_decided_byTousers")
+  approvals_approvals_updated_byTousers                                 approvals[]                 @relation("approvals_updated_byTousers")
+  audit_logs                                                            audit_logs[]
+  bom_versions_bom_versions_created_byTousers                           bom_versions[]              @relation("bom_versions_created_byTousers")
+  bom_versions_bom_versions_updated_byTousers                           bom_versions[]              @relation("bom_versions_updated_byTousers")
+  brands_brands_created_byTousers                                       brands[]                    @relation("brands_created_byTousers")
+  brands_brands_updated_byTousers                                       brands[]                    @relation("brands_updated_byTousers")
+  company_memberships_company_memberships_created_byTousers             company_memberships[]       @relation("company_memberships_created_byTousers")
+  company_memberships_company_memberships_updated_byTousers             company_memberships[]       @relation("company_memberships_updated_byTousers")
+  company_memberships_company_memberships_user_idTousers                company_memberships?        @relation("company_memberships_user_idTousers")
+  component_brand_variants_component_brand_variants_created_byTousers   component_brand_variants[]  @relation("component_brand_variants_created_byTousers")
+  component_brand_variants_component_brand_variants_updated_byTousers   component_brand_variants[]  @relation("component_brand_variants_updated_byTousers")
+  components_components_created_byTousers                               components[]                @relation("components_created_byTousers")
+  components_components_updated_byTousers                               components[]                @relation("components_updated_byTousers")
+  inventory_balances_inventory_balances_created_byTousers               inventory_balances[]        @relation("inventory_balances_created_byTousers")
+  inventory_balances_inventory_balances_updated_byTousers               inventory_balances[]        @relation("inventory_balances_updated_byTousers")
+  inventory_transactions                                                inventory_transactions[]
+  notifications                                                         notifications[]
+  pcb_lines_pcb_lines_created_byTousers                                 pcb_lines[]                 @relation("pcb_lines_created_byTousers")
+  pcb_lines_pcb_lines_updated_byTousers                                 pcb_lines[]                 @relation("pcb_lines_updated_byTousers")
+  pcb_revisions_pcb_revisions_created_byTousers                         pcb_revisions[]             @relation("pcb_revisions_created_byTousers")
+  pcb_revisions_pcb_revisions_updated_byTousers                         pcb_revisions[]             @relation("pcb_revisions_updated_byTousers")
+  pcbs_pcbs_created_byTousers                                           pcbs[]                      @relation("pcbs_created_byTousers")
+  pcbs_pcbs_updated_byTousers                                           pcbs[]                      @relation("pcbs_updated_byTousers")
+  product_pcbs_product_pcbs_created_byTousers                           product_pcbs[]              @relation("product_pcbs_created_byTousers")
+  product_pcbs_product_pcbs_updated_byTousers                           product_pcbs[]              @relation("product_pcbs_updated_byTousers")
+  production_material_moves_production_material_moves_created_byTousers production_material_moves[] @relation("production_material_moves_created_byTousers")
+  production_material_moves_production_material_moves_updated_byTousers production_material_moves[] @relation("production_material_moves_updated_byTousers")
+  production_order_items_production_order_items_created_byTousers       production_order_items[]    @relation("production_order_items_created_byTousers")
+  production_order_items_production_order_items_updated_byTousers       production_order_items[]    @relation("production_order_items_updated_byTousers")
+  production_orders_production_orders_created_byTousers                 production_orders[]         @relation("production_orders_created_byTousers")
+  production_orders_production_orders_updated_byTousers                 production_orders[]         @relation("production_orders_updated_byTousers")
+  products_products_created_byTousers                                   products[]                  @relation("products_created_byTousers")
+  products_products_updated_byTousers                                   products[]                  @relation("products_updated_byTousers")
+  purchase_order_items_purchase_order_items_created_byTousers           purchase_order_items[]      @relation("purchase_order_items_created_byTousers")
+  purchase_order_items_purchase_order_items_updated_byTousers           purchase_order_items[]      @relation("purchase_order_items_updated_byTousers")
+  purchase_orders_purchase_orders_created_byTousers                     purchase_orders[]           @relation("purchase_orders_created_byTousers")
+  purchase_orders_purchase_orders_updated_byTousers                     purchase_orders[]           @relation("purchase_orders_updated_byTousers")
+  purchase_request_items_purchase_request_items_created_byTousers       purchase_request_items[]    @relation("purchase_request_items_created_byTousers")
+  purchase_request_items_purchase_request_items_updated_byTousers       purchase_request_items[]    @relation("purchase_request_items_updated_byTousers")
+  purchase_requests_purchase_requests_created_byTousers                 purchase_requests[]         @relation("purchase_requests_created_byTousers")
+  purchase_requests_purchase_requests_requested_byTousers               purchase_requests[]         @relation("purchase_requests_requested_byTousers")
+  purchase_requests_purchase_requests_updated_byTousers                 purchase_requests[]         @relation("purchase_requests_updated_byTousers")
+  role_permissions                                                      role_permissions[]
+  roles_roles_created_byTousers                                         roles[]                     @relation("roles_created_byTousers")
+  roles_roles_updated_byTousers                                         roles[]                     @relation("roles_updated_byTousers")
+  storage_locations_storage_locations_created_byTousers                 storage_locations[]         @relation("storage_locations_created_byTousers")
+  storage_locations_storage_locations_updated_byTousers                 storage_locations[]         @relation("storage_locations_updated_byTousers")
+  supplier_component_prices_supplier_component_prices_created_byTousers supplier_component_prices[] @relation("supplier_component_prices_created_byTousers")
+  supplier_component_prices_supplier_component_prices_updated_byTousers supplier_component_prices[] @relation("supplier_component_prices_updated_byTousers")
+  suppliers_suppliers_created_byTousers                                 suppliers[]                 @relation("suppliers_created_byTousers")
+  suppliers_suppliers_updated_byTousers                                 suppliers[]                 @relation("suppliers_updated_byTousers")
+  warehouses_warehouses_created_byTousers                               warehouses[]                @relation("warehouses_created_byTousers")
+  warehouses_warehouses_updated_byTousers                               warehouses[]                @relation("warehouses_updated_byTousers")
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model warehouses {
+  id                                 String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                         String                      @db.Uuid
+  code                               String
+  name                               String
+  location                           String?
+  is_finished_goods                  Boolean                     @default(false)
+  created_by                         String?                     @db.Uuid
+  updated_by                         String?                     @db.Uuid
+  created_at                         DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                         DateTime                    @default(now()) @db.Timestamptz(6)
+  deleted_at                         DateTime?                   @db.Timestamptz(6)
+  inventory_balances                 inventory_balances[]
+  inventory_transactions             inventory_transactions[]
+  production_material_moves          production_material_moves[]
+  storage_locations                  storage_locations?
+  companies                          companies                   @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_warehouses_created_byTousers users?                      @relation("warehouses_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_warehouses_updated_byTousers users?                      @relation("warehouses_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, code], map: "uq_warehouses_code", where: raw("(deleted_at IS NULL)"))
+  @@unique([company_id, id])
+  @@index([company_id], map: "ix_warehouses_company")
+}
+
+enum approval_decision {
+  Pending
+  Approved
+  Rejected
+}
+
+enum audit_action {
+  INSERT
+  UPDATE
+  DELETE
+}
+
+enum bom_status {
+  Draft
+  Active
+  Superseded
+  Obsolete
+}
+
+enum brand_status {
+  Approved
+  Pending
+}
+
+enum inventory_txn_type {
+  IN
+  OUT
+  TRANSFER
+  ADJUSTMENT
+  RETURN
+  CONSUMPTION
+  PRODUCTION
+}
+
+enum location_kind {
+  zone
+  rack
+  bin
+}
+
+enum material_move_kind {
+  allocation
+  consumption
+}
+
+enum membership_status {
+  active
+  invited
+  suspended
+}
+
+enum notification_type {
+  shortage
+  low_stock
+  approval_request
+  approval_result
+  po_created
+  system
+}
+
+enum pcb_status {
+  Active
+  Prototype
+  Deprecated
+}
+
+enum permission_action {
+  view
+  create
+  edit
+  delete
+  approve
+  export
+}
+
+enum po_status {
+  Draft
+  Sent
+  Dispatched
+  Completed
+  Cancelled
+}
+
+enum pr_status {
+  Draft
+  Submitted
+  Manager_Approved     @map("Manager Approved")
+  Procurement_Approved @map("Procurement Approved")
+  PO_Created           @map("PO Created")
+  Rejected
+  Cancelled
+}
+
+enum prod_item_status {
+  pending
+  allocated
+  consumed
+  short
+}
+
+enum prod_order_status {
+  Draft
+  Ready
+  In_Progress @map("In Progress")
+  Completed
+  Cancelled
+}
+
+enum product_status {
+  Ready
+  Blocked
+  Limited
+}
+
+enum solder_type {
+  SMD
+  DIP
+}
+
+enum supplier_status {
+  Active
+  Inactive
+}
