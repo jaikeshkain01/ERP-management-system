@@ -3,8 +3,9 @@
 import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle } from "lucide-react"
+import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle, Landmark } from "lucide-react"
 import Link from "next/link"
+import { StatStrip } from "@/components/stat-strip"
 import { PURCHASE_ORDERS, type PurchaseOrder } from "@/mockdata/purchases"
 
 function PurchaseOrdersContent() {
@@ -93,38 +94,14 @@ function PurchaseOrdersContent() {
         </p>
       </div>
 
-      {/* KPI Stats Row */}
-      <div className="grid gap-6 md:grid-cols-3">
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">In Transit</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{totalDispatched + totalSent}</span>
-            <span className="text-xs font-semibold text-primary uppercase">Shipped / Ordered</span>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Completed Receipts</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{totalCompleted}</span>
-            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase">Stock Received</span>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Total Spend Volume</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-2xl font-black text-primary">₹{totalSpend.toLocaleString()}</span>
-            <span className="text-xs font-semibold text-muted-foreground uppercase">Committed Costs</span>
-          </CardContent>
-        </Card>
-      </div>
+      {/* KPI readout — instrument strip */}
+      <StatStrip
+        items={[
+          { label: "In Transit", value: totalDispatched + totalSent, desc: "Shipped / ordered", icon: Truck },
+          { label: "Completed Receipts", value: totalCompleted, desc: "Stock received", icon: PackageCheck, tone: "success" },
+          { label: "Total Spend Volume", value: `₹${totalSpend.toLocaleString()}`, desc: "Committed costs", icon: Landmark },
+        ]}
+      />
 
       {/* Main Grid: PO Table & Sourcing Guidelines */}
       <div className="grid gap-6 lg:grid-cols-3 items-start">

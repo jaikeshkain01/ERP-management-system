@@ -16,6 +16,7 @@ import {
   PRODUCTION_ORDERS_RECENT, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT,
   RECENT_ACTIVITIES, INVENTORY_CHART,
 } from "@/mockdata/dashboard"
+import { StatStrip } from "@/components/stat-strip"
 import { useModules } from "@/components/module-provider"
 import type { ModuleId } from "@/lib/modules"
 
@@ -515,27 +516,16 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* Global KPI Strip (always visible) */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-        {kpis.map((kpi, idx) => {
-          const Icon = kpi.icon
-          return (
-            <Card key={idx} className="group relative overflow-hidden transition-colors hover:border-primary/50 hover:bg-accent/30">
-              <span className="absolute inset-y-0 left-0 w-0.5 bg-primary opacity-0 transition-opacity group-hover:opacity-100" />
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-                <CardTitle className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
-                <div className={`h-8 w-8 flex items-center justify-center rounded-md ${kpi.color}`}>
-                  <Icon className="h-4.5 w-4.5" />
-                </div>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                <div className="text-2xl font-bold tracking-tight text-foreground">{kpi.value}</div>
-                <p className="text-[10px] text-muted-foreground truncate mt-1">{kpi.desc}</p>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      {/* Global KPI readout — joined instrument-panel strip (always visible) */}
+      <StatStrip
+        items={kpis.map((kpi) => ({
+          label: kpi.title,
+          value: kpi.value,
+          desc: kpi.desc,
+          icon: kpi.icon,
+          tone: kpi.color.includes("success") ? "success" : "default",
+        }))}
+      />
 
       {/* Category Navbar */}
       <div className="border-b border-border">

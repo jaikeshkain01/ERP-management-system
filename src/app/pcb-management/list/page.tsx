@@ -10,6 +10,7 @@ import {
   CircuitBoard, Boxes, CheckCircle2, FlaskConical,
   Archive, RefreshCw
 } from "lucide-react"
+import { StatStrip } from "@/components/stat-strip"
 import { PCBS, pcbUsedInLabels, type PcbStatus } from "@/mockdata"
 
 const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
@@ -96,44 +97,14 @@ export default function PCBListPage() {
         </Button>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Card className="border border-border bg-card shadow-2xs">
-          <CardContent className="flex items-center gap-4 py-5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary border border-primary/10">
-              <CircuitBoard className="h-5 w-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">Total PCBs</span>
-              <span className="text-2xl font-black text-foreground leading-tight">{totalPcbs}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border bg-card shadow-2xs">
-          <CardContent className="flex items-center gap-4 py-5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-600 border border-indigo-500/10 dark:text-indigo-400">
-              <Boxes className="h-5 w-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">Total Components</span>
-              <span className="text-2xl font-black text-foreground leading-tight">{totalComponents}</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border bg-card shadow-2xs">
-          <CardContent className="flex items-center gap-4 py-5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600 border border-emerald-500/10 dark:text-emerald-400">
-              <CheckCircle2 className="h-5 w-5" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider">Active Boards</span>
-              <span className="text-2xl font-black text-foreground leading-tight">{activeCount}</span>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Summary — instrument readout strip */}
+      <StatStrip
+        items={[
+          { label: "Total PCBs", value: totalPcbs, icon: CircuitBoard },
+          { label: "Total Components", value: totalComponents, icon: Boxes },
+          { label: "Active Boards", value: activeCount, desc: "Released to production", icon: CheckCircle2, tone: "success" },
+        ]}
+      />
 
       {/* Top Controls: Search & Filter */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between bg-card border border-border p-4 rounded-xl shadow-2xs">

@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { StatStrip } from "@/components/stat-strip"
 import {
   AlertCircle, AlertTriangle, ChevronDown, DollarSign,
   Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
@@ -219,26 +220,22 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {summaryCards.map((c) => {
-          const Icon = c.icon
-          return (
-            <Card key={c.title} className={`relative overflow-hidden transition-all duration-300 hover:shadow-md ${c.border}`}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 p-4">
-                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{c.title}</CardTitle>
-                <div className={`h-8 w-8 flex items-center justify-center rounded-lg ${c.accent}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                <div className="text-2xl font-black tracking-tight">{c.value}</div>
-                <p className="text-[11px] text-muted-foreground mt-1">{c.desc}</p>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      {/* Summary — instrument readout strip */}
+      <StatStrip
+        items={summaryCards.map((c) => ({
+          label: c.title,
+          value: c.value,
+          desc: c.desc,
+          icon: c.icon,
+          tone: c.accent.includes("emerald")
+            ? "success"
+            : c.accent.includes("amber")
+            ? "warning"
+            : c.accent.includes("destructive")
+            ? "danger"
+            : "default",
+        }))}
+      />
 
       {/* Ledger */}
       <Card className="border border-border shadow-sm overflow-hidden">

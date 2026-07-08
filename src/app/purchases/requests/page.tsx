@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { AlertCircle, Check, FileText, ShoppingCart, ShoppingBag, Plus, Landmark, Award, Star, Clock } from "lucide-react"
 import Link from "next/link"
+import { StatStrip } from "@/components/stat-strip"
 import {
   PURCHASE_REQUESTS, RECOMMENDATIONS,
   type PurchaseRequest, type SourcingRecommendation,
@@ -146,38 +147,14 @@ function PurchaseRequestsContent() {
         </p>
       </div>
 
-      {/* KPI Stats Row */}
-      <div className="grid gap-6 md:grid-cols-3">
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Open Requests</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{totalOpen}</span>
-            <span className="text-xs font-semibold text-amber-600 dark:text-amber-500 uppercase">Pending Approval</span>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Approved Requests</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{totalApproved}</span>
-            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 uppercase">Ready for Order</span>
-          </CardContent>
-        </Card>
-
-        <Card className="border border-border shadow-sm">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Estimated Pipeline Value</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-2xl font-black text-primary">₹{totalCostVal.toLocaleString()}</span>
-            <span className="text-xs font-semibold text-muted-foreground uppercase">INR Total</span>
-          </CardContent>
-        </Card>
-      </div>
+      {/* KPI readout — instrument strip */}
+      <StatStrip
+        items={[
+          { label: "Open Requests", value: totalOpen, desc: "Pending approval", icon: Clock, tone: "warning" },
+          { label: "Approved Requests", value: totalApproved, desc: "Ready for order", icon: Check, tone: "success" },
+          { label: "Estimated Pipeline Value", value: `₹${totalCostVal.toLocaleString()}`, desc: "INR total", icon: Landmark },
+        ]}
+      />
 
       {/* Main Grid: Shortage Sourcing Recommendations & Recent PR Table */}
       <div className="grid gap-6 lg:grid-cols-3 items-start">

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award, Layers, Star, Plus, X, Check, AlertCircle } from "lucide-react"
 import Link from "next/link"
+import { StatStrip } from "@/components/stat-strip"
 import {
   SUPPLIERS, COMPONENTS, BRANDS, getBrandName, supplierComponents,
   supplierBrandIds, productsUsingComponent, formatINR, formatLeadTime,
@@ -220,55 +221,14 @@ function SupplierDetailsContent() {
         </Button>
       </div>
 
-      {/* Summary KPI Stats Row */}
-      <div className="grid gap-6 md:grid-cols-3">
-        {/* Components Supplied Card */}
-        <Card className="border border-border shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 h-16 w-16 -mr-3 -mt-3 rounded-full bg-primary/5 transition-transform group-hover:scale-110" />
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Components Supplied</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{supplier.componentsSupplied.toLocaleString()}</span>
-            <span className="text-xs font-semibold text-muted-foreground uppercase">Items</span>
-          </CardContent>
-          <CardContent className="pt-0">
-            <span className="text-xs text-muted-foreground">Active supply parts in catalog</span>
-          </CardContent>
-        </Card>
-
-        {/* Brands Supported Card */}
-        <Card className="border border-border shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 h-16 w-16 -mr-3 -mt-3 rounded-full bg-primary/5 transition-transform group-hover:scale-110" />
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Brands Supported</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{supplier.brandsSupported.toLocaleString()}</span>
-            <span className="text-xs font-semibold text-muted-foreground uppercase">Brands</span>
-          </CardContent>
-          <CardContent className="pt-0">
-            <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
-              Authorized manufacturing lines
-            </span>
-          </CardContent>
-        </Card>
-
-        {/* Products Impacted Card */}
-        <Card className="border border-border shadow-sm relative overflow-hidden group">
-          <div className="absolute top-0 right-0 h-16 w-16 -mr-3 -mt-3 rounded-full bg-primary/5 transition-transform group-hover:scale-110" />
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold text-muted-foreground">Products Impacted</CardTitle>
-          </CardHeader>
-          <CardContent className="flex items-baseline justify-between pt-1">
-            <span className="text-3xl font-black text-foreground tracking-tight">{supplier.productsImpacted.toLocaleString()}</span>
-            <span className="text-xs font-semibold text-muted-foreground uppercase">Products</span>
-          </CardContent>
-          <CardContent className="pt-0">
-            <span className="text-xs text-muted-foreground">Downstream assemblies dependent</span>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Summary KPI readout — instrument strip */}
+      <StatStrip
+        items={[
+          { label: "Components Supplied", value: supplier.componentsSupplied.toLocaleString(), desc: "Active supply parts in catalog", icon: PackageOpen },
+          { label: "Brands Supported", value: supplier.brandsSupported.toLocaleString(), desc: "Authorized manufacturing lines", icon: Award },
+          { label: "Products Impacted", value: supplier.productsImpacted.toLocaleString(), desc: "Downstream assemblies dependent", icon: Layers },
+        ]}
+      />
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Side: Supplied Parts Catalog */}

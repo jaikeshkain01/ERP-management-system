@@ -10,6 +10,7 @@ import {
   Boxes, Tag, Truck, BarChart3, FileText, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
+import { StatStrip } from "@/components/stat-strip"
 import {
   COMPONENTS, getBrandName, getSupplierName, componentUsage,
   cheapestOffer as mCheapest, fastestOffer as mFastest,
@@ -302,26 +303,22 @@ function ComponentListContent() {
         </div>
       </div>
 
-      {/* Top 4 Summary Cards Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((kpi, index) => {
-          const Icon = kpi.icon
-          return (
-            <Card key={index} className="transition-all hover:shadow-md border border-border bg-card">
-              <CardHeader className="flex flex-row items-center justify-between pb-2 p-4">
-                <CardTitle className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{kpi.title}</CardTitle>
-                <div className={`h-8 w-8 flex items-center justify-center rounded-lg border ${kpi.color}`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-              </CardHeader>
-              <CardContent className="px-4 pb-4">
-                <div className="text-2xl font-black text-foreground tracking-tight">{kpi.value}</div>
-                <p className="text-[10px] text-muted-foreground mt-1">{kpi.desc}</p>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      {/* Top summary — instrument readout strip */}
+      <StatStrip
+        items={kpis.map((kpi) => ({
+          label: kpi.title,
+          value: kpi.value,
+          desc: kpi.desc,
+          icon: kpi.icon,
+          tone: kpi.color.includes("emerald")
+            ? "success"
+            : kpi.color.includes("amber")
+            ? "warning"
+            : kpi.color.includes("rose")
+            ? "danger"
+            : "default",
+        }))}
+      />
 
       {/* Advanced Search & Filtering Box */}
       <div className="bg-card border border-border p-5 rounded-xl space-y-4 shadow-2xs">

@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Bar, BarChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip } from "recharts"
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { BarChart3, TrendingUp, Users, Clock, Percent } from "lucide-react"
+import { StatStrip } from "@/components/stat-strip"
 import { PRODUCTION_YIELD as productionData } from "@/mockdata/reports"
 
 const chartConfig = {
@@ -43,24 +44,15 @@ export default function ReportsPage() {
         </p>
       </div>
 
-      {/* KPI Stats Grid */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon
-          return (
-            <Card key={stat.title} className="relative overflow-hidden transition-all duration-300 hover:shadow-md">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-semibold text-muted-foreground">{stat.title}</CardTitle>
-                <Icon className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold tracking-tight">{stat.value}</div>
-                <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+      {/* KPI readout — instrument strip */}
+      <StatStrip
+        items={stats.map((stat) => ({
+          label: stat.title,
+          value: stat.value,
+          desc: stat.description,
+          icon: stat.icon,
+        }))}
+      />
 
       {/* Chart Section */}
       <div className="grid gap-6 md:grid-cols-3">
