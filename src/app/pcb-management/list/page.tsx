@@ -11,7 +11,8 @@ import {
   Archive, RefreshCw
 } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
-import { PCBS, pcbUsedInLabels, type PcbStatus } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
+import type { PcbStatus } from "@/mockdata"
 
 const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
   Active: {
@@ -35,6 +36,7 @@ const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon:
 }
 
 export default function PCBListPage() {
+  const { PCBS, pcbUsedInLabels } = useData()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
 

@@ -1,7 +1,7 @@
 "use client"
 
 import { ArrowDownToLine, ArrowUpFromLine, History } from "lucide-react"
-import { getBrandName, getSupplierName } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 import type { StockTransaction } from "@/mockdata/types"
 import { componentTxns } from "@/lib/stock-ledger"
 
@@ -18,6 +18,7 @@ export function TransactionHistoryTable({
   componentId: string
   transactions: StockTransaction[]
 }) {
+  const { getBrandName, getSupplierName } = useData()
   const rows = componentTxns(componentId, transactions).reverse() // newest first
 
   return (

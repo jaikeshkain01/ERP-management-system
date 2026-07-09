@@ -1,0 +1,13 @@
+/** GET /api/pcbs/[id]/bom — resolved BOM lines (component + qty + preferred brand). */
+import { handle, ok } from "@/lib/server/http";
+import { getPcbBom } from "@/lib/server/data/pcbs";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  return handle(async () => {
+    const { id } = await params;
+    return ok(await getPcbBom(id));
+  });
+}

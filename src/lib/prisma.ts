@@ -14,26 +14,34 @@ import { PrismaClient } from "@/generated/prisma/client";
  * DIRECT_URL — see prisma.config.ts. The running app never uses DIRECT_URL.
  */
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL is not set (see .env). Cannot initialise Prisma.");
-}
-
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-
 // Reuse a single client across HMR reloads in development.
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    adapter,
+function createClient(): PrismaClient {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is not set (see .env). Cannot initialise Prisma.");
+  }
+  return new PrismaClient({
+    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
+}
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+/**
+ * Lazily-initialised singleton. The client (and its pg pool) is created only on
+ * first use, so in FULL MOCK MODE (isTesting) — where the DB is never queried —
+ * no connection is opened and DATABASE_URL isn't required.
+ */
+export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
+  get(_target, prop) {
+    const client = (globalForPrisma.prisma ??= createClient());
+    const value = Reflect.get(client, prop, client);
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(client) : value;
+  },
+});
 
-/** Transaction client handed to a `withTenant` callback. */
-type TxClient = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
+/** Transaction client handed to a `withTenant` / `withUser` callback. */
+export type TxClient = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
 export interface TenantContext {
   /** Active company (tenant) — becomes app.current_company_id for RLS. */
@@ -61,6 +69,19 @@ export function withTenant<T>(
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_company_id', ${ctx.companyId}, true)`;
     await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
+    return fn(tx);
+  });
+}
+
+/**
+ * Run `fn` with ONLY the user context set (no active company). Used during login
+ * and company switching — before an active company exists — so RLS lets the user
+ * read their own `company_memberships` (policy: user_id = current_user_id()) and
+ * the `companies` they belong to. Tenant-scoped tables still return nothing here.
+ */
+export function withUser<T>(userId: string, fn: (tx: TxClient) => Promise<T>): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_user_id', ${userId}, true)`;
     return fn(tx);
   });
 }

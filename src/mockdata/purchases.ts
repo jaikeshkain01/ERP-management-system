@@ -1,6 +1,6 @@
 // Purchase records. IDs reference the central component/brand/supplier store;
 // sourcing recommendations are derived from a component's real offers.
-import { getComponent, getBrandName, getSupplierName, formatINR, formatLeadTime } from "./index"
+import type { Selectors } from "./selectors"
 
 export interface PurchaseOrder {
   poId: string
@@ -105,15 +105,16 @@ export interface SourcingRecommendation {
 }
 
 // Sourcing options for the in-context request (Resistor 10K) — from real offers.
-export const RECOMMENDATIONS: SourcingRecommendation[] = (() => {
-  const comp = getComponent("resistor-10k")
+// Keyed on genericPN so it resolves in BOTH mock and DB modes.
+export function buildRecommendations(d: Selectors, genericPN = "RES-10K"): SourcingRecommendation[] {
+  const comp = d.COMPONENTS.find((c) => c.genericPN === genericPN)
   if (!comp) return []
   return comp.offers.map((o) => ({
     supplierId: o.supplierId,
-    supplierName: getSupplierName(o.supplierId),
+    supplierName: d.getSupplierName(o.supplierId),
     brandId: o.brandId,
-    brandName: getBrandName(o.brandId),
-    price: formatINR(o.price),
-    leadTime: formatLeadTime(o.leadTimeDays),
+    brandName: d.getBrandName(o.brandId),
+    price: d.formatINR(o.price),
+    leadTime: d.formatLeadTime(o.leadTimeDays),
   }))
-})()
+}

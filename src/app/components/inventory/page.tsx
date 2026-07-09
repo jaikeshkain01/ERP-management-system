@@ -11,10 +11,7 @@ import {
   Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
   Boxes, ArrowUpRight, Truck, Tag, ArrowDownToLine, ArrowUpFromLine, CheckCircle2,
 } from "lucide-react"
-import {
-  COMPONENTS, getComponent, getBrandName, getSupplierName, bestPrice,
-  productsUsingComponent, formatINR as mINR, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 import type { StockDirection } from "@/mockdata/types"
 import { useStockLedger } from "@/lib/use-stock-ledger"
 import { effectiveComponentStock, effectiveBrandStocks, type NewTransactionInput } from "@/lib/stock-ledger"
@@ -61,37 +58,37 @@ interface InventoryItem {
 // inventory), so recording a stock-in/out updates every derived figure.
 import type { StockTransaction } from "@/mockdata/types"
 
-function buildInventory(txns: StockTransaction[]): InventoryItem[] {
-  return COMPONENTS.map((c) => ({
+// Ledger keys on genericPN (stable across mock/DB modes), so brand stocks are
+// computed against a genericPN-keyed component view.
+function buildInventory(d: ReturnType<typeof useData>, txns: StockTransaction[]): InventoryItem[] {
+  return d.COMPONENTS.map((c) => ({
     id: c.id,
     name: c.name,
     genericPN: c.genericPN,
     category: c.category,
-    stock: effectiveComponentStock(c.id, txns),
+    stock: effectiveComponentStock(c.genericPN, txns),
     minStock: c.minStock,
     reorderQty: c.reorderQty,
     unit: c.unit,
-    unitCost: bestPrice(c),
+    unitCost: d.bestPrice(c),
     bin: c.bin,
     solderType: c.solderType,
     footprint: c.footprint,
     lastCount: c.lastCount,
-    brands: effectiveBrandStocks(c, txns).map((b) => ({
-      brand: getBrandName(b.brandId),
+    brands: effectiveBrandStocks({ ...c, id: c.genericPN }, txns).map((b) => ({
+      brand: d.getBrandName(b.brandId),
       partNo: b.partNo ?? "—",
       stock: b.stock,
     })),
     suppliers: c.offers.map((o) => ({
-      supplier: getSupplierName(o.supplierId),
-      brand: getBrandName(o.brandId),
-      price: mINR(o.price),
-      leadTime: formatLeadTime(o.leadTimeDays),
+      supplier: d.getSupplierName(o.supplierId),
+      brand: d.getBrandName(o.brandId),
+      price: d.formatINR(o.price),
+      leadTime: d.formatLeadTime(o.leadTimeDays),
     })),
-    usedIn: productsUsingComponent(c.id).map((p) => p.name),
+    usedIn: d.productsUsingComponent(c.id).map((p) => p.name),
   }))
 }
-
-const CATEGORIES = ["All", ...Array.from(new Set(COMPONENTS.map((c) => c.category)))]
 
 // --- Helpers ---
 function getStatus(item: InventoryItem): StockStatus {
@@ -130,11 +127,16 @@ export default function InventoryPage() {
   const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
   const [expanded, setExpanded] = React.useState<string | null>(null)
 
+  const d = useData()
   const { transactions, addTransaction } = useStockLedger()
   const [move, setMove] = React.useState<{ componentId: string; mode: StockDirection } | null>(null)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  const INVENTORY = React.useMemo(() => buildInventory(transactions), [transactions])
+  const INVENTORY = React.useMemo(() => buildInventory(d, transactions), [d, transactions])
+  const CATEGORIES = React.useMemo(
+    () => ["All", ...Array.from(new Set(d.COMPONENTS.map((c) => c.category)))],
+    [d],
+  )
 
   const submitSearch = () => setQuery(draftQuery.trim())
   const clearSearch = () => {
@@ -142,10 +144,14 @@ export default function InventoryPage() {
     setQuery("")
   }
 
-  const handleMoveSubmit = (input: NewTransactionInput) => {
-    addTransaction(input)
-    const verb = input.direction === "in" ? "Stocked in" : "Stocked out"
-    setToast(`${verb} ${input.qty.toLocaleString()} × ${getBrandName(input.brandId)}`)
+  const handleMoveSubmit = async (input: NewTransactionInput) => {
+    const result = await addTransaction(input)
+    if (result.ok) {
+      const verb = input.direction === "in" ? "Stocked in" : "Stocked out"
+      setToast(`${verb} ${input.qty.toLocaleString()} × ${d.getBrandName(input.brandId)}`)
+    } else {
+      setToast(result.error ?? "Move failed")
+    }
     setMove(null)
     setTimeout(() => setToast(null), 3000)
   }
@@ -520,7 +526,7 @@ export default function InventoryPage() {
 
                             {/* Transaction history */}
                             <div className="mt-6">
-                              <TransactionHistoryTable componentId={item.id} transactions={transactions} />
+                              <TransactionHistoryTable componentId={item.genericPN} transactions={transactions} />
                             </div>
                           </td>
                         </tr>
@@ -568,14 +574,14 @@ export default function InventoryPage() {
 
       {/* Stock in/out modal */}
       {move && (() => {
-        const comp = getComponent(move.componentId)
+        const comp = d.getComponent(move.componentId)
         if (!comp) return null
         return (
           <StockMoveModal
             mode={move.mode}
-            componentId={comp.id}
+            componentId={comp.genericPN}
             componentName={comp.name}
-            brandStocks={effectiveBrandStocks(comp, transactions)}
+            brandStocks={effectiveBrandStocks({ ...comp, id: comp.genericPN }, transactions)}
             onSubmit={handleMoveSubmit}
             onClose={() => setMove(null)}
           />

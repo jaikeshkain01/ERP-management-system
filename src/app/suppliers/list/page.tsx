@@ -1,11 +1,14 @@
+"use client"
+
 import Link from "next/link"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Truck, Filter, Plus, Search, Star, CheckCircle2, ArrowRight } from "lucide-react"
-import { SUPPLIERS } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 export default function SupplierListPage() {
+  const { SUPPLIERS } = useData()
   const suppliers = SUPPLIERS
 
   return (

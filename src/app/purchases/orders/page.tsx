@@ -6,50 +6,43 @@ import { Button } from "@/components/ui/button"
 import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle, Landmark } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
-import { PURCHASE_ORDERS, type PurchaseOrder } from "@/mockdata/purchases"
+import type { PurchaseOrder } from "@/mockdata/purchases"
 
 function PurchaseOrdersContent() {
-  const [poList, setPoList] = React.useState<PurchaseOrder[]>(PURCHASE_ORDERS)
+  const [poList, setPoList] = React.useState<PurchaseOrder[]>([])
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  React.useEffect(() => {
-    setMounted(true)
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_purchase_orders")
-      if (saved) {
-        try {
-          setPoList(JSON.parse(saved))
-        } catch (e) {
-          console.error("Failed to parse purchase orders", e)
-        }
-      } else {
-        localStorage.setItem("mockup2_erp_purchase_orders", JSON.stringify(PURCHASE_ORDERS))
-      }
+  // Load POs from the backend (DB or mockdata, per isTesting)
+  const loadPos = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/purchase-orders", { cache: "no-store" })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body?.data) setPoList(body.data)
+    } finally {
+      setMounted(true)
     }
   }, [])
 
-  const saveToLocalStorage = (newList: PurchaseOrder[]) => {
-    setPoList(newList)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_purchase_orders", JSON.stringify(newList))
-    }
-  }
+  React.useEffect(() => {
+    loadPos()
+  }, [loadPos])
 
   const showToast = (message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 3000)
   }
 
-  const handleReceiveOrder = (poId: string) => {
-    const updated = poList.map(po => {
-      if (po.poId === poId) {
-        return { ...po, status: "Completed" as const }
-      }
-      return po
-    })
-    saveToLocalStorage(updated)
-    showToast(`Marked Purchase Order ${poId} as Completed (Materials Received)!`)
+  // Goods-in: appends inventory IN ledger rows server-side, PO → Completed.
+  const handleReceiveOrder = async (poId: string) => {
+    const res = await fetch(`/api/purchase-orders/${poId}/receive`, { method: "POST" })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message ?? `Failed to receive ${poId}`)
+      return
+    }
+    showToast(`Marked Purchase Order ${poId} as Completed — stock received into inventory!`)
+    await loadPos()
   }
 
   // Calculate statistics

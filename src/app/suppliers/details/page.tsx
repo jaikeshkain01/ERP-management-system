@@ -8,10 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award, Layers, Star, Plus, X, Check, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
-import {
-  SUPPLIERS, COMPONENTS, BRANDS, getBrandName, supplierComponents,
-  supplierBrandIds, productsUsingComponent, formatINR, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface SupplyItem {
   partId: string
@@ -39,53 +36,58 @@ interface SupplierData {
 }
 
 // Seed derived from the centralized store — supplier profiles plus the parts
-// they offer, joined from each component's offers. Persisted to localStorage
-// once the user edits (forms below).
-const DEFAULT_SUPPLIERS: Record<string, SupplierData> = Object.fromEntries(
-  SUPPLIERS.map((s) => {
-    const parts: SupplyItem[] = []
-    COMPONENTS.forEach((c) =>
-      c.offers
-        .filter((o) => o.supplierId === s.id)
-        .forEach((o) =>
-          parts.push({
-            partId: c.id,
-            partName: c.name,
-            brandId: o.brandId,
-            brandName: getBrandName(o.brandId),
-            price: formatINR(o.price),
-            leadTime: formatLeadTime(o.leadTimeDays),
-          }),
-        ),
-    )
-    const impactedProducts = new Set<string>()
-    supplierComponents(s.id).forEach((c) =>
-      productsUsingComponent(c.id).forEach((p) => impactedProducts.add(p.id)),
-    )
-    return [
-      s.id,
-      {
-        id: s.id,
-        name: s.name,
-        description: s.description,
-        contact: s.contact,
-        email: s.email,
-        phone: s.phone,
-        address: s.address,
-        terms: s.terms,
-        activeOrders: impactedProducts.size,
-        componentsSupplied: parts.length,
-        brandsSupported: supplierBrandIds(s.id).length,
-        productsImpacted: impactedProducts.size,
-        parts,
-      } satisfies SupplierData,
-    ]
-  }),
-)
+// they offer, joined from each component's offers. Price edits POST to the
+// backend price book (forms below); the view re-derives from live data.
+function buildDefaultSuppliers(d: ReturnType<typeof useData>): Record<string, SupplierData> {
+  return Object.fromEntries(
+    d.SUPPLIERS.map((s) => {
+      const parts: SupplyItem[] = []
+      d.COMPONENTS.forEach((c) =>
+        c.offers
+          .filter((o) => o.supplierId === s.id)
+          .forEach((o) =>
+            parts.push({
+              partId: c.id,
+              partName: c.name,
+              brandId: o.brandId,
+              brandName: d.getBrandName(o.brandId),
+              price: d.formatINR(o.price),
+              leadTime: d.formatLeadTime(o.leadTimeDays),
+            }),
+          ),
+      )
+      const impactedProducts = new Set<string>()
+      d.supplierComponents(s.id).forEach((c) =>
+        d.productsUsingComponent(c.id).forEach((p) => impactedProducts.add(p.id)),
+      )
+      return [
+        s.id,
+        {
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          contact: s.contact,
+          email: s.email,
+          phone: s.phone,
+          address: s.address,
+          terms: s.terms,
+          activeOrders: impactedProducts.size,
+          componentsSupplied: parts.length,
+          brandsSupported: d.supplierBrandIds(s.id).length,
+          productsImpacted: impactedProducts.size,
+          parts,
+        } satisfies SupplierData,
+      ]
+    }),
+  )
+}
 
 function SupplierDetailsContent() {
   const searchParams = useSearchParams()
   const supplierId = searchParams.get("supplier") || "abc-electronics"
+
+  const d = useData()
+  const DEFAULT_SUPPLIERS = React.useMemo(() => buildDefaultSuppliers(d), [d])
 
   const [suppliers, setSuppliers] = React.useState<Record<string, SupplierData>>(DEFAULT_SUPPLIERS)
   const [mounted, setMounted] = React.useState(false)
@@ -100,29 +102,17 @@ function SupplierDetailsContent() {
   const [newPrice, setNewPrice] = React.useState("")
   const [newLeadTime, setNewLeadTime] = React.useState("")
 
-  const componentOptions = COMPONENTS.map((c) => ({ id: c.id, name: c.name }))
-  const brandOptions = BRANDS.map((b) => ({ id: b.id, name: b.name }))
+  const componentOptions = d.COMPONENTS.map((c) => ({ id: c.id, name: c.name }))
+  const brandOptions = d.BRANDS.map((b) => ({ id: b.id, name: b.name }))
 
   React.useEffect(() => {
     setMounted(true)
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_suppliers_details")
-      if (saved) {
-        try {
-          setSuppliers(JSON.parse(saved))
-        } catch (e) {
-          console.error("Failed to parse supplier data", e)
-        }
-      }
-    }
   }, [])
 
-  const saveToLocalStorage = (newData: Record<string, SupplierData>) => {
-    setSuppliers(newData)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_suppliers_details", JSON.stringify(newData))
-    }
-  }
+  // Keep the local view model in sync with the backend data (re-derives after d.reload()).
+  React.useEffect(() => {
+    setSuppliers(DEFAULT_SUPPLIERS)
+  }, [DEFAULT_SUPPLIERS])
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -131,7 +121,7 @@ function SupplierDetailsContent() {
 
   const supplier = suppliers[supplierId] || suppliers["abc-electronics"] || DEFAULT_SUPPLIERS["abc-electronics"]
 
-  const handleAddPart = (e: React.FormEvent) => {
+  const handleAddPart = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newPrice.trim() || !newLeadTime.trim()) {
       showToast("Please fill in all pricing fields", "error")
@@ -144,30 +134,41 @@ function SupplierDetailsContent() {
     }
 
     const priceVal = parseFloat(newPrice)
-    const formattedPrice = isNaN(priceVal) ? "₹1.00" : `₹${priceVal.toFixed(2)}`
-    const leadTimeStr = newLeadTime.toLowerCase().includes("day") ? newLeadTime : `${newLeadTime} Days`
+    if (isNaN(priceVal) || priceVal <= 0) {
+      showToast("Price must be a valid positive number", "error")
+      return
+    }
+    const leadDays = parseInt(newLeadTime.replace(/[^\d]/g, ""), 10)
+
+    // Persist to the price book, then reflect it optimistically.
+    const res = await fetch(`/api/suppliers/${supplier.id}/prices`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        component: newPartId,
+        brand: newBrandId,
+        price: priceVal,
+        ...(isNaN(leadDays) ? {} : { leadTimeDays: leadDays }),
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to save price", "error")
+      return
+    }
 
     const newPart: SupplyItem = {
       partId: newPartId,
       partName: newPartName,
       brandId: newBrandId,
       brandName: newBrandName,
-      price: formattedPrice,
-      leadTime: leadTimeStr
+      price: d.formatINR(priceVal),
+      leadTime: d.formatLeadTime(isNaN(leadDays) ? 0 : leadDays),
     }
-
-    const updatedSupplier = {
-      ...supplier,
-      componentsSupplied: supplier.componentsSupplied + 1,
-      parts: [...supplier.parts, newPart]
-    }
-
-    const updated = {
+    setSuppliers({
       ...suppliers,
-      [supplier.id]: updatedSupplier
-    }
-
-    saveToLocalStorage(updated)
+      [supplier.id]: { ...supplier, componentsSupplied: supplier.componentsSupplied + 1, parts: [...supplier.parts, newPart] },
+    })
     setNewPrice("")
     setNewLeadTime("")
     setShowAddModal(false)

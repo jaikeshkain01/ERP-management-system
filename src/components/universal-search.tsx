@@ -9,11 +9,11 @@ import {
   DollarSign, Activity, FileText, ArrowRight
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { 
-  SEARCH_PRODUCTS, SEARCH_PCBS, SEARCH_COMPONENTS, 
-  SEARCH_BRANDS, SEARCH_SUPPLIERS,
+import {
+  buildSearchData,
   SearchComponent, SearchProduct, SearchPCB, SearchBrand, SearchSupplier
 } from "@/lib/search-data"
+import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 
 type SearchResultItem = 
@@ -54,6 +54,14 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 export function UniversalSearch() {
   const router = useRouter()
   const { isEnabled } = useModules()
+  const d = useData()
+  const {
+    products: SEARCH_PRODUCTS,
+    pcbs: SEARCH_PCBS,
+    components: SEARCH_COMPONENTS,
+    brands: SEARCH_BRANDS,
+    suppliers: SEARCH_SUPPLIERS,
+  } = React.useMemo(() => buildSearchData(d), [d])
   const [isOpen, setIsOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
   const [activeTab, setActiveTab] = React.useState<"all" | "components" | "products" | "brands">("all")
@@ -64,14 +72,14 @@ export function UniversalSearch() {
   
   const searchInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Popular searches default listing
+  // Popular searches default listing (defensive: data may be empty while loading)
   const POPULAR_SEARCHES: SearchResultItem[] = [
-    { type: "product", data: SEARCH_PRODUCTS[0] }, // ROIP 400
-    { type: "pcb", data: SEARCH_PCBS[0] }, // Audio PCB
-    { type: "component", data: SEARCH_COMPONENTS[0] }, // Resistor 10K
-    { type: "supplier", data: SEARCH_SUPPLIERS[0] }, // ABC Electronics
-    { type: "brand", data: SEARCH_BRANDS[0] }, // Yageo
-  ]
+    SEARCH_PRODUCTS[0] && { type: "product" as const, data: SEARCH_PRODUCTS[0] },
+    SEARCH_PCBS[0] && { type: "pcb" as const, data: SEARCH_PCBS[0] },
+    SEARCH_COMPONENTS[0] && { type: "component" as const, data: SEARCH_COMPONENTS[0] },
+    SEARCH_SUPPLIERS[0] && { type: "supplier" as const, data: SEARCH_SUPPLIERS[0] },
+    SEARCH_BRANDS[0] && { type: "brand" as const, data: SEARCH_BRANDS[0] },
+  ].filter(Boolean) as SearchResultItem[]
 
   // Listen for Ctrl+K global hotkey and Alt+1-4 tab switcher
   React.useEffect(() => {

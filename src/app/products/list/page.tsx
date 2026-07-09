@@ -10,7 +10,7 @@ import {
   CheckCircle2, ArrowRight, Award, Layers,
   XCircle, AlertTriangle, RefreshCw
 } from "lucide-react"
-import { PRODUCTS, productUniqueComponents, productBrandCount } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface ProductData {
   id: string
@@ -24,18 +24,22 @@ interface ProductData {
 }
 
 // View model derived from the centralized product → PCB → component graph.
-const PRODUCTS_DATA: ProductData[] = PRODUCTS.map((p) => ({
-  id: p.id,
-  name: p.name,
-  description: p.description,
-  pcbs: p.pcbs.length,
-  components: productUniqueComponents(p).length,
-  brands: productBrandCount(p),
-  buildableQty: p.buildableQty,
-  status: p.status,
-}))
+function buildProductsData(d: ReturnType<typeof useData>): ProductData[] {
+  return d.PRODUCTS.map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description,
+    pcbs: p.pcbs.length,
+    components: d.productUniqueComponents(p).length,
+    brands: d.productBrandCount(p),
+    buildableQty: p.buildableQty,
+    status: p.status,
+  }))
+}
 
 export default function ProductListPage() {
+  const d = useData()
+  const PRODUCTS_DATA = React.useMemo(() => buildProductsData(d), [d])
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
 

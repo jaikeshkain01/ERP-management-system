@@ -8,10 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck, Table2, Download } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
-import {
-  PCBS, getPcb, getComponent, getSupplierName, getBrandName, pcbBom, componentBrands,
-  componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface ComponentBrand {
   id: string
@@ -52,6 +49,12 @@ interface DrawerComponentDetail {
 function PCBStructureContent() {
   const searchParams = useSearchParams()
   const pcbId = searchParams.get("pcb") || "audio-pcb"
+
+  const {
+    PCBS, getPcb, getComponent, getSupplierName, getBrandName, pcbBom, componentBrands,
+    componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime,
+  } = useData()
+
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")

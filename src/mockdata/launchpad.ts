@@ -1,5 +1,5 @@
-import { COMPONENTS, PRODUCTS, PCBS, SUPPLIERS, BRANDS } from "@/mockdata"
-import { PRODUCTION_BLOCKERS, LOW_STOCK, PURCHASE_SUMMARY } from "@/mockdata/dashboard"
+import type { Selectors } from "./selectors"
+import { PRODUCTION_BLOCKERS, PURCHASE_SUMMARY } from "./dashboard"
 
 export type WorkspaceStat = {
   value: string
@@ -7,15 +7,18 @@ export type WorkspaceStat = {
   tone?: "danger" | "warning" | "default"
 }
 
-/** One headline stat per workspace id, derived from mock data (never hardcoded numbers). */
-export const WORKSPACE_STATS: Record<string, WorkspaceStat> = {
-  dashboard: { value: "Live", label: "operational overview" },
-  components: { value: String(COMPONENTS.length), label: "components in catalog" },
-  inventory: { value: String(LOW_STOCK.length), label: "parts below minimum", tone: "warning" },
-  products: { value: String(PRODUCTS.length), label: "finished products" },
-  pcb: { value: String(PCBS.length), label: "board designs" },
-  production: { value: String(PRODUCTION_BLOCKERS.length), label: "blocked batches", tone: "danger" },
-  purchasing: { value: String(PURCHASE_SUMMARY[0]?.value ?? 0), label: "pending requests" },
-  suppliers: { value: `${SUPPLIERS.length}/${BRANDS.length}`, label: "suppliers / brands" },
-  reports: { value: "—", label: "analytics & exports" },
+/** One headline stat per workspace id, derived from the active store (mockdata or DB). */
+export function buildWorkspaceStats(d: Selectors): Record<string, WorkspaceStat> {
+  const lowStockCount = d.COMPONENTS.filter((c) => d.componentStockStatus(c) !== "Healthy").length
+  return {
+    dashboard: { value: "Live", label: "operational overview" },
+    components: { value: String(d.COMPONENTS.length), label: "components in catalog" },
+    inventory: { value: String(lowStockCount), label: "parts below minimum", tone: "warning" },
+    products: { value: String(d.PRODUCTS.length), label: "finished products" },
+    pcb: { value: String(d.PCBS.length), label: "board designs" },
+    production: { value: String(PRODUCTION_BLOCKERS.length), label: "blocked batches", tone: "danger" },
+    purchasing: { value: String(PURCHASE_SUMMARY[0]?.value ?? 0), label: "pending requests" },
+    suppliers: { value: `${d.SUPPLIERS.length}/${d.BRANDS.length}`, label: "suppliers / brands" },
+    reports: { value: "—", label: "analytics & exports" },
+  }
 }

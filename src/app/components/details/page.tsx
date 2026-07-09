@@ -12,11 +12,7 @@ import {
   Boxes, Truck, Layers, Gauge, Zap, ShieldAlert, Clock, TrendingDown,
 } from "lucide-react"
 import Link from "next/link"
-import {
-  COMPONENTS, getBrandName, getSupplierName, componentUsage,
-  productsUsingComponent, pcbsUsingComponent, componentStockStatus,
-  cheapestOffer as mCheapest, formatINR as mINR, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface SupplierOffer {
   manufacturer: string
@@ -67,60 +63,64 @@ interface ComponentDetailData {
   specs: { key: string; value: string }[]
 }
 
-// Detail view model derived from the centralized component store.
-const COMPONENTS_DATA: Record<string, ComponentDetailData> = Object.fromEntries(
-  COMPONENTS.map((c) => {
-    const usage = componentUsage(c.id)
-    const cheapest = mCheapest(c)
-    const whereMap = new Map<string, string[]>()
-    usage.forEach((u) => {
-      const arr = whereMap.get(u.product.name) ?? []
-      if (!arr.includes(u.pcb.name)) arr.push(u.pcb.name)
-      whereMap.set(u.product.name, arr)
-    })
-    return [
-      c.id,
-      {
-        name: c.name,
-        category: c.category,
-        genericPN: c.genericPN,
-        solderType: c.solderType,
-        footprint: c.footprint,
-        spq: c.spq,
-        minStock: c.minStock,
-        unit: c.unit,
-        status: componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
-        description: c.description,
-        usedInList: productsUsingComponent(c.id).map((p) => p.code),
-        mfgVariants: c.brandVariants.map((v) => ({
-          manufacturer: getBrandName(v.brandId),
-          mfgPartNo: v.partNo,
-          stock: v.stock,
-        })),
-        suppliers: c.offers.map((o) => ({
-          manufacturer: getBrandName(o.brandId),
-          name: getSupplierName(o.supplierId),
-          price: mINR(o.price),
-          moq: c.spq,
-          leadTime: formatLeadTime(o.leadTimeDays),
-          preferred: !!cheapest && o.supplierId === cheapest.supplierId && o.price === cheapest.price,
-        })),
-        usedInProductsCount: productsUsingComponent(c.id).length,
-        usedInPCBsCount: pcbsUsingComponent(c.id).length,
-        totalUsageProduct: usage[0]?.product.name ?? "—",
-        totalUsageQty: usage.reduce((s, u) => s + u.qty, 0),
-        productUsageTable: usage.map((u) => ({ product: u.product.name, pcb: u.pcb.name, qty: u.qty })),
-        whereUsedTree: Array.from(whereMap.entries()).map(([product, pcbs]) => ({ product, pcbs })),
-        specs: c.specs,
-      } satisfies ComponentDetailData,
-    ]
-  }),
-)
+// Detail view model derived from the active store (mockdata or DB).
+function buildComponentsData(d: ReturnType<typeof useData>): Record<string, ComponentDetailData> {
+  return Object.fromEntries(
+    d.COMPONENTS.map((c) => {
+      const usage = d.componentUsage(c.id)
+      const cheapest = d.cheapestOffer(c)
+      const whereMap = new Map<string, string[]>()
+      usage.forEach((u) => {
+        const arr = whereMap.get(u.product.name) ?? []
+        if (!arr.includes(u.pcb.name)) arr.push(u.pcb.name)
+        whereMap.set(u.product.name, arr)
+      })
+      return [
+        c.id,
+        {
+          name: c.name,
+          category: c.category,
+          genericPN: c.genericPN,
+          solderType: c.solderType,
+          footprint: c.footprint,
+          spq: c.spq,
+          minStock: c.minStock,
+          unit: c.unit,
+          status: d.componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
+          description: c.description,
+          usedInList: d.productsUsingComponent(c.id).map((p) => p.code),
+          mfgVariants: c.brandVariants.map((v) => ({
+            manufacturer: d.getBrandName(v.brandId),
+            mfgPartNo: v.partNo,
+            stock: v.stock,
+          })),
+          suppliers: c.offers.map((o) => ({
+            manufacturer: d.getBrandName(o.brandId),
+            name: d.getSupplierName(o.supplierId),
+            price: d.formatINR(o.price),
+            moq: c.spq,
+            leadTime: d.formatLeadTime(o.leadTimeDays),
+            preferred: !!cheapest && o.supplierId === cheapest.supplierId && o.price === cheapest.price,
+          })),
+          usedInProductsCount: d.productsUsingComponent(c.id).length,
+          usedInPCBsCount: d.pcbsUsingComponent(c.id).length,
+          totalUsageProduct: usage[0]?.product.name ?? "—",
+          totalUsageQty: usage.reduce((s, u) => s + u.qty, 0),
+          productUsageTable: usage.map((u) => ({ product: u.product.name, pcb: u.pcb.name, qty: u.qty })),
+          whereUsedTree: Array.from(whereMap.entries()).map(([product, pcbs]) => ({ product, pcbs })),
+          specs: c.specs,
+        } satisfies ComponentDetailData,
+      ]
+    }),
+  )
+}
 
 function ComponentDetailsContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const componentId = searchParams.get("component") || "resistor-10k"
+  const d = useData()
+  const COMPONENTS_DATA = React.useMemo(() => buildComponentsData(d), [d])
+  const componentId = searchParams.get("component") || d.COMPONENTS[0]?.id || ""
 
   // Component details State
   const [componentsData, setComponentsData] = React.useState<Record<string, ComponentDetailData>>(COMPONENTS_DATA)
@@ -157,25 +157,13 @@ function ComponentDetailsContent() {
   const [editCompFootprint, setEditCompFootprint] = React.useState("")
   const [editCompSPQ, setEditCompSPQ] = React.useState("")
 
-  // Load state from localStorage on mount
+  // Keep the local view model in sync with the backend data (re-derives after d.reload()).
   React.useEffect(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_components_details")
-      if (saved) {
-        try {
-          setComponentsData(JSON.parse(saved))
-        } catch (e) {
-          console.error("Failed to parse component details state", e)
-        }
-      }
-    }
-  }, [])
+    setComponentsData(COMPONENTS_DATA)
+  }, [COMPONENTS_DATA])
 
-  const saveToLocalStorage = (newData: Record<string, ComponentDetailData>) => {
+  const applyComponentsData = (newData: Record<string, ComponentDetailData>) => {
     setComponentsData(newData)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_components_details", JSON.stringify(newData))
-    }
   }
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -219,7 +207,7 @@ function ComponentDetailsContent() {
   }
 
   // Edit component handler
-  const handleUpdateComponent = (e: React.FormEvent) => {
+  const handleUpdateComponent = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editCompName.trim() || !editCompGenericPN.trim()) {
       showToast("Name and Generic Part Number are required", "error")
@@ -227,6 +215,24 @@ function ComponentDetailsContent() {
     }
 
     const spqNum = parseInt(editCompSPQ) || 0
+
+    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: editCompName.trim(),
+        genericPN: editCompGenericPN.trim(),
+        category: editCompCategory,
+        solderType: editCompSolderType,
+        footprint: editCompFootprint.trim(),
+        ...(spqNum > 0 ? { spq: spqNum } : {}),
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to update component", "error")
+      return
+    }
 
     const updatedComponent: ComponentDetailData = {
       ...component,
@@ -243,21 +249,18 @@ function ComponentDetailsContent() {
       [componentId]: updatedComponent
     }
 
-    saveToLocalStorage(updatedData)
+    applyComponentsData(updatedData)
     setActiveModal(null)
     showToast(`Successfully updated component ${updatedComponent.name}!`)
   }
 
-  // Delete component handler
+  // Delete component handler.
+  // NOTE: session-only for now — there is no DELETE /components endpoint yet, so the
+  // record still exists in the database and reappears in the list on reload.
   const handleDeleteComponent = () => {
     const updatedData = { ...componentsData }
     delete updatedData[componentId]
-
-    // Save to state and localStorage
     setComponentsData(updatedData)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_components_details", JSON.stringify(updatedData))
-    }
 
     setActiveModal(null)
     showToast(`Successfully deleted component ${component.name}!`)
@@ -266,7 +269,7 @@ function ComponentDetailsContent() {
     }, 1000)
   }
 
-  const handleAddSupplier = (e: React.FormEvent) => {
+  const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newSupplierName.trim() || !newSupplierPrice || !newSupplierMOQ || !newSupplierLeadTime || !newSupplierMfg.trim()) {
       showToast("Please fill in all fields", "error")
@@ -283,6 +286,29 @@ function ComponentDetailsContent() {
     if (isNaN(moqNum) || moqNum <= 0) {
       showToast("MOQ must be a valid positive number", "error")
       return
+    }
+
+    // Persist to the price book when the supplier + brand match existing records
+    // (new suppliers must be created in the Suppliers module first — no create-supplier API yet).
+    const supplierSlug = d.SUPPLIERS.find(s => s.name.toLowerCase() === newSupplierName.trim().toLowerCase())?.id
+    const brandSlug = d.BRANDS.find(b => b.name.toLowerCase() === newSupplierMfg.trim().toLowerCase())?.id
+    const leadDays = parseInt(newSupplierLeadTime.replace(/[^\d]/g, ""), 10)
+    if (supplierSlug && brandSlug) {
+      const res = await fetch(`/api/suppliers/${supplierSlug}/prices`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          component: componentId, brand: brandSlug, price: priceNum, moq: moqNum,
+          ...(isNaN(leadDays) ? {} : { leadTimeDays: leadDays }),
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        showToast(body?.error?.message || "Failed to save supplier price", "error")
+        return
+      }
+    } else {
+      showToast("Saved for this session — create the supplier/brand to persist it", "success")
     }
 
     const formattedPrice = `₹${priceNum.toFixed(2)}`
@@ -316,7 +342,7 @@ function ComponentDetailsContent() {
       [componentId]: updatedComponent
     }
 
-    saveToLocalStorage(updatedData)
+    applyComponentsData(updatedData)
     
     // Reset form
     setNewSupplierMfg("")
@@ -329,7 +355,7 @@ function ComponentDetailsContent() {
     showToast(`Successfully added ${newSupplier.name}!`)
   }
 
-  const handleEditPrice = (e: React.FormEvent) => {
+  const handleEditPrice = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!editSupplierName || !editSupplierPrice) {
       showToast("Please select a supplier and enter a price", "error")
@@ -340,6 +366,23 @@ function ComponentDetailsContent() {
     if (isNaN(priceNum) || priceNum <= 0) {
       showToast("Price must be a valid positive number", "error")
       return
+    }
+
+    // Persist the price against the current component + that supplier's brand offer.
+    const offer = component.suppliers.find(s => s.name === editSupplierName)
+    const supplierSlug = d.SUPPLIERS.find(s => s.name === editSupplierName)?.id
+    const brandSlug = offer ? d.BRANDS.find(b => b.name === offer.manufacturer)?.id : undefined
+    if (supplierSlug && brandSlug) {
+      const res = await fetch(`/api/suppliers/${supplierSlug}/prices`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ component: componentId, brand: brandSlug, price: priceNum }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        showToast(body?.error?.message || "Failed to update price", "error")
+        return
+      }
     }
 
     const formattedPrice = `₹${priceNum.toFixed(2)}`
@@ -361,7 +404,7 @@ function ComponentDetailsContent() {
       [componentId]: updatedComponent
     }
 
-    saveToLocalStorage(updatedData)
+    applyComponentsData(updatedData)
     
     setEditSupplierPrice("")
     setActiveModal(null)
@@ -390,13 +433,13 @@ function ComponentDetailsContent() {
       [componentId]: updatedComponent
     }
 
-    saveToLocalStorage(updatedData)
+    applyComponentsData(updatedData)
     
     setActiveModal(null)
     showToast(`${preferredSupplierName} is now the preferred supplier.`)
   }
 
-  const handleAddVariant = (e: React.FormEvent) => {
+  const handleAddVariant = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newVariantMfg.trim() || !newVariantPartNo.trim()) {
       showToast("Please fill in all fields", "error")
@@ -409,6 +452,17 @@ function ComponentDetailsContent() {
     }
 
     const stockNum = parseInt(newVariantStock) || 0
+
+    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}/variants`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brand: newVariantMfg.trim(), partNo: newVariantPartNo.trim(), stock: stockNum }),
+    })
+    const vbody = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(vbody?.error?.message || "Failed to add variant", "error")
+      return
+    }
 
     const newVariant: MfgVariant = {
       manufacturer: newVariantMfg.trim(),
@@ -426,7 +480,7 @@ function ComponentDetailsContent() {
       [componentId]: updatedComponent
     }
 
-    saveToLocalStorage(updatedData)
+    applyComponentsData(updatedData)
     setNewVariantMfg("")
     setNewVariantPartNo("")
     setNewVariantStock("")

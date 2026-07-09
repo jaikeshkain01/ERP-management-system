@@ -7,10 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, CheckCircle2, Award, Filter, Plus, Search, Layers, ShieldCheck, Landmark, Star, X, Check, ArrowRight, MapPin, Calendar, Clock, Sparkles } from "lucide-react"
 import Link from "next/link"
-import {
-  BRANDS, SUPPLIERS, COMPONENTS, getSupplier, brandComponents,
-  componentStockStatus, formatINR, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 // Types
 interface AssociatedComponent {
@@ -41,55 +38,60 @@ interface BrandData {
   suppliers: AssociatedSupplier[]
 }
 
-// Seed derived from the centralized store. Each brand's components and the
+// Seed derived from the store (mockdata or DB). Each brand's components and the
 // suppliers that carry them are joined from the canonical component records.
-const DEFAULT_BRANDS: Record<string, BrandData> = Object.fromEntries(
-  BRANDS.map((b) => {
-    const comps = brandComponents(b.id)
-    const components: AssociatedComponent[] = comps.map((c) => ({
-      id: c.id,
-      displayName: c.name,
-      category: c.category,
-      stock: c.stock,
-      status: componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
-    }))
-    const supMap = new Map<string, AssociatedSupplier>()
-    comps.forEach((c) =>
-      c.offers
-        .filter((o) => o.brandId === b.id)
-        .forEach((o) => {
-          if (!supMap.has(o.supplierId)) {
-            const sup = getSupplier(o.supplierId)
-            supMap.set(o.supplierId, {
-              id: o.supplierId,
-              name: sup?.name ?? o.supplierId,
-              price: formatINR(o.price),
-              moq: c.spq,
-              leadTime: formatLeadTime(o.leadTimeDays),
-              rating: sup?.rating ?? 4.5,
-            })
-          }
-        }),
-    )
-    return [
-      b.id,
-      {
-        id: b.id,
-        name: b.name,
-        description: b.description,
-        headquarter: b.headquarter,
-        founded: b.founded,
-        status: b.status,
-        components,
-        suppliers: Array.from(supMap.values()),
-      } satisfies BrandData,
-    ]
-  }),
-)
+function buildDefaultBrands(d: ReturnType<typeof useData>): Record<string, BrandData> {
+  return Object.fromEntries(
+    d.BRANDS.map((b) => {
+      const comps = d.brandComponents(b.id)
+      const components: AssociatedComponent[] = comps.map((c) => ({
+        id: c.id,
+        displayName: c.name,
+        category: c.category,
+        stock: c.stock,
+        status: d.componentStockStatus(c) === "Healthy" ? "Healthy" : "Low",
+      }))
+      const supMap = new Map<string, AssociatedSupplier>()
+      comps.forEach((c) =>
+        c.offers
+          .filter((o) => o.brandId === b.id)
+          .forEach((o) => {
+            if (!supMap.has(o.supplierId)) {
+              const sup = d.getSupplier(o.supplierId)
+              supMap.set(o.supplierId, {
+                id: o.supplierId,
+                name: sup?.name ?? o.supplierId,
+                price: d.formatINR(o.price),
+                moq: c.spq,
+                leadTime: d.formatLeadTime(o.leadTimeDays),
+                rating: sup?.rating ?? 4.5,
+              })
+            }
+          }),
+      )
+      return [
+        b.id,
+        {
+          id: b.id,
+          name: b.name,
+          description: b.description,
+          headquarter: b.headquarter,
+          founded: b.founded,
+          status: b.status,
+          components,
+          suppliers: Array.from(supMap.values()),
+        } satisfies BrandData,
+      ]
+    }),
+  )
+}
 
 function BrandDashboardContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
+
+  const d = useData()
+  const DEFAULT_BRANDS = React.useMemo(() => buildDefaultBrands(d), [d])
 
   const [brands, setBrands] = React.useState<Record<string, BrandData>>(DEFAULT_BRANDS)
   const [mounted, setMounted] = React.useState(false)
@@ -117,35 +119,22 @@ function BrandDashboardContent() {
   const [newSupMOQ, setNewSupMOQ] = React.useState("")
   const [newSupLead, setNewSupLead] = React.useState("")
 
-  const supplierOptions = SUPPLIERS.map((s) => ({ id: s.id, name: s.name, rating: s.rating }))
+  const supplierOptions = d.SUPPLIERS.map((s) => ({ id: s.id, name: s.name, rating: s.rating }))
 
-  const componentOptions = COMPONENTS.map((c) => ({
+  const componentOptions = d.COMPONENTS.map((c) => ({
     id: c.id,
     displayName: c.name,
     category: c.category,
   }))
 
-  // Sync state with localStorage on mount
   React.useEffect(() => {
     setMounted(true)
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_brands_data")
-      if (saved) {
-        try {
-          setBrands(JSON.parse(saved))
-        } catch (e) {
-          console.error("Failed to parse brand data", e)
-        }
-      }
-    }
   }, [])
 
-  const saveToLocalStorage = (newData: Record<string, BrandData>) => {
-    setBrands(newData)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_brands_data", JSON.stringify(newData))
-    }
-  }
+  // Keep the local view model in sync with the backend data (re-derives after d.reload()).
+  React.useEffect(() => {
+    setBrands(DEFAULT_BRANDS)
+  }, [DEFAULT_BRANDS])
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -161,17 +150,36 @@ function BrandDashboardContent() {
     router.push(`?${params.toString()}`, { scroll: false })
   }
 
-  const handleAddBrand = (e: React.FormEvent) => {
+  const slugify = (s: string) => s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+
+  const handleAddBrand = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newBrandName.trim() || !newBrandDesc.trim() || !newBrandHQ.trim() || !newBrandFounded.trim()) {
       showToast("Please fill all brand fields", "error")
       return
     }
 
-    const brandKey = newBrandName.trim().toLowerCase().replace(/\s+/g, "-")
+    const brandKey = slugify(newBrandName)
 
     if (brands[brandKey]) {
       showToast("A brand with this name already exists", "error")
+      return
+    }
+
+    const res = await fetch("/api/brands", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: newBrandName.trim(),
+        description: newBrandDesc.trim(),
+        headquarter: newBrandHQ.trim(),
+        founded: newBrandFounded.trim(),
+        status: newBrandStatus,
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to register brand", "error")
       return
     }
 
@@ -186,12 +194,7 @@ function BrandDashboardContent() {
       suppliers: []
     }
 
-    const updated = {
-      ...brands,
-      [brandKey]: newBrand
-    }
-
-    saveToLocalStorage(updated)
+    setBrands({ ...brands, [brandKey]: newBrand })
     setNewBrandName("")
     setNewBrandDesc("")
     setNewBrandHQ("")
@@ -202,7 +205,7 @@ function BrandDashboardContent() {
     handleRowClick(brandKey)
   }
 
-  const handleAddComponent = (e: React.FormEvent) => {
+  const handleAddComponent = async (e: React.FormEvent) => {
     e.preventDefault()
     const targetBrand = selectedBrand
 
@@ -215,26 +218,32 @@ function BrandDashboardContent() {
     const matchedOpt = componentOptions.find(c => c.id === newCompId)
     const dispName = matchedOpt ? matchedOpt.displayName : newCompName
     const catName = matchedOpt ? matchedOpt.category : newCompCategory
+    const stockNum = parseInt(newCompStock) || 0
+
+    // Linking a component to a brand = creating a brand variant for that component.
+    const res = await fetch(`/api/components/${encodeURIComponent(newCompId)}/variants`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brand: targetBrand.name, partNo: newCompId, stock: stockNum }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to link component", "error")
+      return
+    }
 
     const newComp: AssociatedComponent = {
       id: newCompId,
       displayName: dispName,
       category: catName,
-      stock: parseInt(newCompStock) || 0,
+      stock: stockNum,
       status: newCompStatus
     }
 
-    const updatedBrand = {
-      ...targetBrand,
-      components: [...targetBrand.components, newComp]
-    }
-
-    const updated = {
+    setBrands({
       ...brands,
-      [targetBrand.id]: updatedBrand
-    }
-
-    saveToLocalStorage(updated)
+      [targetBrand.id]: { ...targetBrand, components: [...targetBrand.components, newComp] },
+    })
     setNewCompStock("1000")
     setActiveModal(null)
     showToast(`Component "${newComp.displayName}" linked to ${targetBrand.name}`)
@@ -278,7 +287,10 @@ function BrandDashboardContent() {
       [targetBrand.id]: updatedBrand
     }
 
-    saveToLocalStorage(updated)
+    // NOTE: there is no brand↔supplier link in the schema (a supplier price is always
+    // keyed to a specific component). This brand-level mapping is a session-only
+    // convenience and is not persisted; use a component's page to record a real price.
+    setBrands(updated)
     setNewSupPrice("")
     setNewSupMOQ("")
     setNewSupLead("")

@@ -92,7 +92,7 @@ export default function AddComponentPage() {
     setSpecifications(specifications.filter((_, i) => i !== index))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     // Validations
@@ -106,15 +106,34 @@ export default function AddComponentPage() {
     }
 
     setIsSubmitting(true)
-
-    // Simulate creation and save
-    setTimeout(() => {
-      setIsSubmitting(false)
+    try {
+      const res = await fetch("/api/components", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          genericPN: genericPN.trim(),
+          name: name.trim(),
+          category,
+          solderType,
+          footprint: footprint.trim() || undefined,
+          spq: spq ? parseInt(spq, 10) : undefined,
+          reorderQty: moq ? parseInt(moq, 10) : undefined,
+          specs: specifications.filter((s) => s.key.trim()),
+          variants: brandVariants
+            .filter((v) => v.brand.trim() && v.partNo.trim())
+            .map((v) => ({ brand: v.brand.trim(), partNo: v.partNo.trim(), stock: v.stock ? parseInt(v.stock, 10) : undefined })),
+        }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message ?? "Failed to register component", "error")
+        return
+      }
       showToast("Component registered successfully!", "success")
-      setTimeout(() => {
-        router.push("/components/list")
-      }, 1000)
-    }, 1500)
+      setTimeout(() => router.push("/components/list"), 1000)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const commonFootprints = solderType === "SMD" 

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, Nut, Cpu, Package, Activity, Layers, AlertTriangle, ShieldCheck, Check, Clock, TrendingUp } from "lucide-react"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts"
-import { COMPONENTS, productsUsingComponent, pcbsUsingComponent } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface MonthUsage {
   month: string
@@ -39,34 +39,38 @@ const buildTrend = (annual: number): MonthUsage[] => {
   }))
 }
 
-// Usage view model derived from the centralized component store.
-const COMPONENTS_USAGE_DATA: Record<string, ComponentUsageData> = Object.fromEntries(
-  COMPONENTS.map((c) => {
-    const coverageNum =
-      c.annualConsumption > 0 ? Math.round(c.stock / (c.annualConsumption / 365)) : 0
-    return [
-      c.id,
-      {
-        id: c.id,
-        displayName: c.name,
-        category: c.category,
-        usedInProductsCount: productsUsingComponent(c.id).length,
-        usedInPCBsCount: pcbsUsingComponent(c.id).length,
-        annualConsumption: c.annualConsumption,
-        currentStock: c.stock,
-        coverageDays: `${coverageNum} Days`,
-        coverageNum,
-        unit: c.unit,
-        description: c.description,
-        trendData: buildTrend(c.annualConsumption),
-      } satisfies ComponentUsageData,
-    ]
-  }),
-)
+// Usage view model derived from the active store (mockdata or DB).
+function buildComponentsUsageData(d: ReturnType<typeof useData>): Record<string, ComponentUsageData> {
+  return Object.fromEntries(
+    d.COMPONENTS.map((c) => {
+      const coverageNum =
+        c.annualConsumption > 0 ? Math.round(c.stock / (c.annualConsumption / 365)) : 0
+      return [
+        c.id,
+        {
+          id: c.id,
+          displayName: c.name,
+          category: c.category,
+          usedInProductsCount: d.productsUsingComponent(c.id).length,
+          usedInPCBsCount: d.pcbsUsingComponent(c.id).length,
+          annualConsumption: c.annualConsumption,
+          currentStock: c.stock,
+          coverageDays: `${coverageNum} Days`,
+          coverageNum,
+          unit: c.unit,
+          description: c.description,
+          trendData: buildTrend(c.annualConsumption),
+        } satisfies ComponentUsageData,
+      ]
+    }),
+  )
+}
 
 export default function ComponentUsageAnalysisPage() {
+  const d = useData()
+  const COMPONENTS_USAGE_DATA = React.useMemo(() => buildComponentsUsageData(d), [d])
   const [searchTerm, setSearchTerm] = React.useState("")
-  const [selectedCompId, setSelectedCompId] = React.useState("resistor-10k")
+  const [selectedCompId, setSelectedCompId] = React.useState<string>(() => d.COMPONENTS[0]?.id ?? "")
   const [mounted, setMounted] = React.useState(false)
 
   React.useEffect(() => {
@@ -79,7 +83,7 @@ export default function ComponentUsageAnalysisPage() {
   )
 
   // Determine active component selection
-  const activeComponent = COMPONENTS_USAGE_DATA[selectedCompId] || COMPONENTS_USAGE_DATA["resistor-10k"]
+  const activeComponent = COMPONENTS_USAGE_DATA[selectedCompId] || Object.values(COMPONENTS_USAGE_DATA)[0]
 
   // Fallback if current search filters out everything
   const displayedComponent = filteredComponents.find(c => c.id === selectedCompId) || filteredComponents[0] || activeComponent

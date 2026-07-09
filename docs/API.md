@@ -24,7 +24,47 @@ When you write or change an endpoint/service:
 
 **Status legend:** ⬜ Not implemented · 🟡 In progress · ✅ Done · ⚠️ Needs revisit
 
-_Last updated: 2026-07-08 — scaffold created; no endpoints implemented yet._
+_Last updated: 2026-07-09 — catalog **write** endpoints live: `POST /brands`, `PATCH /brands/{id}`, `PATCH /suppliers/{id}`, `POST /suppliers/{id}/prices` (price-book upsert), `PATCH /components/{id}`, `POST /components/{id}/variants`. The Brands, Supplier-Details and Component-Details pages now persist through these instead of localStorage (localStorage fully removed from all three). Remaining session-only bits: brand↔supplier "map" (no schema link), component "delete" (no DELETE endpoint yet), and "set preferred supplier" (no column)._
+
+## Frontend integration (UI → backend)
+
+The UI is migrating from direct `@/mockdata` imports to the backend via a **global data
+provider**, so it works identically on the DB (`isTesting=false`) or mockdata (`isTesting=true`).
+
+- **Selector factory** — [src/mockdata/selectors.ts](../src/mockdata/selectors.ts) `createSelectors(dataset)`
+  holds ALL derivations (pcbBom, productBom, cheapestOffer, componentUsage, …). `@/mockdata/index`
+  binds it to the seed arrays (unchanged public API); the provider binds it to live data.
+- **`GET /api/bootstrap`** returns the whole catalog in the exact `DataSet` shape (business-key
+  id-space: slug / generic_pn; live stock folded into brand variants).
+- **`DataProvider` / `useData()`** — [src/lib/data-provider.tsx](../src/lib/data-provider.tsx): on mount
+  calls `/api/me`; if 401 (DB mode) calls `/api/auth/dev-login`, then loads `/api/bootstrap`, binds the
+  factory, and exposes all selectors + `me` + `can(permission)`. Gates render until loaded.
+- **Migration pattern per page:** replace `import … from "@/mockdata"` with `const d = useData()`, and
+  move any module-scope view-model build into the component (a `useMemo`). Pages then behave the same.
+- **Status:** ✅ Components List, Products List/Structure, PCB List/Structure, Suppliers List/Details,
+  Brands List, Component Details/Usage, **Universal Search** (via `buildSearchData(useData())`).
+  `DataProvider` now wraps the whole shell (so the TopBar/search use it); `DataGate` gates only `<main>`.
+  ✅ Dashboard + Home Launchpad + Production Planner + Production Readiness (catalog-derived via
+  `buildDashboardData`/`buildWorkspaceStats`/`buildProductionData` factories).
+  ✅ **Inventory** (`/components/inventory`) — now reads/writes the REAL ledger: `useStockLedger` is
+  backed by `GET /api/inventory` (balances → variant/location resolution) + `GET /api/inventory/transactions`,
+  and stock moves `POST /api/inventory/transactions` (verified: a move updates the projected balance and
+  the page reflects it). Keyed on `genericPN`+brand slug so it works in both modes; mock mode is read-only
+  (moves return 400). `LedgerView` gained `brandSlug`.
+  ✅ **Purchases** (`/purchases/requests`, `/purchases/orders`) — lists from GET, create/approve/receive
+  POST the API; localStorage removed. Readiness + Planner PR-creation also POST `/api/purchase-requests`
+  (sourced from real offers). Mock mode: purchasing reads work, writes 400.
+  ✅ **Production Orders** (`/production/orders`) — kanban reads `GET /production-orders`; dragging a card
+  to the next lane advances the batch via the lifecycle endpoints (Draft→Ready = allocate, Ready→In
+  Progress = consume, In Progress→Complete = complete); non-adjacent moves are rejected with a toast.
+  "New Order" POSTs `/production-orders` (product from `useData().PRODUCTS`); clicking a card opens the
+  material-plan modal (`GET /production-orders/{id}/items`). Verified end-to-end on the DB.
+  ✅ **Component Add** (`/components/add`) — the form POSTs `/api/components` (brand variants + opening
+  stock); duplicate generic PN → 409 surfaced as a toast, success routes back to the list.
+  ✅ **Reports** (`/reports`) — the Monthly Production Output chart loads `GET /reports/yield?range=6m`
+  (falls back to the static series if the fetch fails). Distribution/KPI tiles remain presentational.
+  (localStorage demo writes on Brands/Supplier/Component Details left intact — real write endpoints later.)
+- **Prod note:** `dev-login` is disabled in production — a real login page/flow replaces it there.
 
 ---
 
@@ -32,6 +72,19 @@ _Last updated: 2026-07-08 — scaffold created; no endpoints implemented yet._
 
 These apply to **every** endpoint unless its entry says otherwise. Documented here so per-endpoint
 entries stay short.
+
+### Data source toggle — `isTesting` (full mock mode)
+- `isTesting` (`.env`, default `false`) → [src/lib/config.ts](../src/lib/config.ts). When **true**, the
+  backend runs in **FULL MOCK MODE**: no database is touched at all. Auth/session is stubbed with an
+  in-memory admin ([src/lib/server/mock.ts](../src/lib/server/mock.ts)) — `requireSession()` returns
+  `MOCK_CONTEXT`, `login` accepts anything, `/me` reports every permission — and all reads come from
+  `src/mockdata`. `DATABASE_URL`/`AUTH_SECRET` aren't required (the Prisma client is lazy, never
+  initialised).
+- **Pattern:** the mock/DB branch lives in a per-resource **data provider** under
+  `src/lib/server/data/*` (e.g. `listComponents()` in [components.ts](../src/lib/server/data/components.ts)),
+  so route handlers are source-agnostic and the API contract is identical either way.
+  Mock mode is **read-only** (writes are no-ops / unsupported).
+- Every new data endpoint MUST add its two sources to a provider, not branch inline in the route.
 
 ### Tenancy & RLS — non-negotiable
 - The active company/user come from the **session**, never from the URL/query/body. No endpoint
@@ -43,17 +96,40 @@ entries stay short.
 - The runtime connects as `erp_app` (NOBYPASSRLS). It **cannot** write `audit_logs` (trigger-only)
   or mutate `inventory_transactions` (append-only). Corrections are reversing entries.
 
-### AuthN / AuthZ
-- **AuthN:** _(TBD — session/JWT strategy not yet chosen. Fill in when auth is built.)_
-- **AuthZ:** each route requires a `resource.action` permission (§7h). Gate helper: _(TBD)_.
-  The check stacks with module licensing (§4): module must be licensed **and** role must permit.
+### AuthN — JWT in an httpOnly cookie
+- Login (`POST /api/auth/login`) verifies the password (Node `scrypt`, [src/lib/server/auth.ts](../src/lib/server/auth.ts)),
+  resolves the user's default/first active company, and issues a **jose HS256 JWT** carrying
+  `{ sub: userId, company: companyId }`. It's stored in the **`erp_session`** cookie
+  (httpOnly, SameSite=Lax, 7d, `secure` in prod). Signed with `AUTH_SECRET` (`.env`).
+- Protected routes call **`requireSession()`** ([src/lib/server/session.ts](../src/lib/server/session.ts))
+  → reads + verifies the cookie → returns `{ userId, companyId }` (the `withTenant` context) or throws 401.
+- Switching the active company (`POST /api/session/company`) re-issues the cookie; the token is
+  the single source of the active company. No `companyId` ever comes from the URL/body of data routes.
+- Before an active company exists (login / switch), use **`withUser(userId, fn)`** — sets only
+  `app.current_user_id` so RLS lets the user read their own memberships.
 
-### Request validation
-- _(TBD — validation library/pattern not yet chosen, e.g. zod schemas per route. Decide on the
-  first endpoint and record here.)_
+### AuthZ — `resource.action` gate
+- Each mutating/reading data route asserts a permission via **`assertPermission(tx, ctx, "component.view")`**
+  ([src/lib/server/rbac.ts](../src/lib/server/rbac.ts)), run **inside** `withTenant` so RLS scopes the lookup.
+- Effective permissions = the grants on the role pinned by `company_memberships.role_id`
+  (`getEffectivePermissions`). Matrix constant lives in [src/lib/permissions.ts](../src/lib/permissions.ts) (§7h).
+- Stacks with module licensing (§4): a module must be licensed **and** the role must permit the action.
+  _(Module-license enforcement on the server is still TODO — currently only the permission check runs.)_
+
+### Request validation — zod
+- Every body/query is parsed with a **zod** schema. Bodies: `await parseJson(req, Schema)`
+  ([src/lib/server/http.ts](../src/lib/server/http.ts)). Query: build an object from
+  `new URL(req.url).searchParams` and `Schema.parse(...)`. A `ZodError` is auto-translated to **422**.
 
 ### Response & error shape
-- _(TBD — define the success envelope and error body/status codes on the first endpoint.)_
+- Handlers wrap their body in **`handle(fn)`**. Success: **`ok(data, init?)`** / **`created(data)`** →
+  `{ "data": ... }`. Errors: throw an **`ApiError`** (use the `Errors.*` constructors) →
+  `{ "error": { code, message, details? } }` with the right status. `ZodError` → 422
+  `validation_error`; anything unexpected → 500 `internal_error` (logged, not leaked).
+- Status/code map: 400 `bad_request` · 401 `unauthorized` · 403 `forbidden` · 404 `not_found`
+  · 409 `conflict` · 422 `unprocessable`/`validation_error` · 500 `internal_error`.
+- Every DB route sets `export const runtime = "nodejs"` and `export const dynamic = "force-dynamic"`
+  (Prisma/pg need Node; auth reads cookies so routes are request-time anyway).
 
 ### Soft delete
 - Never hard-DELETE tenant rows: set `deleted_at`. Reads filter `deleted_at IS NULL` (most
@@ -94,13 +170,16 @@ Grouped by module, mirroring the suggested REST endpoints in
 template entry as it's built.
 
 ### Auth & tenant session
-- ⬜ `POST /auth/login` — returns token + the user's companies (memberships)
-- ⬜ `GET  /me/companies` — companies this user can access
-- ⬜ `POST /session/company` — switch active company (re-issues token/claim)
-- ⬜ `GET  /me` — current user + active company + effective permissions
+- ✅ `POST /auth/login` — verify credentials, issue session cookie, return user + active company
+- ✅ `POST /auth/logout` — clear the session cookie (added; not in original §7 list)
+- ✅ `POST /auth/dev-login` — DEV ONLY: session as the seeded admin, no creds (403 in prod)
+- ✅ `GET  /bootstrap` — whole catalog as a `DataSet` for the frontend data provider
+- ✅ `GET  /me/companies` — companies this user can access
+- ✅ `POST /session/company` — switch active company (re-issues cookie)
+- ✅ `GET  /me` — current user + active company + effective permissions
 
 ### RBAC admin
-- ⬜ `GET  /permissions` — the resource × action matrix (static app constant, §7h)
+- ✅ `GET  /permissions` — the resource × action matrix (static app constant, §7h)
 - ⬜ `GET  /roles` · `GET /roles/{id}`
 - ⬜ `POST /roles` · `PATCH /roles/{id}` · `DELETE /roles/{id}`
 - ⬜ `PUT  /roles/{id}/permissions` — set granted (resource, action) pairs
@@ -108,53 +187,56 @@ template entry as it's built.
 - ⬜ `PUT  /memberships/{id}/role` — set a user's role in the active company
 
 ### Products
-- ⬜ `GET  /products` · `GET /products/{id}`
-- ⬜ `GET  /products/{id}/bom` `?version=` — flattened BOM (default: Active)
+- ✅ `GET  /products` · ✅ `GET /products/{id}` (detail: counts + board list)
+- ✅ `GET  /products/{id}/bom` — flattened BOM (Active version). `?version=` param not yet supported
 - ⬜ `GET  /products/{id}/versions` · `POST /products/{id}/versions`
 
 ### PCBs
-- ⬜ `GET  /pcbs` · `GET /pcbs/{id}` · `GET /pcbs/{id}/bom`
+- ✅ `GET  /pcbs` · ✅ `GET /pcbs/{id}` · ✅ `GET /pcbs/{id}/bom`
 - ⬜ `GET  /pcbs/{id}/revisions` · `POST /pcbs/{id}/revisions`
 
 ### Components
-- ⬜ `GET  /components` `?category&solderType&brand&supplier&stockStatus&footprint&q`
+- 🟡 `GET  /components` `?category&solderType&footprint&q` — done, now incl. derived `stock`/`available`/`reserved`/`stockStatus`; `brand`/`supplier`/`stockStatus` *filters* still deferred
 - ⬜ `GET  /components/{id}` · `GET /components/{id}/usage`
-- ⬜ `GET  /components/{id}/stock` — rolled-up {available, reserved, damaged, onHand, byWarehouse[]}
-- ⬜ `POST /components` · `POST /components/{id}/prices`
+- ✅ `PATCH /components/{id}` — edit own fields (name/genericPN/category/unit/solderType/footprint/spq/minStock/reorderQty/specs)
+- ✅ `POST /components/{id}/variants` — add a brand variant (+ optional opening stock)
+- ✅ `GET  /components/{id}/stock` — rolled-up {onHand, reserved, available, damaged, byWarehouse[], byVariant[]}
+- ✅ `POST /components` — create component + brand variants (+ opening stock via IN ledger) · ⬜ `POST /components/{id}/prices`
 - ⬜ `GET  /components/{id}/prices` `?asOf=` — price book (default: current)
 
 ### Brands & Suppliers
-- ⬜ `GET  /brands` · `GET /brands/{id}` · `GET /brands/{id}/components`
-- ⬜ `GET  /suppliers` · `GET /suppliers/{id}` · `GET /suppliers/{id}/prices`
+- ✅ `GET  /brands` · ✅ `GET /brands/{id}` · ✅ `GET /brands/{id}/components`
+- ✅ `POST /brands` — create (`brand.create`; slug from name) · ✅ `PATCH /brands/{id}` — edit own fields (`brand.edit`; slug immutable)
+- ✅ `GET  /suppliers` · ✅ `GET /suppliers/{id}` · ✅ `GET /suppliers/{id}/prices`
+- ✅ `PATCH /suppliers/{id}` — edit own fields (`supplier.edit`; slug immutable) · ✅ `POST /suppliers/{id}/prices` — upsert current price for a (component, brand) (`supplier.edit`)
 
 ### Dashboard & Reports
 - ⬜ `GET  /dashboard/summary` — KPIs, low-stock, single-supplier, product status
-- ⬜ `GET  /reports/yield` `?range=6m`
+- ✅ `GET  /reports/yield` `?range=6m` — monthly finished-batch output (Σ Completed-order qty, zero-filled)
 
 ### Inventory (append-only ledger — never write stock directly, §7a)
-- ⬜ `GET  /warehouses` · `GET /warehouses/{id}`
-- ⬜ `GET  /warehouses/{id}/locations` — Zone→Rack→Bin tree
+- ✅ `GET  /warehouses` — list (`GET /warehouses/{id}` detail still ⬜)
+- ✅ `GET  /warehouses/{id}/locations` — Zone→Rack→Bin tree (by uuid or code)
 - ⬜ `POST /locations` · `PATCH /locations/{id}`
-- ⬜ `GET  /inventory` `?componentId&variantId&warehouseId&locationId` — balances (projection)
-- ⬜ `POST /inventory/transactions` — IN|OUT|TRANSFER|ADJUSTMENT|RETURN|CONSUMPTION|PRODUCTION
-- ⬜ `GET  /inventory/transactions` `?variantId&warehouseId&locationId&type&from&to`
+- ✅ `GET  /inventory` `?componentId&variantId&warehouseId&locationId` — balances (projection)
+- ✅ `POST /inventory/transactions` — IN|OUT|TRANSFER|ADJUSTMENT|RETURN|CONSUMPTION|PRODUCTION
+- ✅ `GET  /inventory/transactions` `?variantId&warehouseId&locationId&type&from&to&limit`
 
 ### Production (order lifecycle, §7b)
-- ⬜ `POST /production-orders` · `PATCH /production-orders/{id}`
-- ⬜ `GET  /production-orders/{id}/items` — STAGE 1 plan (BOM demand)
-- ⬜ `POST /production-orders/{id}/allocations` — STAGE 2 reserve
-- ⬜ `POST /production-orders/{id}/consumptions` — STAGE 3 issue
-- ⬜ `POST /production-orders/{id}/complete` — STAGE 4 finished-goods receipt + close
+- ✅ `GET  /production-orders` — kanban list (one row per order) · ✅ `POST /production-orders` — STAGE 1 create + BOM explode
+- ✅ `GET  /production-orders/{id}/items` — STAGE 1 plan (BOM demand + derived allocated/consumed/available)
+- ✅ `POST /production-orders/{id}/allocations` — STAGE 2 reserve (atomic; 409 + shorts if insufficient)
+- ✅ `POST /production-orders/{id}/consumptions` — STAGE 3 issue (CONSUMPTION ledger + release reservation)
+- ✅ `POST /production-orders/{id}/complete` — STAGE 4 close batch (finished-goods stock not modelled — see detail)
+- ⬜ `PATCH /production-orders/{id}` — header edits / cancel
 
 ### Purchasing (PR/PO header + items, approvals, §7c)
-- ⬜ `POST /purchase-requests` · `PATCH /purchase-requests/{id}`
-- ⬜ `POST /purchase-requests/{id}/items`
-- ⬜ `POST /purchase-requests/{id}/submit` — Draft → Submitted
-- ⬜ `POST /purchase-requests/{id}/decision` — manager/procurement approve/reject (writes `approvals`)
-- ⬜ `POST /purchase-requests/{id}/approve` — sources into PO(s), one per supplier
-- ⬜ `POST /purchase-orders` · `PATCH /purchase-orders/{id}`
-- ⬜ `POST /purchase-orders/{id}/items`
-- ⬜ `POST /purchase-orders/{id}/receipts` — goods-in → inventory_transactions(type='IN')
+- ✅ `GET  /purchase-requests` — flattened rows (one per item; UI status mapping)
+- ✅ `POST /purchase-requests` — create (Submitted) w/ one line, priced from the price book
+- ✅ `POST /purchase-requests/{id}/approve` — records manager+procurement `approvals`, PR → 'PO Created', creates PO (Sent). (Single-click chain; separate `/submit`+`/decision` steps deferred)
+- ✅ `GET  /purchase-orders` — flattened rows with PR traceability
+- ✅ `POST /purchase-orders/{id}/receive` — goods-in → inventory `IN` ledger rows + received_qty + PO Completed
+- ⬜ `PATCH` header edits · multi-item `POST .../items` · reject flow · PO split per supplier
 
 ### Audit, approvals & notifications
 - ⬜ `GET  /audit-logs` `?entity&entityId&field&changedBy&from&to`
@@ -166,4 +248,213 @@ template entry as it's built.
 
 ## Implemented endpoints (detail)
 
-_None yet. As each endpoint above moves to 🟡/✅, add its full template entry in this section._
+### POST /api/auth/login — ✅
+- **Source:** [src/app/api/auth/login/route.ts](../src/app/api/auth/login/route.ts)
+- **Permission:** public.
+- **Purpose:** authenticate and start a session.
+- **Request:** body `{ email: string(email), password: string }` (zod `LoginBody`).
+- **Logic:**
+  1. `parseJson` → validate body.
+  2. Look up `users` by case-insensitive email (users is GLOBAL — no tenant context needed).
+  3. `verifyPassword` (scrypt, constant-time). Unknown user / inactive / bad password → **401**
+     with one generic message (no account enumeration).
+  4. `withUser(userId)` → find the `is_default active` membership, else the oldest active one;
+     load that company. None → **403** "No active company membership".
+  5. `setSessionCookie({ userId, companyId })` (signs JWT, sets `erp_session`).
+- **DB access:** `users` (read, global); inside `withUser` tx: `company_memberships`, `companies` (read).
+- **Side effects:** sets the `erp_session` cookie.
+- **Returns:** 200 `{ user:{id,name,email}, company:{id,code,name} }`. Errors: 401, 403, 422.
+- **Notes:** password set via `scripts/seed-admin.ts` (admin@stackiot.local / ChangeMe123!).
+
+### POST /api/auth/logout — ✅
+- **Source:** [src/app/api/auth/logout/route.ts](../src/app/api/auth/logout/route.ts)
+- **Permission:** session only (idempotent even without one).
+- **Logic:** `clearSessionCookie()`. **Returns:** 200 `{ ok: true }`.
+
+### GET /api/me — ✅
+- **Source:** [src/app/api/me/route.ts](../src/app/api/me/route.ts)
+- **Permission:** session only.
+- **Logic:** `requireSession` → read `users` (global) → `withTenant`: load active `companies` row +
+  `getEffectivePermissions`. Company not visible → **403**.
+- **DB access:** `users` (read); tx: `companies`, `company_memberships`, `role_permissions` (read).
+- **Returns:** 200 `{ user, company, permissions: string[] }` (sorted `resource.action`). Errors: 401, 403.
+
+### GET /api/me/companies — ✅
+- **Source:** [src/app/api/me/companies/route.ts](../src/app/api/me/companies/route.ts)
+- **Permission:** session only.
+- **Logic:** `requireSession` → `withUser`: list the user's own `company_memberships`, join to
+  `companies`; flag `isDefault`, `status`, and `isActive` (== session company).
+- **DB access:** tx: `company_memberships`, `companies` (read). **Returns:** 200 `{ data: Company[] }`.
+
+### POST /api/session/company — ✅
+- **Source:** [src/app/api/session/company/route.ts](../src/app/api/session/company/route.ts)
+- **Permission:** session only.
+- **Request:** body `{ companyId: uuid }`.
+- **Logic:** `requireSession` → `withUser`: verify an active membership in the target company (else
+  **403**) → re-issue `erp_session` with the new company. **Returns:** 200 `{ company }`.
+
+### GET /api/permissions — ✅
+- **Source:** [src/app/api/permissions/route.ts](../src/app/api/permissions/route.ts)
+- **Permission:** session only.
+- **Logic:** `requireSession` → return the static matrix (no DB). Describes what CAN be granted,
+  not what the caller HAS (that's `GET /me`).
+- **Returns:** 200 `{ matrix: Record<resource, action[]>, all: string[] }`.
+
+### GET /api/components — 🟡
+- **Source:** [src/app/api/components/route.ts](../src/app/api/components/route.ts)
+- **Permission:** `component.view`.
+- **Request:** query `category`, `solderType`(`SMD|DIP`), `footprint`, `q` (all optional, zod-validated).
+- **Logic:** `requireSession` → build a Prisma `where` (`deleted_at: null` + exact filters; `q` →
+  case-insensitive `contains` across generic_pn/name/description) → `withTenant`:
+  `assertPermission("component.view")` then `components.findMany` ordered by name.
+- **DB access:** tx: `components` (read), plus `company_memberships`/`role_permissions` for the gate.
+- **Returns:** 200 `{ data: ComponentView[] }` — camelCase (`genericPN`, `minStock`, …) matching
+  `src/mockdata/types.ts`; `Decimal` → `Number`.
+- **Derived stock (done):** the list rolls up `inventory_balances` over each component's brand
+  variants (one grouped query, merged in JS) → `stock` (on-hand), `available`, `reserved`, and
+  `stockStatus` (Healthy/Low/Critical vs `minStock`). Mock mode uses the mockdata derived stock.
+- **TODO:** `brand`/`supplier`/`stockStatus` **filters** on the list (join variants + price book /
+  filter post-rollup).
+
+### Brands — ✅ (`/brands`, `/brands/{id}`, `/brands/{id}/components`)
+- **Source:** [route](../src/app/api/brands/) · provider [src/lib/server/data/brands.ts](../src/lib/server/data/brands.ts)
+- **Permission (DB mode):** `brand.view`.
+- **Logic:** list/detail from `brands`; `{id}` accepts a **uuid or slug** (`isUuid()` picks the column).
+  `/components` = distinct components with a variant for the brand (raw SQL join `component_brand_variants`).
+- **Returns:** `BrandView` (`id, slug, name, description, headquarter, founded, status, rating`);
+  components as `{ id, genericPN, name, category }`.
+
+### Suppliers — ✅ (`/suppliers`, `/suppliers/{id}`, `/suppliers/{id}/prices`)
+- **Source:** [route](../src/app/api/suppliers/) · provider [src/lib/server/data/suppliers.ts](../src/lib/server/data/suppliers.ts)
+- **Permission (DB mode):** `supplier.view`. `{id}` = uuid or slug.
+- **Logic:** `/prices` returns the **current** price book (`supplier_component_prices` where `valid_to IS NULL`),
+  joined to component + brand. Mock mode derives the same from `COMPONENTS[].offers`.
+- **Returns:** `SupplierView`; prices as `{ componentId, genericPN, componentName, brandId, brandName, price, currency, leadTimeDays }`.
+
+### PCBs — ✅ (`/pcbs`, `/pcbs/{id}`, `/pcbs/{id}/bom`)
+- **Source:** [route](../src/app/api/pcbs/) · provider [src/lib/server/data/pcbs.ts](../src/lib/server/data/pcbs.ts)
+- **Permission (DB mode):** `pcb.view`. `{id}` = uuid or slug.
+- **Logic:** DB mode resolves through the **Active `pcb_revision`** (§7d). List/detail aggregate
+  `lineCount`, `totalParts` (Σ qty), and `usedInProducts` (product codes, via `product_pcbs`). BOM =
+  lines joined to components + preferred brand. Composable SQL via `Prisma.sql`/`Prisma.empty`.
+- **Returns:** `PcbView` (+ `lineCount, totalParts, usedInProducts[]`); BOM lines as
+  `{ component:{id,genericPN,name,category,unit}, qty, refDes, preferredBrand:{id,name}|null, remarks }`.
+
+### Products — ✅ (`/products`, `/products/{id}`, `/products/{id}/bom`)
+- **Source:** [route](../src/app/api/products/) · provider [src/lib/server/data/products.ts](../src/lib/server/data/products.ts)
+- **Permission (DB mode):** `product.view`. `{id}` = uuid, slug, or code.
+- **Logic:** DB mode resolves the **current BOM**: Active `bom_version` → `product_pcbs` → pinned
+  `pcb_revision` → `pcb_lines`. List has `pcbCount`, `uniqueComponentsCount`; detail adds `totalParts`,
+  `brandCount`, and the `pcbs[]` board list (qty/sequence). BOM is flattened with
+  **qty = pcb_line.qty × product_pcbs.qty**.
+- **Returns:** `ProductView` / `ProductDetailView`; BOM lines as `{ pcb:{id,name}, component:{id,genericPN,name}, qty }`.
+- **TODO:** `?version=` selector; derived `buildableQty`/`estimatedCost`-from-BOM (needs inventory + best price).
+
+> **Shared pattern for the four above:** each provider exposes plain async functions that branch on
+> `isTesting` (mock = `src/mockdata` + selectors; DB = `withTenant` + `assertPermission` + queries).
+> Detail lookups accept a uuid **or** business key (slug/code). Aggregates/joins use raw SQL with
+> numeric casts (`::int`/`::float8`) so JS receives numbers, not `Decimal`/strings.
+
+### Purchasing — ✅ (PR list/create/approve, PO list/receive)
+- **Source:** routes under [purchase-requests](../src/app/api/purchase-requests/) +
+  [purchase-orders](../src/app/api/purchase-orders/) · provider [purchases.ts](../src/lib/server/data/purchases.ts).
+- **Permissions:** `purchase_request.view/create/approve`; receive = `purchase_order.edit` **+** `inventory.create`.
+- **Views are FLATTENED** (one row per item, business keys: pr_no/po_no, genericPN, slugs; `totalCost`
+  formatted ₹) to match the UI/mock shape; storage is normalized header+items. DB `pr_status` → UI:
+  Submitted/Manager Approved → "Pending Approval", Procurement Approved/PO Created → "Approved".
+- **Create PR:** resolves component (generic_pn) / brand / supplier (slugs), prices the line from the
+  current price-book row, `purchase_requests`(Submitted) + one `purchase_request_items`. Doc numbers:
+  `PR-`/`PO-` + random 6 digits w/ uniqueness retry.
+- **Approve PR:** guards status (Submitted|Manager Approved else **409**), writes BOTH `approvals`
+  steps (manager, procurement — seq 1/2, Approved), PR → 'PO Created', creates `purchase_orders`(Sent)
+  + `purchase_order_items` with `pr_item_id` traceability. Returns `{pr, po}`.
+- **Receive PO:** for each unreceived line resolves the `component_brand_variants` row, appends
+  `inventory_transactions(type='IN', ref_type='purchase_order_item', ref_id=line, reason='Goods-in <po>')`
+  into the default bin (trigger projects balances), sets `received_qty`, PO → Completed. Re-receive → **409**.
+- **Verified end-to-end:** create → ₹-priced PR → approve → PO → receive → RES-10K/yageo balance +500
+  and the IN ledger row present; double-receive 409.
+- **Seeding:** `npx tsx scripts/seed-purchases.ts` (mock PRs/POs; Completed POs get received_qty but NO
+  ledger rows — opening stock already covers levels). Idempotent by pr_no/po_no.
+- **Mock mode:** lists return `src/mockdata/purchases`; writes → 400 `mock_read_only`.
+
+### Inventory ledger — ✅ (warehouses, balances, ledger GET/POST, component stock)
+- **Source:** routes under [warehouses](../src/app/api/warehouses/), [inventory](../src/app/api/inventory/),
+  [components/[id]/stock](../src/app/api/components/[id]/stock/) · providers
+  [warehouses.ts](../src/lib/server/data/warehouses.ts) + [inventory.ts](../src/lib/server/data/inventory.ts).
+- **Permissions (DB):** reads `inventory.view` / `warehouse.view`; **`POST` requires `inventory.create`**.
+- **Golden rule:** stock is NEVER written directly. `POST /inventory/transactions` appends immutable
+  `inventory_transactions` rows and the DB trigger `apply_inventory_txn` projects them into
+  `inventory_balances`. Reads (`GET /inventory`, `/components/{id}/stock`) are projections.
+- **`POST` body** (validated by `InventoryTxnBody`, zod `superRefine`):
+  - `IN | RETURN | PRODUCTION` → `{ variantId, locationId, qty>0, reason?, note?, refType?, refId?, grnNo? }` (qty_delta = +qty)
+  - `OUT | CONSUMPTION` → same shape (qty_delta = −qty)
+  - `ADJUSTMENT` → `{ variantId, locationId, qtyDelta≠0, reason?, note? }` (signed)
+  - `TRANSFER` → `{ variantId, fromLocationId, toLocationId, qty>0, note? }` → **two legs** sharing a
+    `transfer_group_id` (−qty at source, +qty at dest). `warehouse_id` is derived from the location.
+  - Negative movements check available stock first → **409 `conflict`** if insufficient.
+- **Returns (POST):** 201 `{ ok, type, balances[] }` (post-trigger projection for the affected variant/locations).
+- **Reads:** `GET /inventory` (balances, filters); `GET /inventory/transactions` (ledger, filters + `limit`,
+  newest-first); `GET /components/{id}/stock` (rolled-up onHand/reserved/available/damaged + byWarehouse/byVariant).
+- **Mock mode:** reads derive from `src/mockdata` (client-ledger prototype) with a synthetic MAIN
+  warehouse/bin; **writes are rejected 400 `mock_read_only`**.
+- **Seeding:** `npx tsx scripts/seed-inventory.ts` creates the MAIN warehouse + default bin and one
+  opening IN per brand variant (from mock stock levels). Idempotent.
+- **TODO:** `POST/PATCH /locations` (location CRUD), `GET /warehouses/{id}` detail, finished-goods
+  flows (PRODUCTION receipts), and wiring derived `stock`/`stockStatus` into the component list view.
+
+### Production lifecycle — ✅ (list, create/explode, items, allocate, consume, complete)
+- **Source:** routes under [production-orders](../src/app/api/production-orders/) · provider
+  [production.ts](../src/lib/server/data/production.ts).
+- **Permissions (DB):** reads `production_order.view`; create `production_order.create`; allocate/consume/complete
+  `production_order.edit`; **consume also requires `inventory.create`** (it writes the ledger).
+- **Doc numbers:** `MO-` + random 6 digits (uniqueness retry) — deliberately distinct from purchasing's `PO-`.
+- **Views are FLATTENED** to match the kanban/mock shape: order `{ id: order_no, product, qty, status, targetDate }`
+  with `status` via `::text` so 'In Progress' keeps its space (Prisma's enum ident is `In_Progress`).
+- **STAGE 1 create** (`POST /production-orders` `{ product(uuid|slug|code), qty>0, targetDate? }`): resolves the
+  product's **Active `bom_version`** (snapshotted onto the order), explodes demand per component
+  (`Σ pcb_line.qty × product_pcbs.qty × order.qty`) into `production_order_items(status='pending')`. Order → Draft.
+- **STAGE 2 allocate** (`.../allocations`): guards status Draft. **Pre-checks availability for EVERY pending
+  item first** (Σ `inventory_balances.available` across the component's variants); if ANY is short → **409
+  `conflict` `{ shorts:[{componentId,required,available}] }`** and nothing is reserved. Otherwise greedily
+  reserves per item across bins (available desc) as `production_material_moves(kind='allocation')` — the
+  `apply_allocation` trigger bumps `inventory_balances.reserved`. Items → allocated, order → Ready.
+- **STAGE 3 consume** (`.../consumptions`): guards status Ready. For each open allocation: appends
+  `inventory_transactions(type='CONSUMPTION', qty_delta=−qty, ref_type='production_order', ref_id=order)`
+  (on_hand −qty), records a `kind='consumption'` move, and sets the allocation's `released_at` (trigger frees
+  the reservation so it isn't double-counted). Net: on_hand −qty, reserved −qty. Items → consumed, order → In Progress.
+- **STAGE 4 complete** (`.../complete`): guards status In Progress → sets order Completed. **Finished-goods stock
+  for the *product* is NOT modelled** — the ledger is keyed on component brand variants and a product isn't a
+  component; the consumed parts are already off the ledger, so completing just closes the batch.
+- **Items** (`GET /production-orders/{id}/items`): STAGE-1 plan per component with derived `allocated` (open
+  reservations), `consumed`, and `available` (free stock across variants), and `status`.
+- **Verified end-to-end (DB):** create ROIP/Dispatcher batch → 21-line plan → allocate (reserved bumped,
+  available dropped, order Ready) → consume (on_hand −qty, reservation released, CONSUMPTION rows tagged
+  `production_order`, order In Progress) → complete. Guards: re-complete 409; oversized batch → allocate 409
+  with the shortage list (atomic, nothing reserved). All verification data was reversed/removed afterwards.
+- **Mock mode:** `GET /production-orders` returns `src/mockdata/production` (static kanban); every write and the
+  items read reject 400 `mock_read_only`.
+- **TODO:** `PATCH /production-orders/{id}` (header edit / cancel); a finished-goods warehouse model if products
+  ever need to be stocked as sellable inventory.
+
+### Component create — ✅ (`POST /components`)
+- **Source:** [route](../src/app/api/components/route.ts) · [components.ts](../src/lib/server/data/components.ts) `createComponent`.
+- **Permission (DB):** `component.create`; **`inventory.create` additionally** when any variant carries opening stock.
+- **Body:** `{ genericPN, name, category?, description?, unit?, solderType?(SMD|DIP), footprint?, spq?, minStock?,
+  reorderQty?(the form's MOQ), specs?[{key,value}], variants?[{brand(name), partNo, stock?}] }`.
+- **Logic:** unique generic PN (else **409**); create the component (empty-key specs dropped); per variant resolve
+  the brand by **name** (case-insensitive) or create one (slug = slugified name), then create
+  `component_brand_variants`. Opening stock (`stock>0`) is seeded as an `inventory_transactions(type='IN',
+  ref_type='opening')` into the default bin — the trigger projects the balance (needs a default bin, else 409).
+- **Returns:** 201 `ComponentView` (derived `stock`/`available`/`stockStatus` reflect the opening rows).
+- **Verified (DB):** create with a 750-unit Yageo variant + a 0-stock new brand → list shows stock 750/Healthy,
+  new brand auto-created, empty spec filtered, duplicate PN → 409 (verification component removed afterwards).
+- **Mock mode:** rejects 400 `mock_read_only`.
+
+### Reports — yield — ✅ (`GET /reports/yield`)
+- **Source:** [route](../src/app/api/reports/yield/route.ts) · [production.ts](../src/lib/server/data/production.ts) `getYieldReport`.
+- **Permission (DB):** `report.view`.
+- **Query:** `range` = `<n>m` (default `6m`, clamped 1–24). **Logic:** Σ `qty` of Completed `production_orders`
+  bucketed by `date_trunc('month', updated_at)`, then **zero-filled** onto the last N calendar months (labelled
+  `Jan…Dec`, oldest→newest) so the chart always renders. Returns `[{ month, yield }]`.
+- **Mock mode:** returns the static `PRODUCTION_YIELD` series.
+- **Note:** there is no `completed_at` column, so the month is taken from `updated_at` while status is Completed.

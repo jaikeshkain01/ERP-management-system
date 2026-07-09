@@ -4,7 +4,7 @@ import * as React from "react"
 import { X, ArrowDownToLine, ArrowUpFromLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { BRANDS, SUPPLIERS, getBrandName } from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 import type { StockDirection } from "@/mockdata/types"
 import type { BrandStock, NewTransactionInput } from "@/lib/stock-ledger"
 
@@ -18,6 +18,7 @@ type Props = {
 }
 
 export function StockMoveModal({ mode, componentId, componentName, brandStocks, onSubmit, onClose }: Props) {
+  const { BRANDS, SUPPLIERS, getBrandName } = useData()
   const isIn = mode === "in"
 
   // Existing brands first (so the common case is one click), then the rest.

@@ -1,6 +1,7 @@
-// Production-floor datasets. Component availability and sourcing options are
-// linked to the central component store; order records are kept here.
-import { getComponent, getBrandName, getSupplierName, formatINR, formatLeadTime } from "./index"
+// Production-floor datasets. Readiness/planner panels derive from the active
+// store via buildProductionData(); the order records (kanban) are static.
+// Component lookups key on genericPN so ids resolve in BOTH mock and DB modes.
+import type { Selectors } from "./selectors"
 
 export interface ProductionOrder {
   id: string
@@ -16,65 +17,89 @@ export const PRODUCTION_ORDERS: ProductionOrder[] = [
   { id: "PO-004", product: "Voice Logger", qty: 10, status: "In Progress" },
 ]
 
-// ----- Readiness audit (simulated ROIP 400 batch) -----
 export interface ReadinessItem {
   component: string
   required: number
   available: number
   status: boolean
 }
-
-const READINESS_SPEC: { id: string; required: number }[] = [
-  { id: "resistor-10k", required: 15000 },
-  { id: "capacitor-100uf", required: 1000 },
-  { id: "led-green", required: 700 },
-]
-
-export const READINESS_ITEMS: ReadinessItem[] = READINESS_SPEC.map(({ id, required }) => {
-  const available = getComponent(id)?.stock ?? 0
-  return { component: getComponent(id)?.name ?? id, required, available, status: available >= required }
-})
-
-// The single shorted component drives the sourcing panel.
-const shorted = READINESS_ITEMS.find((i) => !i.status)
-const shortedSpec = READINESS_SPEC.find((s) => (getComponent(s.id)?.name ?? s.id) === shorted?.component)
-export const READINESS_SHORT_COMPONENT = shorted?.component ?? "—"
-export const READINESS_MISSING_QTY = shorted ? shorted.required - shorted.available : 0
-
 export interface ShortageSupplier {
   brand: string
+  brandId: string
   supplierId: string
   supplierName: string
   price: string
   leadTime: string
 }
-
-// MRP shortage summary for the planner (item + primary brand, linked).
 export interface PlannerShortage {
   item: string
   brand: string
   missing: number
 }
-export const PLANNER_SHORTAGES: PlannerShortage[] = [
-  { id: "audio-codec", missing: 50 },
-  { id: "led-green", missing: 200 },
-].map(({ id, missing }) => {
-  const c = getComponent(id)
-  return {
-    item: c?.name ?? id,
-    brand: c ? getBrandName(c.brandVariants[0].brandId) : "—",
-    missing,
-  }
-})
+export interface ProductionData {
+  READINESS_ITEMS: ReadinessItem[]
+  READINESS_SHORT_COMPONENT: string
+  /** genericPN of the shorted component (for PR creation against the API). */
+  READINESS_SHORT_PN: string
+  READINESS_MISSING_QTY: number
+  READINESS_SOURCING: ShortageSupplier[]
+  PLANNER_SHORTAGES: PlannerShortage[]
+}
 
-export const READINESS_SOURCING: ShortageSupplier[] = (() => {
-  const comp = shortedSpec ? getComponent(shortedSpec.id) : undefined
-  if (!comp) return []
-  return comp.offers.map((o) => ({
-    brand: getBrandName(o.brandId),
-    supplierId: o.supplierId,
-    supplierName: getSupplierName(o.supplierId),
-    price: formatINR(o.price),
-    leadTime: formatLeadTime(o.leadTimeDays),
-  }))
-})()
+// Simulated ROIP 400 batch demand, keyed by genericPN.
+const READINESS_SPEC = [
+  { pn: "RES-10K", required: 15000 },
+  { pn: "CAP-100UF", required: 1000 },
+  { pn: "LED-GRN", required: 700 },
+]
+const PLANNER_SPEC = [
+  { pn: "AUD-CDC", missing: 50 },
+  { pn: "LED-GRN", missing: 200 },
+]
+
+export function buildProductionData(d: Selectors): ProductionData {
+  const byPN = (pn: string) => d.COMPONENTS.find((c) => c.genericPN === pn)
+
+  const READINESS_ITEMS: ReadinessItem[] = READINESS_SPEC.map(({ pn, required }) => {
+    const c = byPN(pn)
+    const available = c?.stock ?? 0
+    return { component: c?.name ?? pn, required, available, status: available >= required }
+  })
+
+  const shorted = READINESS_ITEMS.find((i) => !i.status)
+  const shortedSpec = READINESS_SPEC.find((s) => (byPN(s.pn)?.name ?? s.pn) === shorted?.component)
+  const READINESS_SHORT_COMPONENT = shorted?.component ?? "—"
+  const READINESS_SHORT_PN = shortedSpec?.pn ?? ""
+  const READINESS_MISSING_QTY = shorted ? shorted.required - shorted.available : 0
+
+  const PLANNER_SHORTAGES: PlannerShortage[] = PLANNER_SPEC.map(({ pn, missing }) => {
+    const c = byPN(pn)
+    return {
+      item: c?.name ?? pn,
+      brand: c && c.brandVariants[0] ? d.getBrandName(c.brandVariants[0].brandId) : "—",
+      missing,
+    }
+  })
+
+  const READINESS_SOURCING: ShortageSupplier[] = (() => {
+    const comp = shortedSpec ? byPN(shortedSpec.pn) : undefined
+    if (!comp) return []
+    return comp.offers.map((o) => ({
+      brand: d.getBrandName(o.brandId),
+      brandId: o.brandId,
+      supplierId: o.supplierId,
+      supplierName: d.getSupplierName(o.supplierId),
+      price: d.formatINR(o.price),
+      leadTime: d.formatLeadTime(o.leadTimeDays),
+    }))
+  })()
+
+  return {
+    READINESS_ITEMS,
+    READINESS_SHORT_COMPONENT,
+    READINESS_SHORT_PN,
+    READINESS_MISSING_QTY,
+    READINESS_SOURCING,
+    PLANNER_SHORTAGES,
+  }
+}

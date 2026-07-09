@@ -8,102 +8,69 @@ import { AlertCircle, Check, FileText, ShoppingCart, ShoppingBag, Plus, Landmark
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import {
-  PURCHASE_REQUESTS, RECOMMENDATIONS,
+  buildRecommendations,
   type PurchaseRequest, type SourcingRecommendation,
 } from "@/mockdata/purchases"
+import { useData } from "@/lib/data-provider"
 
 function PurchaseRequestsContent() {
-  const [prList, setPrList] = React.useState<PurchaseRequest[]>(PURCHASE_REQUESTS)
+  const d = useData()
+  const RECOMMENDATIONS = React.useMemo(() => buildRecommendations(d), [d])
+  const [prList, setPrList] = React.useState<PurchaseRequest[]>([])
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
   const needQty = 500
 
-  // Load from localStorage on mount
-  React.useEffect(() => {
-    setMounted(true)
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_purchase_requests")
-      if (saved) {
-        try {
-          setPrList(JSON.parse(saved))
-        } catch (e) {
-          console.error("Failed to parse purchase requests", e)
-        }
-      } else {
-        localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify(PURCHASE_REQUESTS))
-      }
+  // Load PRs from the backend (DB or mockdata, per isTesting)
+  const loadPrs = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/purchase-requests", { cache: "no-store" })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body?.data) setPrList(body.data)
+    } finally {
+      setMounted(true)
     }
   }, [])
 
-  const saveToLocalStorage = (newList: PurchaseRequest[]) => {
-    setPrList(newList)
-    if (typeof window !== "undefined") {
-      localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify(newList))
-    }
-  }
+  React.useEffect(() => {
+    loadPrs()
+  }, [loadPrs])
 
   const showToast = (message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 3000)
   }
 
-  const handleGeneratePR = (rec: SourcingRecommendation) => {
-    const prId = `PR-${Math.floor(100000 + Math.random() * 900000)}`
-    const priceVal = parseFloat(rec.price.replace(/[^\d.]/g, ""))
-    const cost = (needQty * priceVal).toFixed(2)
-    const today = new Date().toISOString().split("T")[0]
-
-    const newPr: PurchaseRequest = {
-      prId,
-      componentId: "resistor-10k",
-      componentName: "Resistor 10K",
-      brandId: rec.brandId,
-      brandName: rec.brandName,
-      supplierId: rec.supplierId,
-      supplierName: rec.supplierName,
-      qty: needQty,
-      totalCost: `₹${parseFloat(cost).toLocaleString()}`,
-      status: "Pending Approval",
-      date: today
+  const handleGeneratePR = async (rec: SourcingRecommendation) => {
+    const res = await fetch("/api/purchase-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        componentPN: "RES-10K",
+        brandSlug: rec.brandId,
+        supplierSlug: rec.supplierId,
+        qty: needQty,
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message ?? "Failed to create Purchase Request")
+      return
     }
-
-    const updated = [newPr, ...prList]
-    saveToLocalStorage(updated)
-    showToast(`Purchase Request ${prId} created successfully for ${needQty} units of Resistor 10K.`)
+    setPrList((prev) => [body.data, ...prev])
+    showToast(`Purchase Request ${body.data.prId} created successfully for ${needQty} units of Resistor 10K.`)
   }
 
-  const handleApprovePR = (prId: string) => {
-    const updated = prList.map(pr => {
-      if (pr.prId === prId) {
-        return { ...pr, status: "Approved" as const }
-      }
-      return pr
-    })
-    saveToLocalStorage(updated)
-    showToast(`Approved Purchase Request ${prId}!`)
-
-    // Add to Purchase Orders database
-    if (typeof window !== "undefined") {
-      const savedOrders = localStorage.getItem("mockup2_erp_purchase_orders")
-      const orders = savedOrders ? JSON.parse(savedOrders) : []
-      const matchedPR = prList.find(p => p.prId === prId)
-      if (matchedPR) {
-        const poId = `PO-${Math.floor(100000 + Math.random() * 900000)}`
-        const newPO = {
-          poId,
-          prId: matchedPR.prId,
-          componentName: matchedPR.componentName,
-          brandName: matchedPR.brandName,
-          supplierName: matchedPR.supplierName,
-          qty: matchedPR.qty,
-          totalCost: matchedPR.totalCost,
-          status: "Sent",
-          date: new Date().toISOString().split("T")[0]
-        }
-        localStorage.setItem("mockup2_erp_purchase_orders", JSON.stringify([newPO, ...orders]))
-      }
+  const handleApprovePR = async (prId: string) => {
+    const res = await fetch(`/api/purchase-requests/${prId}/approve`, { method: "POST" })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message ?? `Failed to approve ${prId}`)
+      return
     }
+    showToast(`Approved Purchase Request ${prId} — Purchase Order ${body.data.po} created!`)
+    await loadPrs()
   }
 
   // Calculate statistics

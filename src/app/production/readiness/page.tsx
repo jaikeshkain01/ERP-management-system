@@ -4,13 +4,14 @@ import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { CheckCircle2, XCircle, ShieldAlert, AlertCircle, RefreshCw, Check, FileText } from "lucide-react"
-import {
-  READINESS_ITEMS, READINESS_SOURCING, READINESS_MISSING_QTY,
-  READINESS_SHORT_COMPONENT,
-} from "@/mockdata/production"
+import { buildProductionData } from "@/mockdata/production"
+import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 
 export default function ProductionReadinessPage() {
+  const d = useData()
+  const { READINESS_ITEMS, READINESS_SOURCING, READINESS_MISSING_QTY, READINESS_SHORT_COMPONENT, READINESS_SHORT_PN } =
+    React.useMemo(() => buildProductionData(d), [d])
   const [readinessItems] = React.useState(READINESS_ITEMS)
   const { isEnabled } = useModules()
   const inventoryOn = isEnabled("inventory")
@@ -24,34 +25,30 @@ export default function ProductionReadinessPage() {
 
   const suppliers = READINESS_SOURCING
 
-  const handleCreatePR = () => {
+  const handleCreatePR = async () => {
     const s = suppliers[selectedSupplierIdx] || suppliers[0]
-    const prId = `PR-${Math.floor(100000 + Math.random() * 900000)}`
     const unitPrice = parseFloat(s.price.replace(/[^\d.]/g, ""))
     const totalCost = (missingQty * unitPrice).toFixed(2)
-    
-    setToast({
-      message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of ${READINESS_SHORT_COMPONENT} (Brand: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
-      prId
-    })
 
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_purchase_requests")
-      const currentList = saved ? JSON.parse(saved) : []
-      const newPR = {
-        prId,
-        componentId: "led-green",
-        componentName: "LED Green",
-        brandId: s.brand.toLowerCase(),
-        brandName: s.brand,
-        supplierId: s.supplierId,
-        supplierName: s.supplierName,
+    const res = await fetch("/api/purchase-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        componentPN: READINESS_SHORT_PN,
+        brandSlug: s.brandId,
+        supplierSlug: s.supplierId,
         qty: missingQty,
-        totalCost: `₹${parseFloat(totalCost).toLocaleString()}`,
-        status: "Pending Approval" as const,
-        date: new Date().toISOString().split("T")[0]
-      }
-      localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify([newPR, ...currentList]))
+        remarks: "Generated from production readiness audit",
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      setToast({ message: body?.error?.message ?? "Failed to create Purchase Request", prId: "—" })
+    } else {
+      setToast({
+        message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of ${READINESS_SHORT_COMPONENT} (Brand: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
+        prId: body.data.prId,
+      })
     }
 
     setTimeout(() => {

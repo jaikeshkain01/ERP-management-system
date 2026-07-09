@@ -8,11 +8,8 @@ import { Input } from "@/components/ui/input"
 import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle, Table2, Download } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
-import {
-  PRODUCTS, getProduct, getComponent, getSupplierName, productPcbList, pcbBom,
-  componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
-  productTotalParts, formatINR as fmtINR, formatLeadTime, type Component as MComponent,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
+import type { Component as MComponent } from "@/mockdata"
 
 interface ComponentItem {
   name: string
@@ -58,7 +55,13 @@ interface DrawerComponentDetail {
 function ProductStructureContent() {
   const searchParams = useSearchParams()
   const productId = searchParams.get("product") || "roip-400"
-  
+
+  const {
+    PRODUCTS, getProduct, getComponent, getSupplierName, productPcbList, pcbBom,
+    componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
+    productTotalParts, formatINR: fmtINR, formatLeadTime,
+  } = useData()
+
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [expandedComponents, setExpandedComponents] = React.useState<Record<string, boolean>>({})

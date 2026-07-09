@@ -2,9 +2,11 @@
 
 import Link from "next/link"
 import { Lock, ArrowUpRight } from "lucide-react"
+import * as React from "react"
 import { useModules } from "@/components/module-provider"
 import { WORKSPACES } from "@/lib/modules"
-import { WORKSPACE_STATS } from "@/mockdata/launchpad"
+import { buildWorkspaceStats } from "@/mockdata/launchpad"
+import { useData } from "@/lib/data-provider"
 
 const toneClass: Record<string, string> = {
   danger: "text-destructive",
@@ -14,6 +16,8 @@ const toneClass: Record<string, string> = {
 
 export function Launchpad() {
   const { isEnabled } = useModules()
+  const d = useData()
+  const WORKSPACE_STATS = React.useMemo(() => buildWorkspaceStats(d), [d])
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

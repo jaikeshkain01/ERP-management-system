@@ -7,6 +7,7 @@ import { TopBar } from "@/components/top-bar";
 import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { ModuleProvider } from "@/components/module-provider";
 import { ModuleGate } from "@/components/module-gate";
+import { DataProvider, DataGate } from "@/lib/data-provider";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -43,13 +44,17 @@ export default function RootLayout({
         </Script>
         <ModuleProvider>
           <TooltipProvider>
-            <div className="flex min-h-screen w-full flex-col bg-background">
-              <TopBar />
-              <WorkspaceTabs />
-              <main className="flex-1 overflow-y-auto p-6 md:p-8">
-                <ModuleGate>{children}</ModuleGate>
-              </main>
-            </div>
+            <DataProvider>
+              <div className="flex min-h-screen w-full flex-col bg-background">
+                <TopBar />
+                <WorkspaceTabs />
+                <main className="flex-1 overflow-y-auto p-6 md:p-8">
+                  <DataGate>
+                    <ModuleGate>{children}</ModuleGate>
+                  </DataGate>
+                </main>
+              </div>
+            </DataProvider>
           </TooltipProvider>
         </ModuleProvider>
       </body>

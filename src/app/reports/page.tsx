@@ -6,7 +6,7 @@ import { Bar, BarChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Toolti
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { BarChart3, TrendingUp, Users, Clock, Percent } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
-import { PRODUCTION_YIELD as productionData } from "@/mockdata/reports"
+import { PRODUCTION_YIELD, type MonthlyYield } from "@/mockdata/reports"
 
 const chartConfig = {
   yield: {
@@ -17,9 +17,19 @@ const chartConfig = {
 
 export default function ReportsPage() {
   const [mounted, setMounted] = React.useState(false)
+  const [productionData, setProductionData] = React.useState<MonthlyYield[]>(PRODUCTION_YIELD)
 
   React.useEffect(() => {
     setMounted(true)
+    ;(async () => {
+      try {
+        const res = await fetch("/api/reports/yield?range=6m", { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (res.ok && Array.isArray(body?.data) && body.data.length) setProductionData(body.data)
+      } catch {
+        // keep the static fallback series
+      }
+    })()
   }, [])
 
   const stats = [

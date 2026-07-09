@@ -9,7 +9,8 @@ import {
   ShieldAlert, ShoppingBag, Nut, PlayCircle, ChevronDown,
   ChevronUp, Check, Package, Plus, ArrowLeft, ArrowRight, RotateCcw,
 } from "lucide-react"
-import { PLANNER_SHORTAGES as SHORTAGES } from "@/mockdata/production"
+import { buildProductionData } from "@/mockdata/production"
+import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 
 // Types
@@ -29,6 +30,8 @@ interface PurchaseRequest {
 
 export default function ProductionPlannerPage() {
   const { isEnabled } = useModules()
+  const d = useData()
+  const { PLANNER_SHORTAGES: SHORTAGES } = React.useMemo(() => buildProductionData(d), [d])
   const inventoryOn = isEnabled("inventory")
   const purchasingOn = isEnabled("purchasing")
   const [product, setProduct] = React.useState("roip-400")
@@ -67,30 +70,33 @@ export default function ProductionPlannerPage() {
     }
   }
 
-  const handleCreatePR = () => {
-    const today = new Date().toISOString().split("T")[0]
-
-    const pr1: PurchaseRequest = {
-      prId: `PR-${Math.floor(100000 + Math.random() * 900000)}`,
-      componentId: "audio-codec", componentName: "Audio Codec",
-      brandId: "ti", brandName: "TI",
-      supplierId: "mouser", supplierName: "Mouser",
-      qty: 50, totalCost: "₹4,250.00", status: "Pending Approval", date: today,
+  // One PR per shortage line, sourced from the component's cheapest current offer.
+  const handleCreatePR = async () => {
+    const created: string[] = []
+    for (const shortage of SHORTAGES) {
+      const comp = d.COMPONENTS.find((c) => c.name === shortage.item)
+      if (!comp) continue
+      const offer = d.cheapestOffer(comp)
+      if (!offer) continue
+      const res = await fetch("/api/purchase-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          componentPN: comp.genericPN,
+          brandSlug: offer.brandId,
+          supplierSlug: offer.supplierId,
+          qty: shortage.missing,
+          remarks: "Generated from MRP planner shortage audit",
+        }),
+      })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body?.data) created.push(body.data.prId)
     }
-    const pr2: PurchaseRequest = {
-      prId: `PR-${Math.floor(100000 + Math.random() * 900000)}`,
-      componentId: "led-green", componentName: "LED Green",
-      brandId: "panasonic", brandName: "Panasonic",
-      supplierId: "abc-electronics", supplierName: "ABC Electronics",
-      qty: 200, totalCost: "₹420.00", status: "Pending Approval", date: today,
+    if (created.length) {
+      showToast(`Purchase Request${created.length > 1 ? "s" : ""} ${created.join(" and ")} created for shortage components!`)
+    } else {
+      showToast("Could not create purchase requests (writes are disabled in mock mode).", "warning")
     }
-
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("mockup2_erp_purchase_requests")
-      const currentList = saved ? JSON.parse(saved) : []
-      localStorage.setItem("mockup2_erp_purchase_requests", JSON.stringify([pr1, pr2, ...currentList]))
-    }
-    showToast(`Purchase Requests ${pr1.prId} and ${pr2.prId} created for shortage components!`)
   }
 
   const productName = product === "roip-400" ? "ROIP 400" : "Voice Logger"

@@ -11,11 +11,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
-import {
-  COMPONENTS, getBrandName, getSupplierName, componentUsage,
-  cheapestOffer as mCheapest, fastestOffer as mFastest,
-  isSingleSupplier, formatINR as mFormatINR, formatLeadTime,
-} from "@/mockdata"
+import { useData } from "@/lib/data-provider"
 
 interface Specification {
   key: string
@@ -65,42 +61,44 @@ interface ComponentData {
   purchaseInsights: PurchaseInsights
 }
 
-// Catalog view model derived from the centralized component store.
-const COMPONENTS_DATA: ComponentData[] = COMPONENTS.map((c) => {
-  const cheapest = mCheapest(c)
-  const fastest = mFastest(c)
-  return {
-    id: c.id,
-    genericPN: c.genericPN,
-    name: c.name,
-    category: c.category,
-    stock: c.stock,
-    minStock: c.minStock,
-    unit: c.unit,
-    solderType: c.solderType,
-    footprint: c.footprint,
-    spq: c.spq,
-    specs: c.specs,
-    brandVariants: c.brandVariants.map((v) => ({
-      brand: getBrandName(v.brandId),
-      brandPartNo: v.partNo,
-      stock: v.stock,
-    })),
-    suppliers: c.offers.map((o) => ({
-      supplier: getSupplierName(o.supplierId),
-      brand: getBrandName(o.brandId),
-      price: mFormatINR(o.price),
-    })),
-    usage: componentUsage(c.id).map((u) => ({ product: u.product.name, pcb: u.pcb.name })),
-    purchaseInsights: {
-      cheapestSupplier: cheapest ? getSupplierName(cheapest.supplierId) : "—",
-      cheapestPrice: cheapest ? mFormatINR(cheapest.price) : "—",
-      fastestSupplier: fastest ? getSupplierName(fastest.supplierId) : "—",
-      fastestDelivery: fastest ? formatLeadTime(fastest.leadTimeDays) : "—",
-      singleSupplierRisk: isSingleSupplier(c) ? "YES" : "NO",
-    },
-  }
-})
+// Catalog view model — built at runtime from the data provider (mockdata or DB).
+function buildComponentsData(d: ReturnType<typeof useData>): ComponentData[] {
+  return d.COMPONENTS.map((c) => {
+    const cheapest = d.cheapestOffer(c)
+    const fastest = d.fastestOffer(c)
+    return {
+      id: c.id,
+      genericPN: c.genericPN,
+      name: c.name,
+      category: c.category,
+      stock: c.stock,
+      minStock: c.minStock,
+      unit: c.unit,
+      solderType: c.solderType,
+      footprint: c.footprint,
+      spq: c.spq,
+      specs: c.specs,
+      brandVariants: c.brandVariants.map((v) => ({
+        brand: d.getBrandName(v.brandId),
+        brandPartNo: v.partNo,
+        stock: v.stock,
+      })),
+      suppliers: c.offers.map((o) => ({
+        supplier: d.getSupplierName(o.supplierId),
+        brand: d.getBrandName(o.brandId),
+        price: d.formatINR(o.price),
+      })),
+      usage: d.componentUsage(c.id).map((u) => ({ product: u.product.name, pcb: u.pcb.name })),
+      purchaseInsights: {
+        cheapestSupplier: cheapest ? d.getSupplierName(cheapest.supplierId) : "—",
+        cheapestPrice: cheapest ? d.formatINR(cheapest.price) : "—",
+        fastestSupplier: fastest ? d.getSupplierName(fastest.supplierId) : "—",
+        fastestDelivery: fastest ? d.formatLeadTime(fastest.leadTimeDays) : "—",
+        singleSupplierRisk: d.isSingleSupplier(c) ? "YES" : "NO",
+      },
+    }
+  })
+}
 
 const getStatusInfo = (comp: ComponentData) => {
   if (comp.stock <= comp.minStock * 0.5) {
@@ -126,8 +124,11 @@ const formatINR = (n: number) => "₹" + n.toLocaleString("en-IN", { maximumFrac
 function ComponentListContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  
-  const initialComponentId = searchParams.get("component") || "resistor-10k"
+
+  const data = useData()
+  const COMPONENTS_DATA = React.useMemo(() => buildComponentsData(data), [data])
+
+  const initialComponentId = searchParams.get("component") || COMPONENTS_DATA[0]?.id || ""
   const [selectedId, setSelectedId] = React.useState(initialComponentId)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [isDrawerOpen, setIsDrawerOpen] = React.useState(false)

@@ -12,10 +12,10 @@ import {
 import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
 import {
-  PRODUCT_STATUS, PRODUCTION_BLOCKERS, LOW_STOCK, PURCHASE_SUMMARY,
-  PRODUCTION_ORDERS_RECENT, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT,
-  RECENT_ACTIVITIES, INVENTORY_CHART,
+  buildDashboardData,
+  PRODUCTION_BLOCKERS, PURCHASE_SUMMARY, PRODUCTION_ORDERS_RECENT, RECENT_ACTIVITIES,
 } from "@/mockdata/dashboard"
+import { useData } from "@/lib/data-provider"
 import { StatStrip } from "@/components/stat-strip"
 import { useModules } from "@/components/module-provider"
 import type { ModuleId } from "@/lib/modules"
@@ -26,6 +26,10 @@ export default function Dashboard() {
   const [mounted, setMounted] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState<TabId>("overview")
   const { isEnabled } = useModules()
+
+  const d = useData()
+  const { PRODUCT_STATUS, LOW_STOCK, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT, INVENTORY_CHART } =
+    React.useMemo(() => buildDashboardData(d), [d])
 
   // Sync state on mount to prevent SSR hydration mismatch
   React.useEffect(() => {

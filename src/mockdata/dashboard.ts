@@ -1,12 +1,6 @@
-// Dashboard panel datasets — entity-linked panels are derived from the central
-// store; presentational/log panels are kept here so the page stays data-free.
-import { PRODUCTS } from "./products"
-import { PCBS } from "./pcbs"
-import { COMPONENTS } from "./components"
-import {
-  getSupplierName, cheapestOffer, componentStockStatus, isSingleSupplier,
-  productsUsingComponent,
-} from "./index"
+// Dashboard panel datasets — entity-linked panels are derived from the active
+// store via buildDashboardData(); presentational/log panels are static exports.
+import type { Selectors } from "./selectors"
 import type { ProductStatus, StockStatus } from "./types"
 
 export interface ProductStatusItem {
@@ -14,64 +8,77 @@ export interface ProductStatusItem {
   status: ProductStatus
   buildableQty: number
 }
-export const PRODUCT_STATUS: ProductStatusItem[] = PRODUCTS.map((p) => ({
-  product: p.name,
-  status: p.status,
-  buildableQty: p.buildableQty,
-}))
-
 export interface LowStockItem {
   component: string
   current: number
   minimum: number
   status: StockStatus
 }
-export const LOW_STOCK: LowStockItem[] = COMPONENTS.filter(
-  (c) => componentStockStatus(c) !== "Healthy",
-).map((c) => ({
-  component: c.name,
-  current: c.stock,
-  minimum: c.minStock,
-  status: componentStockStatus(c),
-}))
-
 export interface SingleSupplierItem {
   component: string
   supplier: string
 }
-export const SINGLE_SUPPLIER: SingleSupplierItem[] = COMPONENTS.filter(isSingleSupplier)
-  .map((c) => {
-    const offer = cheapestOffer(c)
-    return { component: c.name, supplier: offer ? getSupplierName(offer.supplierId) : "—" }
-  })
-  .slice(0, 6)
-
 export interface ConsumedComponent {
   component: string
   monthlyUsage: string
 }
-export const TOP_CONSUMED: ConsumedComponent[] = [...COMPONENTS]
-  .sort((a, b) => b.annualConsumption - a.annualConsumption)
-  .slice(0, 3)
-  .map((c) => ({ component: c.name, monthlyUsage: Math.round(c.annualConsumption / 12).toLocaleString() }))
-
 export interface UsageImpactItem {
   component: string
   usedInProducts: number
 }
-export const USAGE_IMPACT: UsageImpactItem[] = COMPONENTS.map((c) => ({
-  component: c.name,
-  usedInProducts: productsUsingComponent(c.id).length,
-}))
-  .sort((a, b) => b.usedInProducts - a.usedInProducts)
-  .slice(0, 3)
+export interface DashboardData {
+  PRODUCT_STATUS: ProductStatusItem[]
+  LOW_STOCK: LowStockItem[]
+  SINGLE_SUPPLIER: SingleSupplierItem[]
+  TOP_CONSUMED: ConsumedComponent[]
+  USAGE_IMPACT: UsageImpactItem[]
+  INVENTORY_CHART: { name: string; value: number; color: string }[]
+}
 
-// Inventory distribution chart — counts derived from the central store.
-export const INVENTORY_CHART = [
-  { name: "Components", value: COMPONENTS.length, color: "#875A7B" },
-  { name: "PCBs", value: PCBS.length, color: "#28C76F" },
-  { name: "Products", value: PRODUCTS.length, color: "#FF9F43" },
-]
+/** Catalog-derived dashboard panels, bound to the active store (mockdata or DB). */
+export function buildDashboardData(d: Selectors): DashboardData {
+  const PRODUCT_STATUS: ProductStatusItem[] = d.PRODUCTS.map((p) => ({
+    product: p.name,
+    status: p.status,
+    buildableQty: p.buildableQty,
+  }))
+
+  const LOW_STOCK: LowStockItem[] = d.COMPONENTS.filter(
+    (c) => d.componentStockStatus(c) !== "Healthy",
+  ).map((c) => ({
+    component: c.name,
+    current: c.stock,
+    minimum: c.minStock,
+    status: d.componentStockStatus(c),
+  }))
+
+  const SINGLE_SUPPLIER: SingleSupplierItem[] = d.COMPONENTS.filter(d.isSingleSupplier)
+    .map((c) => {
+      const offer = d.cheapestOffer(c)
+      return { component: c.name, supplier: offer ? d.getSupplierName(offer.supplierId) : "—" }
+    })
+    .slice(0, 6)
+
+  const TOP_CONSUMED: ConsumedComponent[] = [...d.COMPONENTS]
+    .sort((a, b) => b.annualConsumption - a.annualConsumption)
+    .slice(0, 3)
+    .map((c) => ({ component: c.name, monthlyUsage: Math.round(c.annualConsumption / 12).toLocaleString() }))
+
+  const USAGE_IMPACT: UsageImpactItem[] = d.COMPONENTS.map((c) => ({
+    component: c.name,
+    usedInProducts: d.productsUsingComponent(c.id).length,
+  }))
+    .sort((a, b) => b.usedInProducts - a.usedInProducts)
+    .slice(0, 3)
+
+  const INVENTORY_CHART = [
+    { name: "Components", value: d.COMPONENTS.length, color: "#875A7B" },
+    { name: "PCBs", value: d.PCBS.length, color: "#28C76F" },
+    { name: "Products", value: d.PRODUCTS.length, color: "#FF9F43" },
+  ]
+
+  return { PRODUCT_STATUS, LOW_STOCK, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT, INVENTORY_CHART }
+}
 
 // ----- Presentational / log panels (not derivable from catalog entities) -----
 export interface BlockerItem {
