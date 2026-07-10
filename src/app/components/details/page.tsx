@@ -100,7 +100,9 @@ function buildComponentsData(d: ReturnType<typeof useData>): Record<string, Comp
             price: d.formatINR(o.price),
             moq: c.spq,
             leadTime: d.formatLeadTime(o.leadTimeDays),
-            preferred: !!cheapest && o.supplierId === cheapest.supplierId && o.price === cheapest.price,
+            preferred: c.preferredSupplierId
+              ? o.supplierId === c.preferredSupplierId
+              : !!cheapest && o.supplierId === cheapest.supplierId && o.price === cheapest.price,
           })),
           usedInProductsCount: d.productsUsingComponent(c.id).length,
           usedInPCBsCount: d.pcbsUsingComponent(c.id).length,
@@ -172,6 +174,40 @@ function ComponentDetailsContent() {
   }
 
   const component = componentsData[componentId] || COMPONENTS_DATA["resistor-10k"]
+
+  // No component for this id (e.g. empty catalog / stale link) → empty state instead
+  // of crashing on component.mfgVariants below.
+  if (!component) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <span>Components</span>
+            <span>/</span>
+            <span className="text-foreground font-medium">Component Details</span>
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Component Details</h1>
+        </div>
+        <Card className="border border-border shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Boxes className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-base font-bold text-foreground">No component to display</p>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                There are no components in the system yet. Add a component to view its details, variants, and supplier offers.
+              </p>
+            </div>
+            <Button variant="outline" render={<Link href="/components/list" />} className="gap-2 border-border bg-background">
+              <ArrowLeft className="h-4 w-4" />
+              <span>Back to Component List</span>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   // Calculate dynamic stock sum from variants
   const calculatedTotalStock = component.mfgVariants.reduce((sum, v) => sum + (v.stock || 0), 0)
@@ -434,32 +470,39 @@ function ComponentDetailsContent() {
     showToast(`Updated price for ${editSupplierName} to ${formattedPrice}`)
   }
 
-  const handleSetPreferred = (e: React.FormEvent) => {
+  const handleSetPreferred = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!preferredSupplierName) {
       showToast("Please select a supplier", "error")
       return
     }
 
+    // Optimistic local update.
+    const previous = componentsData
     const updatedSuppliers = component.suppliers.map(s => ({
       ...s,
       preferred: s.name === preferredSupplierName
     }))
-
-    const updatedComponent = {
-      ...component,
-      suppliers: updatedSuppliers
-    }
-
-    const updatedData = {
-      ...componentsData,
-      [componentId]: updatedComponent
-    }
-
-    applyComponentsData(updatedData)
-    
+    applyComponentsData({ ...componentsData, [componentId]: { ...component, suppliers: updatedSuppliers } })
     setActiveModal(null)
-    showToast(`${preferredSupplierName} is now the preferred supplier.`)
+
+    // Persist: resolve the supplier by slug (fall back to name; backend accepts both).
+    const supplierKey = d.SUPPLIERS.find(s => s.name === preferredSupplierName)?.id ?? preferredSupplierName
+    try {
+      const res = await fetch(`/api/components/${encodeURIComponent(componentId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ preferredSupplierId: supplierKey }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      }
+      showToast(`${preferredSupplierName} is now the preferred supplier.`)
+    } catch (err) {
+      applyComponentsData(previous) // revert
+      showToast(err instanceof Error ? err.message : "Failed to set preferred supplier", "error")
+    }
   }
 
   const handleAddVariant = async (e: React.FormEvent) => {

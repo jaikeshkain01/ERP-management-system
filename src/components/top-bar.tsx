@@ -21,7 +21,7 @@ export function TopBar() {
   const workspace = workspaceForPath(pathname)
 
   return (
-    <header className="shell-chrome relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-chrome-border bg-chrome px-4 text-chrome-foreground md:px-6">
+    <header className="shell-chrome sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-chrome-border bg-chrome px-4 text-chrome-foreground md:px-6">
       {/* Logo + name */}
       <Link href="/" className="flex items-center gap-2.5 shrink-0">
         <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-white/95 shadow-sm overflow-hidden ring-1 ring-white/20">

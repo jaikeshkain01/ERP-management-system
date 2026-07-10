@@ -15,6 +15,7 @@ import { AddProductModal, type ManualProductData } from "@/components/products/a
 import { ImportedBomView } from "@/components/products/imported-bom-view"
 import type { BomImportResult, ImportedBomLine } from "@/lib/bom-import"
 import { useUserProducts, activeVersionOf, isUserProductId } from "@/lib/user-products"
+import { useDragScroll } from "@/hooks/use-drag-scroll"
 
 interface ComponentItem {
   name: string
@@ -23,6 +24,16 @@ interface ComponentItem {
   qty: number
   brandsCount?: number
   lookupId?: string
+  // Extended BOM (Excel view) fields
+  refDes?: string
+  preferredBrand?: string
+  remarks?: string
+  partNumber?: string
+  solderType?: "SMD" | "DIP"
+  footprint?: string
+  spq?: number
+  unitPrice?: number
+  availableQty?: number
 }
 
 interface PCBItem {
@@ -62,7 +73,7 @@ function ProductStructureContent() {
   const productId = searchParams.get("product") || "roip-400"
 
   const {
-    PRODUCTS, getProduct, getComponent, getSupplierName, productPcbList, pcbBom,
+    PRODUCTS, getProduct, getComponent, getSupplierName, getBrandName, productPcbList, pcbBom,
     componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
     productTotalParts, formatINR: fmtINR, formatLeadTime,
   } = useData()
@@ -73,9 +84,10 @@ function ProductStructureContent() {
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
   const [importVersionOpen, setImportVersionOpen] = React.useState(false)
   const [manualVersionOpen, setManualVersionOpen] = React.useState(false)
+  const dragScrollRef = useDragScroll()
 
   const router = useRouter()
-  const { getProduct: getUserProduct, addVersion, setActiveVersion, removeProduct } = useUserProducts()
+  const { getProduct: getUserProduct, addVersion, setActiveVersion, removeProduct, loaded: userProductsLoaded } = useUserProducts()
 
   const userProduct = getUserProduct(productId)
   const isUserProduct = !!userProduct
@@ -92,30 +104,123 @@ function ProductStructureContent() {
 
   const nextVersionLabel = `v${(userProduct?.versions.length ?? 0) + 1}`
 
-  const handleImportVersion = (result: BomImportResult, versionLabel: string, fileName: string) => {
+  const handleImportVersion = async (result: BomImportResult, versionLabel: string, fileName: string) => {
     if (!userProduct) return
-    addVersion(productId, { label: versionLabel, source: "import", fileName, lines: result.lines })
-    setImportVersionOpen(false)
-    setSelectedCompId(null)
+    try {
+      await addVersion(productId, { label: versionLabel, source: "import", fileName, lines: result.lines })
+      setImportVersionOpen(false)
+      setSelectedCompId(null)
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to add version")
+    }
   }
 
-  const handleManualVersion = (data: ManualProductData) => {
+  const handleManualVersion = async (data: ManualProductData) => {
     if (!userProduct) return
-    addVersion(productId, { label: data.versionLabel, source: "manual", lines: data.lines })
-    setManualVersionOpen(false)
-    setSelectedCompId(null)
+    try {
+      await addVersion(productId, { label: data.versionLabel, source: "manual", lines: data.lines })
+      setManualVersionOpen(false)
+      setSelectedCompId(null)
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to add version")
+    }
   }
 
-  const handleDeleteProduct = () => {
-    removeProduct(productId)
-    router.push("/products/list")
+  const handleDeleteProduct = async () => {
+    try {
+      await removeProduct(productId)
+      router.push("/products/list")
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to remove product")
+    }
   }
 
   const formatINR = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-  // Default to first product if id is invalid — data from the central store
-  const productEntity = getProduct(productId) || PRODUCTS[0]
+  // Catalog product for this id (undefined for user products or an empty catalog).
+  const productEntity = getProduct(productId)
+
+  // Neither a catalog product, a user product, nor a user-product id still hydrating
+  // → nothing to show (e.g. empty database or a stale link). Render an empty state
+  // rather than crashing on productEntity.name.
+  if (!productEntity && !isUserProduct && !looksUser) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <span>Products</span>
+            <span>/</span>
+            <span className="text-foreground font-medium">Product Structure</span>
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Product Structure</h1>
+        </div>
+        <Card className="border border-border shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Package className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-base font-bold text-foreground">No product to display</p>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                There are no products in the system yet. Add a product or import a BOM to view its assembly structure.
+              </p>
+            </div>
+            <Button variant="outline" render={<Link href="/products/list" />} className="gap-2 border-border bg-background">
+              <ArrowLeft className="h-4 w-4" />
+              <span>Back to Product List</span>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // A user-product id whose record hasn't arrived from the server yet: show a
+  // loader while fetching, or the empty state if it's genuinely gone (stale link).
+  if (looksUser && !isUserProduct && !productEntity) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <span>Products</span>
+            <span>/</span>
+            <span className="text-foreground font-medium">Product Structure</span>
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Product Structure</h1>
+        </div>
+        <Card className="border border-border shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            {!userProductsLoaded ? (
+              <>
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                <p className="text-sm text-muted-foreground">Loading product…</p>
+              </>
+            ) : (
+              <>
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Package className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-base font-bold text-foreground">Product not found</p>
+                  <p className="text-sm text-muted-foreground max-w-sm">
+                    This product no longer exists. It may have been removed.
+                  </p>
+                </div>
+                <Button variant="outline" render={<Link href="/products/list" />} className="gap-2 border-border bg-background">
+                  <ArrowLeft className="h-4 w-4" />
+                  <span>Back to Product List</span>
+                </Button>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   // Build a Component → DrawerComponentDetail view from a canonical component
   const toDrawerDetail = (component: MComponent): DrawerComponentDetail => ({
@@ -137,30 +242,52 @@ function ProductStructureContent() {
     })),
   })
 
-  // Assembly tree view model (product → PCB → component)
-  const product: ProductData = {
-    name: productEntity.name,
-    code: productEntity.code,
-    version: productEntity.version,
-    pcbsCount: productEntity.pcbs.length,
-    uniqueComponentsCount: productUniqueComponents(productEntity).length,
-    totalComponentsCount: productTotalParts(productEntity),
-    estimatedCost: formatINR(productEntity.estimatedCost).replace(/\.00$/, ""),
-    description: productEntity.description,
-    // Component qty is per finished unit = per-board qty × boards per unit (pcb qty).
-    structure: productPcbList(productEntity).map(({ pcb, qty: pcbQty }): PCBItem => ({
-      name: pcb.name,
-      qty: pcbQty,
-      components: pcbBom(pcb).map(({ component, qty }): ComponentItem => ({
-        name: component.name,
-        type: component.category,
-        suppliers: component.offers.map((o) => getSupplierName(o.supplierId)),
-        qty: qty * pcbQty,
-        brandsCount: componentBrands(component).length,
-        lookupId: component.id,
-      })),
-    })),
-  }
+  // Assembly tree view model (product → PCB → component). For user products (no
+  // catalog entity) this stays empty — the display uses the userProduct fields below.
+  const product: ProductData = productEntity
+    ? {
+        name: productEntity.name,
+        code: productEntity.code,
+        version: productEntity.version,
+        pcbsCount: productEntity.pcbs.length,
+        uniqueComponentsCount: productUniqueComponents(productEntity).length,
+        totalComponentsCount: productTotalParts(productEntity),
+        estimatedCost: formatINR(productEntity.estimatedCost).replace(/\.00$/, ""),
+        description: productEntity.description,
+        // Component qty is per finished unit = per-board qty × boards per unit (pcb qty).
+        structure: productPcbList(productEntity).map(({ pcb, qty: pcbQty }): PCBItem => ({
+          name: pcb.name,
+          qty: pcbQty,
+          components: pcbBom(pcb).map(({ component, qty, refDes, preferredBrandId, remarks }): ComponentItem => ({
+            name: component.name,
+            type: component.category,
+            suppliers: component.offers.map((o) => getSupplierName(o.supplierId)),
+            qty: qty * pcbQty,
+            brandsCount: componentBrands(component).length,
+            lookupId: component.id,
+            refDes,
+            preferredBrand: preferredBrandId ? getBrandName(preferredBrandId) : undefined,
+            remarks,
+            partNumber: component.brandVariants[0]?.partNo,
+            solderType: component.solderType,
+            footprint: component.footprint,
+            spq: component.spq,
+            unitPrice: bestPrice(component),
+            availableQty: component.stock,
+          })),
+        })),
+      }
+    : {
+        name: "",
+        code: "",
+        version: "",
+        pcbsCount: 0,
+        uniqueComponentsCount: 0,
+        totalComponentsCount: 0,
+        estimatedCost: formatINR(0).replace(/\.00$/, ""),
+        description: "",
+        structure: [],
+      }
 
   // User-product (imported/manual) summary — drives the Product Details panel + export.
   const userTotalParts = activeLines.reduce((s, l) => s + l.qty, 0)
@@ -184,28 +311,32 @@ function ProductStructureContent() {
       sheetName: `${userProduct.name} ${activeVersion.label}`.slice(0, 28) || "BOM",
       columns: [
         { header: "#", value: (_l, i) => i + 1, type: "Number", width: 4 },
+        { header: "Reference", value: (l) => l.reference, width: 14 },
         { header: "Type", value: (l) => l.type, width: 14 },
         { header: "Name", value: (l) => l.name, width: 28 },
         { header: "Part Number", value: (l) => l.partNumber, width: 20 },
         { header: "Solder Type", value: (l) => l.solderType, width: 10 },
         { header: "Footprint", value: (l) => l.footprint, width: 20 },
-        { header: "Manufacturer", value: (l) => l.manufacturer, width: 16 },
         { header: "Qty / Unit", value: (l) => l.qty, type: "Number", width: 10 },
         ...(scaled
           ? [{ header: "Qty Needed", value: (l: ImportedBomLine) => l.qty * buildQty, type: "Number" as const, width: 12 }]
           : []),
+        { header: "Manufacturer", value: (l) => l.manufacturer, width: 16 },
+        { header: "Supplier", value: (l) => l.supplier, width: 16 },
       ],
       rows: activeLines,
       totalsRow: [
-        "",
-        "TOTAL",
-        `${activeLines.length} items`,
-        "",
-        "",
-        "",
-        "",
-        userTotalParts,
-        ...(scaled ? [userTotalParts * buildQty] : []),
+        "",                                 // #
+        "",                                 // Reference
+        "TOTAL",                            // Type
+        `${activeLines.length} items`,      // Name
+        "",                                 // Part Number
+        "",                                 // Solder Type
+        "",                                 // Footprint
+        userTotalParts,                     // Qty / Unit
+        ...(scaled ? [userTotalParts * buildQty] : []), // Qty Needed
+        "",                                 // Manufacturer
+        "",                                 // Supplier
       ],
     })
   }
@@ -242,33 +373,39 @@ function ProductStructureContent() {
       columns: [
         { header: "#", value: (_r, i) => i + 1, type: "Number", width: 4 },
         { header: "PCB", value: (r) => r.pcb, width: 16 },
+        { header: "Ref Des", value: (r) => r.comp.refDes ?? "", width: 14 },
         { header: "Type", value: (r) => r.comp.type, width: 14 },
         { header: "Name", value: (r) => r.comp.name, width: 22 },
-        { header: "Generic PN", value: (r) => detailOf(r.comp)?.genericPN ?? "", width: 14 },
-        { header: "Category", value: (r) => detailOf(r.comp)?.category ?? "", width: 14 },
+        { header: "Part Number", value: (r) => r.comp.partNumber ?? "", width: 20 },
+        { header: "Solder Type", value: (r) => r.comp.solderType ?? "", width: 11 },
+        { header: "Footprint", value: (r) => r.comp.footprint ?? "", width: 20 },
         { header: "Qty / Unit", value: (r) => r.comp.qty, type: "Number", width: 10 },
         ...(scaled
           ? [{ header: "Qty Needed", value: (r: { comp: ComponentItem }) => r.comp.qty * buildQty, type: "Number" as const, width: 12 }]
           : []),
-        { header: "Approved Brands", value: (r) => detailOf(r.comp)?.brands.map((b) => b.name).join(", ") ?? "", width: 26 },
-        { header: "Stock", value: (r) => detailOf(r.comp)?.stock ?? "", type: "Number", width: 10 },
+        { header: "SPQ", value: (r) => r.comp.spq ?? "", type: "Number", width: 8 },
+        { header: "Manufacturer", value: (r) => detailOf(r.comp)?.brands.map((b) => b.name).join(", ") ?? "", width: 22 },
         { header: "Unit Price (INR)", value: (r) => unitPriceOf(r.comp) || "", type: "Number", width: 14 },
         { header: "Total Price (INR)", value: (r) => Number(lineTotal(r.comp).toFixed(2)), type: "Number", width: 15 },
+        { header: "Available Qty", value: (r) => r.comp.availableQty ?? "", type: "Number", width: 12 },
       ],
       rows: bomRows,
       totalsRow: [
-        "",
-        "TOTAL",
-        `${bomRows.length} items`,
-        "",
-        "",
-        "",
-        totalParts,
-        ...(scaled ? [totalParts * buildQty] : []),
-        "",
-        "",
-        "",
-        Number(bomTotalValue.toFixed(2)),
+        "",                                 // #
+        "TOTAL",                            // PCB
+        "",                                 // Ref Des
+        `${bomRows.length} items`,          // Type
+        "",                                 // Name
+        "",                                 // Part Number
+        "",                                 // Solder Type
+        "",                                 // Footprint
+        totalParts,                         // Qty / Unit
+        ...(scaled ? [totalParts * buildQty] : []), // Qty Needed
+        "",                                 // SPQ
+        "",                                 // Manufacturer
+        "",                                 // Unit Price
+        Number(bomTotalValue.toFixed(2)),   // Total Price
+        "",                                 // Available Qty
       ],
     })
   }
@@ -388,7 +525,13 @@ function ProductStructureContent() {
               return (
                 <button
                   key={v.id}
-                  onClick={() => { setActiveVersion(productId, v.id); setSelectedCompId(null) }}
+                  onClick={() => {
+                    setSelectedCompId(null)
+                    setActiveVersion(productId, v.id).catch((err) => {
+                      console.error(err)
+                      alert(err instanceof Error ? err.message : "Failed to switch version")
+                    })
+                  }}
                   title={`${v.source === "import" ? "Imported" : "Manual"} · ${v.lines.length} lines`}
                   className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-bold transition-colors cursor-pointer ${
                     active
@@ -597,24 +740,27 @@ function ProductStructureContent() {
           {/* ===== EXCEL / BOM VIEW ===== */}
           {!isUserProduct && viewMode === "excel" && (
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
               <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
-                <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
+                <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
                   <tr>
                     <th scope="col" className="px-3 py-3 text-center w-10">#</th>
                     <th scope="col" className="px-3 py-3">PCB</th>
+                    <th scope="col" className="px-3 py-3">Ref Des</th>
                     <th scope="col" className="px-3 py-3">Type</th>
                     <th scope="col" className="px-3 py-3 min-w-[140px]">Name</th>
-                    <th scope="col" className="px-3 py-3">Generic PN</th>
-                    <th scope="col" className="px-3 py-3">Category</th>
+                    <th scope="col" className="px-3 py-3">Part Number</th>
+                    <th scope="col" className="px-3 py-3 text-center">Solder Type</th>
+                    <th scope="col" className="px-3 py-3">Footprint</th>
                     <th scope="col" className="px-3 py-3 text-center">Qty</th>
                     {buildQty > 1 && (
                       <th scope="col" className="px-3 py-3 text-center">Qty Needed</th>
                     )}
-                    <th scope="col" className="px-3 py-3 text-center">Brands</th>
-                    <th scope="col" className="px-3 py-3 text-right">Stock</th>
+                    <th scope="col" className="px-3 py-3 text-center">SPQ</th>
+                    <th scope="col" className="px-3 py-3">Manufacturer</th>
                     <th scope="col" className="px-3 py-3 text-right">Unit Price</th>
                     <th scope="col" className="px-3 py-3 text-right">Total Price</th>
+                    <th scope="col" className="px-3 py-3 text-right">Available Qty</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -645,6 +791,9 @@ function ProductStructureContent() {
                             <span className="text-muted-foreground/40 pl-5">↳</span>
                           )}
                         </td>
+                        <td className="px-3 py-2.5 font-mono text-[11px] font-bold text-primary">
+                          {c.refDes ?? "—"}
+                        </td>
                         <td className="px-3 py-2.5">
                           <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
                             {c.type}
@@ -656,10 +805,13 @@ function ProductStructureContent() {
                             <span>{c.name}</span>
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-primary font-bold">
-                          {detail?.genericPN ?? (c.lookupId?.toUpperCase() || "—")}
+                        <td className="px-3 py-2.5 font-mono text-muted-foreground">{c.partNumber ?? "—"}</td>
+                        <td className="px-3 py-2.5 text-center">
+                          {c.solderType ? (
+                            <span className="font-mono text-[10px] font-bold text-foreground">{c.solderType}</span>
+                          ) : "—"}
                         </td>
-                        <td className="px-3 py-2.5 text-muted-foreground">{detail?.category ?? "—"}</td>
+                        <td className="px-3 py-2.5 font-mono text-muted-foreground">{c.footprint ?? "—"}</td>
                         <td className="px-3 py-2.5 text-center font-mono font-bold text-primary">{c.qty}</td>
                         {buildQty > 1 && (
                           <td className="px-3 py-2.5 text-center font-mono font-bold text-amber-600">
@@ -667,10 +819,17 @@ function ProductStructureContent() {
                           </td>
                         )}
                         <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">
-                          {detail ? detail.brands.length : (c.brandsCount ?? "—")}
+                          {c.spq?.toLocaleString() ?? "—"}
                         </td>
-                        <td className="px-3 py-2.5 text-right font-mono text-muted-foreground">
-                          {detail ? detail.stock.toLocaleString() : "—"}
+                        <td className="px-3 py-2.5 text-muted-foreground">
+                          {detail && detail.brands.length > 0 ? (
+                            <span className="font-semibold text-foreground">
+                              {detail.brands[0].name}
+                              {detail.brands.length > 1 && (
+                                <span className="text-muted-foreground font-mono"> +{detail.brands.length - 1}</span>
+                              )}
+                            </span>
+                          ) : "—"}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono text-foreground">
                           {price ? formatINR(price) : "—"}
@@ -678,13 +837,20 @@ function ProductStructureContent() {
                         <td className="px-3 py-2.5 text-right font-mono font-bold text-foreground">
                           {price ? formatINR(lineTotal(c)) : "—"}
                         </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {c.availableQty !== undefined ? (
+                            <span className={`font-mono font-bold ${c.availableQty < qtyNeeded ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}>
+                              {c.availableQty.toLocaleString()}
+                            </span>
+                          ) : "—"}
+                        </td>
                       </tr>
                     )
                   })}
                   {/* Totals Row */}
                   <tr className="bg-muted/40 font-bold border-t-2 border-border">
                     <td className="px-3 py-3" />
-                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={5}>
+                    <td className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground" colSpan={7}>
                       Total — {bomRows.length} line items across {product.structure.length} PCBs
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-primary">{totalParts}</td>
@@ -697,6 +863,7 @@ function ProductStructureContent() {
                     <td className="px-3 py-3" />
                     <td className="px-3 py-3" />
                     <td className="px-3 py-3 text-right font-mono text-foreground">{formatINR(bomTotalValue)}</td>
+                    <td className="px-3 py-3" />
                   </tr>
                 </tbody>
               </table>

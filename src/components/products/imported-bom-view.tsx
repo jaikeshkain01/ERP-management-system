@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Package, Cpu, Nut } from "lucide-react"
 import type { ImportedBomLine } from "@/lib/bom-import"
+import { useDragScroll } from "@/hooks/use-drag-scroll"
 
 type Props = {
   productName: string
@@ -17,6 +18,7 @@ type Props = {
 export function ImportedBomView({ productName, lines, viewMode, buildQty }: Props) {
   const totalParts = lines.reduce((s, l) => s + l.qty, 0)
   const scaled = buildQty > 1
+  const dragScrollRef = useDragScroll()
 
   // Group by Type for the tree view (the imported sheet has no PCB dimension).
   const groups = React.useMemo(() => {
@@ -132,27 +134,30 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
 
   // ===== Excel / flat table view =====
   return (
-    <div className="overflow-x-auto">
+    <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
       <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
-        <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
+        <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
           <tr>
             <th scope="col" className="px-3 py-3 text-center w-10">#</th>
+            <th scope="col" className="px-3 py-3">Reference</th>
             <th scope="col" className="px-3 py-3">Type</th>
             <th scope="col" className="px-3 py-3 min-w-[160px]">Name</th>
             <th scope="col" className="px-3 py-3">Part Number</th>
-            <th scope="col" className="px-3 py-3">Solder</th>
+            <th scope="col" className="px-3 py-3 text-center">Solder Type</th>
             <th scope="col" className="px-3 py-3">Footprint</th>
-            {lines.some((l) => l.manufacturer) && (
-              <th scope="col" className="px-3 py-3">Manufacturer</th>
-            )}
             <th scope="col" className="px-3 py-3 text-center">Qty</th>
             {scaled && <th scope="col" className="px-3 py-3 text-center">Qty Needed</th>}
+            <th scope="col" className="px-3 py-3">Manufacturer</th>
+            <th scope="col" className="px-3 py-3">Supplier</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
           {lines.map((l, idx) => (
             <tr key={idx} className="transition-colors hover:bg-muted/20">
               <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">{idx + 1}</td>
+              <td className="px-3 py-2.5 font-mono text-[11px] font-bold text-primary">
+                {l.reference || "—"}
+              </td>
               <td className="px-3 py-2.5">
                 <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
                   {l.type || "—"}
@@ -164,18 +169,29 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
                   <span className="whitespace-normal">{l.name || "—"}</span>
                 </div>
               </td>
-              <td className="px-3 py-2.5 font-mono text-primary font-bold">{l.partNumber || "—"}</td>
-              <td className="px-3 py-2.5 text-muted-foreground">{l.solderType || "—"}</td>
+              <td className="px-3 py-2.5 font-mono text-muted-foreground">{l.partNumber || "—"}</td>
+              <td className="px-3 py-2.5 text-center">
+                {l.solderType ? (
+                  <span className="font-mono text-[10px] font-bold text-foreground">{l.solderType}</span>
+                ) : "—"}
+              </td>
               <td className="px-3 py-2.5 font-mono text-muted-foreground">{l.footprint || "—"}</td>
-              {lines.some((x) => x.manufacturer) && (
-                <td className="px-3 py-2.5 text-muted-foreground">{l.manufacturer || "—"}</td>
-              )}
               <td className="px-3 py-2.5 text-center font-mono font-bold text-primary">{l.qty}</td>
               {scaled && (
                 <td className="px-3 py-2.5 text-center font-mono font-bold text-amber-600">
                   {(l.qty * buildQty).toLocaleString()}
                 </td>
               )}
+              <td className="px-3 py-2.5 text-muted-foreground">
+                {l.manufacturer ? (
+                  <span className="font-semibold text-foreground">{l.manufacturer}</span>
+                ) : "—"}
+              </td>
+              <td className="px-3 py-2.5 text-muted-foreground">
+                {l.supplier ? (
+                  <span className="font-semibold text-foreground">{l.supplier}</span>
+                ) : "—"}
+              </td>
             </tr>
           ))}
           {/* Totals row */}
@@ -183,7 +199,7 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
             <td className="px-3 py-3" />
             <td
               className="px-3 py-3 uppercase text-[10px] tracking-wider text-muted-foreground"
-              colSpan={lines.some((l) => l.manufacturer) ? 6 : 5}
+              colSpan={6}
             >
               Total — {lines.length} line items
             </td>
@@ -193,6 +209,8 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
                 {(totalParts * buildQty).toLocaleString()}
               </td>
             )}
+            <td className="px-3 py-3" />
+            <td className="px-3 py-3" />
           </tr>
         </tbody>
       </table>

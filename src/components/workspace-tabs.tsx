@@ -22,7 +22,7 @@ export function WorkspaceTabs() {
   const Icon = workspace.icon
 
   return (
-    <div className="relative z-20 flex h-11 shrink-0 items-center gap-4 border-b border-border bg-card px-4 shadow-[0_1px_2px_-1px_rgba(15,36,54,0.08)] md:px-6">
+    <div className="sticky top-14 z-20 flex h-11 shrink-0 items-center gap-4 border-b border-border bg-card px-4 shadow-[0_1px_2px_-1px_rgba(15,36,54,0.08)] md:px-6">
       <div className="flex items-center gap-2 text-[13px] font-semibold tracking-tight text-foreground">
         <Icon className="h-4 w-4 text-primary" />
         <span className="hidden sm:inline">{workspace.label}</span>

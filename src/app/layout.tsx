@@ -43,9 +43,9 @@ export default function RootLayout({
         <Script id="theme-init" strategy="beforeInteractive">
           {`(function(){try{var t=localStorage.getItem('theme');if(!t){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}if(t==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`}
         </Script>
-        <ModuleProvider>
-          <TooltipProvider>
-            <DataProvider>
+        <TooltipProvider>
+          <DataProvider>
+            <ModuleProvider>
               <UserProductsProvider>
                 <div className="flex min-h-screen w-full flex-col bg-background">
                   <TopBar />
@@ -57,9 +57,9 @@ export default function RootLayout({
                   </main>
                 </div>
               </UserProductsProvider>
-            </DataProvider>
-          </TooltipProvider>
-        </ModuleProvider>
+            </ModuleProvider>
+          </DataProvider>
+        </TooltipProvider>
       </body>
     </html>
   );

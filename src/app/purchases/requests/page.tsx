@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { AlertCircle, Check, FileText, ShoppingCart, ShoppingBag, Plus, Landmark, Award, Star, Clock } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import {
   buildRecommendations,
   type PurchaseRequest, type SourcingRecommendation,
@@ -218,7 +219,7 @@ function PurchaseRequestsContent() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <DragScrollArea className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-foreground">
                   <thead className="bg-muted/40 uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                     <tr>
@@ -280,7 +281,7 @@ function PurchaseRequestsContent() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </DragScrollArea>
             </CardContent>
           </Card>
         </div>

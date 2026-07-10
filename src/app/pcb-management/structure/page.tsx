@@ -9,6 +9,7 @@ import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck,
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
+import { useDragScroll } from "@/hooks/use-drag-scroll"
 
 interface ComponentBrand {
   id: string
@@ -58,12 +59,47 @@ function PCBStructureContent() {
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
+  const dragScrollRef = useDragScroll()
 
   const formatINR = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
   // Fallback to first PCB if invalid pcbId — data comes from the central store
   const pcbEntity = getPcb(pcbId) || PCBS[0]
+
+  // No PCBs (e.g. empty database) or an id that resolves to nothing → empty state
+  // instead of crashing on pcbEntity.name.
+  if (!pcbEntity) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <span>PCB Management</span>
+            <span>/</span>
+            <span className="text-foreground font-medium">PCB Structure</span>
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight">PCB Structure</h1>
+        </div>
+        <Card className="border border-border shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Cpu className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-base font-bold text-foreground">No PCB to display</p>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                There are no PCBs in the system yet. Add a PCB to view its component structure and bill of materials.
+              </p>
+            </div>
+            <Button variant="outline" render={<Link href="/pcb-management/list" />} className="gap-2 border-border bg-background">
+              <ArrowLeft className="h-4 w-4" />
+              <span>Back to PCB List</span>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   // Build the view model (ComponentItem[]) from the linked component records
   const pcb = {
@@ -343,7 +379,7 @@ function PCBStructureContent() {
           {/* ===== EXCEL / BOM VIEW ===== */}
           {viewMode === "excel" && (
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
               <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
                 <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
                   <tr>

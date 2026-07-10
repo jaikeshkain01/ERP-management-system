@@ -154,6 +154,95 @@ export async function updateBrand(idOrSlug: string, patch: UpdateBrandInput): Pr
   });
 }
 
+// ── brand ↔ supplier links ("Map Supplier") ────────────────────────────────────
+export interface BrandSupplierView {
+  id: string;
+  supplierId: string; // supplier slug (bootstrap id-space)
+  supplierName: string;
+  estPrice: number | null;
+  moq: number | null;
+  leadTimeDays: number | null;
+}
+
+export interface AddBrandSupplierInput {
+  supplier: string; // uuid, slug, or name
+  estPrice?: number | null;
+  moq?: number | null;
+  leadTimeDays?: number | null;
+}
+
+async function resolveBrandId(tx: TxClient, idOrSlug: string): Promise<string> {
+  const b = await tx.brands.findFirst({
+    where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
+    select: { id: true },
+  });
+  if (!b) throw Errors.notFound("Brand");
+  return b.id;
+}
+
+async function resolveSupplier(tx: TxClient, key: string): Promise<{ id: string; slug: string; name: string }> {
+  const s = await tx.suppliers.findFirst({
+    where: {
+      deleted_at: null,
+      ...(isUuid(key) ? { id: key } : { OR: [{ slug: key }, { name: key }] }),
+    },
+    select: { id: true, slug: true, name: true },
+  });
+  if (!s) throw Errors.notFound("Supplier");
+  return s;
+}
+
+export async function listBrandSuppliers(brandKey: string): Promise<BrandSupplierView[]> {
+  if (isTesting) return [];
+  return guarded("brand.view", async (tx) => {
+    const brandId = await resolveBrandId(tx, brandKey);
+    return tx.$queryRaw<BrandSupplierView[]>`
+      SELECT bs.id, s.slug AS "supplierId", s.name AS "supplierName",
+             bs.est_price::float8 AS "estPrice", bs.moq AS "moq", bs.lead_time_days AS "leadTimeDays"
+      FROM brand_suppliers bs
+      JOIN suppliers s ON s.id = bs.supplier_id AND s.deleted_at IS NULL
+      WHERE bs.brand_id = ${brandId}::uuid AND bs.deleted_at IS NULL
+      ORDER BY s.name`;
+  });
+}
+
+export async function addBrandSupplier(brandKey: string, input: AddBrandSupplierInput): Promise<BrandSupplierView> {
+  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand-supplier writes are not available in mock mode (isTesting=true).");
+  return guarded("brand.edit", async (tx, ctx) => {
+    const brandId = await resolveBrandId(tx, brandKey);
+    const sup = await resolveSupplier(tx, input.supplier);
+    const [row] = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO brand_suppliers (company_id, brand_id, supplier_id, est_price, moq, lead_time_days, created_by, updated_by)
+      VALUES (${ctx.companyId}::uuid, ${brandId}::uuid, ${sup.id}::uuid,
+              ${input.estPrice ?? null}, ${input.moq ?? null}, ${input.leadTimeDays ?? null},
+              ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+      ON CONFLICT (company_id, brand_id, supplier_id) WHERE deleted_at IS NULL
+      DO UPDATE SET est_price = EXCLUDED.est_price, moq = EXCLUDED.moq,
+                    lead_time_days = EXCLUDED.lead_time_days, updated_by = EXCLUDED.updated_by, updated_at = now()
+      RETURNING id`;
+    return {
+      id: row.id,
+      supplierId: sup.slug,
+      supplierName: sup.name,
+      estPrice: input.estPrice ?? null,
+      moq: input.moq ?? null,
+      leadTimeDays: input.leadTimeDays ?? null,
+    };
+  });
+}
+
+export async function removeBrandSupplier(brandKey: string, supplierKey: string): Promise<{ ok: true }> {
+  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand-supplier writes are not available in mock mode (isTesting=true).");
+  return guarded("brand.edit", async (tx, ctx) => {
+    const brandId = await resolveBrandId(tx, brandKey);
+    const sup = await resolveSupplier(tx, supplierKey);
+    await tx.$executeRaw`
+      UPDATE brand_suppliers SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE brand_id = ${brandId}::uuid AND supplier_id = ${sup.id}::uuid AND deleted_at IS NULL`;
+    return { ok: true as const };
+  });
+}
+
 // ── mappers ──────────────────────────────────────────────────────────────────
 function mockBrand(b: (typeof BRANDS)[number]): BrandView {
   return {

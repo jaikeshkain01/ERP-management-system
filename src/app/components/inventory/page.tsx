@@ -12,6 +12,7 @@ import {
   Boxes, ArrowUpRight, Truck, Tag, ArrowDownToLine, ArrowUpFromLine, CheckCircle2,
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import type { StockDirection } from "@/mockdata/types"
 import { useStockLedger } from "@/lib/use-stock-ledger"
 import { effectiveComponentStock, effectiveBrandStocks, type NewTransactionInput } from "@/lib/stock-ledger"

@@ -7,6 +7,7 @@ import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, Packag
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import type { PurchaseOrder } from "@/mockdata/purchases"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 function PurchaseOrdersContent() {
   const [poList, setPoList] = React.useState<PurchaseOrder[]>([])
@@ -111,7 +112,7 @@ function PurchaseOrdersContent() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <DragScrollArea className="overflow-x-auto">
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="bg-muted/40 uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                   <tr>
@@ -172,7 +173,7 @@ function PurchaseOrdersContent() {
                   )}
                 </tbody>
               </table>
-            </div>
+            </DragScrollArea>
           </CardContent>
         </Card>
 

@@ -144,6 +144,42 @@ function BrandDashboardContent() {
   const selectedId = searchParams.get("brand") || "yageo"
   const selectedBrand = brands[selectedId] || brands["yageo"] || DEFAULT_BRANDS["yageo"]
 
+  // Merge persisted brand↔supplier links (brand_suppliers) into the selected brand.
+  React.useEffect(() => {
+    if (!selectedId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/brands/${encodeURIComponent(selectedId)}/suppliers`, { credentials: "same-origin" })
+        const body = await res.json().catch(() => null)
+        if (!res.ok || !body?.data || cancelled) return
+        const links = body.data as Array<{ supplierId: string; supplierName: string; estPrice: number | null; moq: number | null; leadTimeDays: number | null }>
+        if (links.length === 0) return
+        setBrands((prev) => {
+          const b = prev[selectedId]
+          if (!b) return prev
+          const existing = new Set(b.suppliers.map((s) => s.id))
+          const merged = [...b.suppliers]
+          for (const l of links) {
+            if (existing.has(l.supplierId)) continue
+            merged.push({
+              id: l.supplierId,
+              name: l.supplierName,
+              price: l.estPrice != null ? `₹${l.estPrice.toFixed(2)}` : "—",
+              moq: l.moq ?? 0,
+              leadTime: l.leadTimeDays != null ? `${l.leadTimeDays} Days` : "—",
+              rating: d.getSupplier(l.supplierId)?.rating ?? 4.5,
+            })
+          }
+          return { ...prev, [selectedId]: { ...b, suppliers: merged } }
+        })
+      } catch {
+        /* ignore — mapping is best-effort */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [selectedId, d])
+
   const handleRowClick = (id: string) => {
     const params = new URLSearchParams(window.location.search)
     params.set("brand", id)
@@ -249,7 +285,7 @@ function BrandDashboardContent() {
     showToast(`Component "${newComp.displayName}" linked to ${targetBrand.name}`)
   }
 
-  const handleAddSupplier = (e: React.FormEvent) => {
+  const handleAddSupplier = async (e: React.FormEvent) => {
     e.preventDefault()
     const targetBrand = selectedBrand
 
@@ -264,9 +300,27 @@ function BrandDashboardContent() {
     const rating = matchedSup ? matchedSup.rating : 4.5
 
     const priceVal = parseFloat(newSupPrice)
-    const formattedPrice = isNaN(priceVal) ? "₹1.00" : `₹${priceVal.toFixed(2)}`
     const moqVal = parseInt(newSupMOQ) || 1000
-    const leadTimeStr = newSupLead.toLowerCase().includes("day") ? newSupLead : `${newSupLead || 5} Days`
+    const leadVal = parseInt(newSupLead) || 5
+    const formattedPrice = isNaN(priceVal) ? "₹1.00" : `₹${priceVal.toFixed(2)}`
+    const leadTimeStr = `${leadVal} Days`
+
+    // Persist the brand↔supplier mapping (brand_suppliers table).
+    const res = await fetch(`/api/brands/${encodeURIComponent(targetBrand.id)}/suppliers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        supplier: newSupName,
+        estPrice: isNaN(priceVal) ? null : priceVal,
+        moq: moqVal,
+        leadTimeDays: leadVal,
+      }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to map supplier", "error")
+      return
+    }
 
     const newSup: AssociatedSupplier = {
       id: newSupName,
@@ -277,20 +331,7 @@ function BrandDashboardContent() {
       rating: rating
     }
 
-    const updatedBrand = {
-      ...targetBrand,
-      suppliers: [...targetBrand.suppliers, newSup]
-    }
-
-    const updated = {
-      ...brands,
-      [targetBrand.id]: updatedBrand
-    }
-
-    // NOTE: there is no brand↔supplier link in the schema (a supplier price is always
-    // keyed to a specific component). This brand-level mapping is a session-only
-    // convenience and is not persisted; use a component's page to record a real price.
-    setBrands(updated)
+    setBrands({ ...brands, [targetBrand.id]: { ...targetBrand, suppliers: [...targetBrand.suppliers, newSup] } })
     setNewSupPrice("")
     setNewSupMOQ("")
     setNewSupLead("")
@@ -377,7 +418,7 @@ function BrandDashboardContent() {
           </CardHeader>
           <CardContent className="p-0 divide-y divide-border">
             {filteredBrands.map((b) => {
-              const isSelected = b.id === selectedBrand.id
+              const isSelected = b.id === selectedBrand?.id
               return (
                 <div
                   key={b.id}
@@ -418,6 +459,22 @@ function BrandDashboardContent() {
 
         {/* Right column - Brand Details */}
         <div className="lg:col-span-2 space-y-6">
+          {!selectedBrand ? (
+            <Card className="border border-border shadow-sm">
+              <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                  <Award className="h-6 w-6" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-base font-bold text-foreground">No brand to display</p>
+                  <p className="text-sm text-muted-foreground max-w-sm">
+                    There are no manufacturer brands yet. Use “Add Brand” to register the first one.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+          <>
           {/* Section 1: Brand Info */}
           <Card className="border border-border shadow-sm">
             <CardContent className="p-6 space-y-6">
@@ -638,6 +695,8 @@ function BrandDashboardContent() {
               </div>
             </CardContent>
           </Card>
+          </>
+          )}
         </div>
       </div>
 

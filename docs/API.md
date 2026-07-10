@@ -357,6 +357,23 @@ template entry as it's built.
 > Detail lookups accept a uuid **or** business key (slug/code). Aggregates/joins use raw SQL with
 > numeric casts (`::int`/`::float8`) so JS receives numbers, not `Decimal`/strings.
 
+### Custom (user-added) products — ✅ (`/custom-products`, `/{id}`, `/{id}/versions`, `/{id}/versions/{versionId}`)
+- **Source:** [route](../src/app/api/custom-products/) · provider [custom-products.ts](../src/lib/server/data/custom-products.ts).
+- **Why separate:** products added via **Import BOM** / **Add Manually** have arbitrary free-text BOM
+  lines (raw MPN/manufacturer/qty), NOT registered catalog components, so they can't live in the
+  `products → bom_versions → pcb_lines → components` graph. They persist in dedicated tables
+  `custom_products` + `custom_bom_versions` (raw lines as JSONB); one product holds MANY versions.
+- **Endpoints / permissions:** `GET` list + `POST` create (`product.view` / `product.create`);
+  `PATCH {id}` set active version (`product.edit`); `DELETE {id}` soft-delete product+versions
+  (`product.delete`); `POST {id}/versions` add+activate a version (`product.create`);
+  `DELETE {id}/versions/{versionId}` soft-delete a version, refuses the last one (`product.edit`).
+- **id-space:** client id is `cp-<slug>` (so the UI distinguishes custom from catalog products);
+  `{id}` accepts `cp-<slug>`, a bare slug, or the uuid. Create derives a unique slug per tenant.
+- **Returns:** `CustomProductView` (`{ id, name, code, description, source, versions[], activeVersionId,
+  createdAt }`) — the same shape the client `useUserProducts` context consumes. Mock mode (isTesting):
+  list = `[]`, writes = **400 `mock_read_only`**.
+- **Replaces** the old localStorage store (`erp:user-products`) — now server-persisted + multi-tenant.
+
 ### Purchasing — ✅ (PR list/create/approve, PO list/receive)
 - **Source:** routes under [purchase-requests](../src/app/api/purchase-requests/) +
   [purchase-orders](../src/app/api/purchase-orders/) · provider [purchases.ts](../src/lib/server/data/purchases.ts).

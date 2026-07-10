@@ -247,6 +247,8 @@ export interface UpdateComponentInput {
   minStock?: number;
   reorderQty?: number;
   specs?: { key: string; value: string }[];
+  /** Supplier uuid/slug/name to mark preferred; null clears it. */
+  preferredSupplierId?: string | null;
 }
 
 /** Edit a component's own fields (by uuid or generic_pn). Changing generic_pn is allowed but must stay unique. */
@@ -267,6 +269,22 @@ export async function updateComponent(idOrSlug: string, patch: UpdateComponentIn
       if (dupe) throw Errors.conflict("A component with this generic part number already exists", { genericPN: patch.genericPN.trim() });
     }
 
+    // Resolve preferred supplier (uuid / slug / name) → uuid, or null to clear.
+    let preferredSupplierId: string | null | undefined;
+    if (patch.preferredSupplierId !== undefined) {
+      if (patch.preferredSupplierId === null || patch.preferredSupplierId === "") {
+        preferredSupplierId = null;
+      } else {
+        const key = patch.preferredSupplierId;
+        const sup = await tx.suppliers.findFirst({
+          where: { deleted_at: null, ...(isUuid(key) ? { id: key } : { OR: [{ slug: key }, { name: key }] }) },
+          select: { id: true },
+        });
+        if (!sup) throw Errors.notFound("Supplier");
+        preferredSupplierId = sup.id;
+      }
+    }
+
     const row = await tx.components.update({
       where: { id: existing.id },
       data: {
@@ -285,6 +303,14 @@ export async function updateComponent(idOrSlug: string, patch: UpdateComponentIn
         ...(patch.specs !== undefined ? { specs: patch.specs.filter((s) => s.key.trim()) } : {}),
       },
     });
+
+    // preferred_supplier_id lives outside the generated Prisma client (added by a
+    // later migration) — set it via raw SQL when the caller provided it.
+    if (preferredSupplierId !== undefined) {
+      await tx.$executeRaw`
+        UPDATE components SET preferred_supplier_id = ${preferredSupplierId}::uuid, updated_by = ${ctx.userId}::uuid
+        WHERE id = ${existing.id}::uuid`;
+    }
 
     return fromDb(row, await componentStock(tx, existing.id));
   });

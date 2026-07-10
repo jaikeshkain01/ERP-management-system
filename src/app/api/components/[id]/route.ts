@@ -22,6 +22,7 @@ const PatchBody = z.object({
   minStock: z.number().nonnegative().optional(),
   reorderQty: z.number().nonnegative().optional(),
   specs: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+  preferredSupplierId: z.string().nullable().optional(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

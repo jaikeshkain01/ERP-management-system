@@ -11,16 +11,21 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
-import {
-  buildDashboardData,
-  PRODUCTION_BLOCKERS, PURCHASE_SUMMARY, PRODUCTION_ORDERS_RECENT, RECENT_ACTIVITIES,
-} from "@/mockdata/dashboard"
+import { buildDashboardData } from "@/mockdata/dashboard"
+import type { DashboardSummary } from "@/lib/server/data/dashboard"
 import { useData } from "@/lib/data-provider"
 import { StatStrip } from "@/components/stat-strip"
 import { useModules } from "@/components/module-provider"
 import type { ModuleId } from "@/lib/modules"
 
 type TabId = "overview" | "manufacturing" | "inventory" | "procurement"
+
+/** Compact ₹ formatter (Cr / L / plain) for the headline valuation tile. */
+function compactINR(n: number): string {
+  if (n >= 1e7) return `₹ ${(n / 1e7).toFixed(2)} Cr`
+  if (n >= 1e5) return `₹ ${(n / 1e5).toFixed(2)} L`
+  return `₹ ${Math.round(n).toLocaleString("en-IN")}`
+}
 
 export default function Dashboard() {
   const [mounted, setMounted] = React.useState(false)
@@ -31,31 +36,43 @@ export default function Dashboard() {
   const { PRODUCT_STATUS, LOW_STOCK, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT, INVENTORY_CHART } =
     React.useMemo(() => buildDashboardData(d), [d])
 
+  // Operational aggregates not derivable from the catalog bootstrap (/api/dashboard).
+  const [ops, setOps] = React.useState<DashboardSummary | null>(null)
+
   // Sync state on mount to prevent SSR hydration mismatch
   React.useEffect(() => {
     setMounted(true)
+      ; (async () => {
+        try {
+          const res = await fetch("/api/dashboard", { cache: "no-store" })
+          const body = await res.json().catch(() => null)
+          if (res.ok && body?.data) setOps(body.data as DashboardSummary)
+        } catch {
+          // leave ops null — panels render empty
+        }
+      })()
   }, [])
 
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId }[] = [
-    { title: "Products", value: "15", desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10" },
-    { title: "PCBs", value: "48", desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10" },
-    { title: "Components", value: "1,250", desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10" },
-    { title: "Suppliers", value: "35", desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10" },
-    { title: "Brands", value: "420", desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10" },
-    { title: "Inventory Value", value: "₹ 2.4 Cr", desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory" },
+    { title: "Products", value: d.PRODUCTS.length.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10" },
+    { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10" },
+    { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10" },
+    { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10" },
+    { title: "Brands", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10" },
+    { title: "Inventory Value", value: compactINR(ops?.inventoryValue ?? 0), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory" },
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
-  // Panel datasets sourced from the centralized store (see @/mockdata/dashboard)
+  // Catalog panels derive from the bootstrap store; operational panels from /api/dashboard.
   const productStatus = PRODUCT_STATUS
-  const productionBlockers = PRODUCTION_BLOCKERS
+  const productionBlockers = ops?.productionBlockers ?? []
   const lowStock = LOW_STOCK
-  const purchaseSummary = PURCHASE_SUMMARY
-  const productionOrders = PRODUCTION_ORDERS_RECENT
+  const purchaseSummary = ops?.purchaseSummary ?? []
+  const productionOrders = ops?.recentProductionOrders ?? []
   const singleSupplierComponents = SINGLE_SUPPLIER
   const topConsumed = TOP_CONSUMED
   const usageImpact = USAGE_IMPACT
-  const recentActivities = RECENT_ACTIVITIES
+  const recentActivities = ops?.recentActivities ?? []
   const inventoryChartData = INVENTORY_CHART
 
   const allTabs: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }>; alert?: number; moduleId?: ModuleId }[] = [
@@ -108,16 +125,14 @@ export default function Dashboard() {
               <tr key={idx} className="hover:bg-muted/10 transition-colors">
                 <td className="px-6 py-3.5 font-bold">{item.product}</td>
                 <td className="px-6 py-3.5 text-center">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold border ${
-                    item.status === "Ready"
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold border ${item.status === "Ready"
                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
                       : item.status === "Blocked"
-                      ? "bg-destructive/10 border-destructive/20 text-destructive"
-                      : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
-                  }`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${
-                      item.status === "Ready" ? "bg-emerald-500" : item.status === "Blocked" ? "bg-destructive" : "bg-amber-500"
-                    }`} />
+                        ? "bg-destructive/10 border-destructive/20 text-destructive"
+                        : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                    }`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${item.status === "Ready" ? "bg-emerald-500" : item.status === "Blocked" ? "bg-destructive" : "bg-amber-500"
+                      }`} />
                     {item.status}
                   </span>
                 </td>
@@ -198,11 +213,10 @@ export default function Dashboard() {
                 <td className="px-6 py-3.5 font-mono text-destructive font-bold">{item.current.toLocaleString()}</td>
                 <td className="px-6 py-3.5 font-mono text-muted-foreground">{item.minimum.toLocaleString()}</td>
                 <td className="px-6 py-3.5 text-right">
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase ${
-                    item.status === "Critical"
+                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase ${item.status === "Critical"
                       ? "bg-destructive/10 border-destructive/20 text-destructive"
                       : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
-                  }`}>
+                    }`}>
                     {item.status}
                   </span>
                 </td>
@@ -258,11 +272,10 @@ export default function Dashboard() {
                 <td className="px-6 py-3.5 font-bold">{order.product}</td>
                 <td className="px-6 py-3.5 font-mono">{order.qty}</td>
                 <td className="px-6 py-3.5 text-right">
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${
-                    order.status === "Completed"
+                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${order.status === "Completed"
                       ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
                       : "bg-primary/10 border-primary/20 text-primary"
-                  }`}>
+                    }`}>
                     {order.status}
                   </span>
                 </td>
@@ -541,11 +554,10 @@ export default function Dashboard() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-semibold transition-colors cursor-pointer ${
-                  active
+                className={`relative flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-semibold transition-colors cursor-pointer ${active
                     ? "border-primary text-primary"
                     : "border-transparent text-muted-foreground hover:border-border hover:text-foreground"
-                }`}
+                  }`}
               >
                 <Icon className="h-4 w-4" />
                 {tab.label}

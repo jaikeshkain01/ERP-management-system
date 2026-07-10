@@ -722,6 +722,94 @@ CREATE INDEX ix_audit_field  ON audit_logs (entity, field, changed_at);  -- "his
 -- scaling step (out of scope here; the shape above is partition-ready).
 
 -- ============================================================================
+--  CUSTOM (USER-ADDED) PRODUCTS
+-- ============================================================================
+-- Products a user adds via "Import BOM" or "Add Manually". Their BOM lines are
+-- arbitrary free-text part numbers (raw MPN / manufacturer / qty), NOT registered
+-- catalog components, so they CANNOT be expressed through the
+-- products -> bom_versions -> product_pcbs -> pcb_lines -> components graph.
+-- They live here with the raw lines stored as JSONB. A custom_product holds MANY
+-- bom versions (v1, Rev B, …); active_version_id points at the one shown by the
+-- Product Structure view.
+CREATE TABLE custom_products (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  slug              text NOT NULL,
+  name              text NOT NULL,
+  code              text,
+  description       text,
+  source            text NOT NULL,          -- 'import' | 'manual'
+  active_version_id uuid,                    -- FK added after custom_bom_versions exists
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id)
+);
+CREATE UNIQUE INDEX uq_custom_products_slug ON custom_products (company_id, slug) WHERE deleted_at IS NULL;
+
+CREATE TABLE custom_bom_versions (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  custom_product_id uuid NOT NULL,
+  label             text NOT NULL,
+  source            text NOT NULL,          -- 'import' | 'manual'
+  file_name         text,
+  note              text,
+  lines             jsonb NOT NULL DEFAULT '[]',
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id),
+  FOREIGN KEY (company_id, custom_product_id) REFERENCES custom_products (company_id, id)
+);
+CREATE INDEX ix_custom_bom_versions_product ON custom_bom_versions (company_id, custom_product_id);
+
+ALTER TABLE custom_products
+  ADD CONSTRAINT fk_custom_products_active_version
+  FOREIGN KEY (company_id, active_version_id) REFERENCES custom_bom_versions (company_id, id);
+
+-- ============================================================================
+--  MODULE LICENSING + SUPPLIER LINKS
+-- ============================================================================
+-- Per-tenant paid-module enable state (registry in code src/lib/modules.ts).
+-- Absent row ⇒ module enabled (default on).
+CREATE TABLE company_modules (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id  uuid NOT NULL REFERENCES companies(id),
+  module_id   text NOT NULL,                 -- inventory | bom | purchasing | production | reports
+  enabled     boolean NOT NULL DEFAULT true,
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id)
+);
+CREATE UNIQUE INDEX uq_company_modules ON company_modules (company_id, module_id) WHERE deleted_at IS NULL;
+
+-- Authorised suppliers for a brand (brand-level "Map Supplier" list; distinct
+-- from component-level supplier_component_prices).
+CREATE TABLE brand_suppliers (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id     uuid NOT NULL REFERENCES companies(id),
+  brand_id       uuid NOT NULL REFERENCES brands(id),
+  supplier_id    uuid NOT NULL REFERENCES suppliers(id),
+  est_price      numeric(14,4),
+  moq            integer,
+  lead_time_days integer,
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id)
+);
+CREATE UNIQUE INDEX uq_brand_suppliers ON brand_suppliers (company_id, brand_id, supplier_id) WHERE deleted_at IS NULL;
+
+-- User-chosen preferred supplier for a component (NULL ⇒ derive cheapest).
+ALTER TABLE components ADD COLUMN preferred_supplier_id uuid REFERENCES suppliers(id);
+
+-- ============================================================================
 --  TRIGGERS
 -- ============================================================================
 
@@ -840,7 +928,7 @@ DECLARE t text;
     'product_pcbs','pcb_lines','component_brand_variants','supplier_component_prices',
     'production_orders','production_order_items',
     'purchase_requests','purchase_request_items','purchase_orders','purchase_order_items',
-    'approvals'
+    'approvals','custom_products','custom_bom_versions','company_modules','brand_suppliers'
   ];
 BEGIN
   FOREACH t IN ARRAY audited LOOP
@@ -883,7 +971,7 @@ DECLARE t text;
     'inventory_balances','inventory_transactions',
     'production_orders','production_order_items','production_material_moves',
     'purchase_requests','purchase_request_items','purchase_orders','purchase_order_items',
-    'approvals','notifications'
+    'approvals','notifications','custom_products','custom_bom_versions','company_modules','brand_suppliers'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

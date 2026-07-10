@@ -9,6 +9,7 @@ import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award,
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import { useData } from "@/lib/data-provider"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 interface SupplyItem {
   partId: string
@@ -120,6 +121,40 @@ function SupplierDetailsContent() {
   }
 
   const supplier = suppliers[supplierId] || suppliers["abc-electronics"] || DEFAULT_SUPPLIERS["abc-electronics"]
+
+  // No supplier for this id (e.g. empty directory / stale link) → empty state instead
+  // of crashing on supplier.name below.
+  if (!supplier) {
+    return (
+      <div className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <span>Suppliers</span>
+            <span>/</span>
+            <span className="text-foreground font-medium">Supplier Details</span>
+          </div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Supplier Details</h1>
+        </div>
+        <Card className="border border-border shadow-sm">
+          <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+              <Truck className="h-6 w-6" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-base font-bold text-foreground">No supplier to display</p>
+              <p className="text-sm text-muted-foreground max-w-sm">
+                There are no suppliers in the system yet. Add a supplier to view its profile and price agreements.
+              </p>
+            </div>
+            <Button variant="outline" render={<Link href="/suppliers/list" />} className="gap-2 border-border bg-background">
+              <ArrowLeft className="h-4 w-4" />
+              <span>Back to Supplier List</span>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   const handleAddPart = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -256,7 +291,7 @@ function SupplierDetailsContent() {
             </Button>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <DragScrollArea className="overflow-x-auto">
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                   <tr>
@@ -298,7 +333,7 @@ function SupplierDetailsContent() {
                   )}
                 </tbody>
               </table>
-            </div>
+            </DragScrollArea>
           </CardContent>
         </Card>
 

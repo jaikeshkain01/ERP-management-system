@@ -79,26 +79,36 @@ export default function ProductListPage() {
     return [...custom, ...catalog]
   }, [d, userProducts])
 
-  const handleApplyImport = (result: BomImportResult, productName: string, fileName: string) => {
-    const created = addProduct({
-      name: productName,
-      source: "import",
-      version: { label: "v1", source: "import", fileName, lines: result.lines },
-    })
-    setIsImportOpen(false)
-    router.push(`/products/structure?product=${created.id}`)
+  const handleApplyImport = async (result: BomImportResult, productName: string, fileName: string) => {
+    try {
+      const created = await addProduct({
+        name: productName,
+        source: "import",
+        version: { label: "v1", source: "import", fileName, lines: result.lines },
+      })
+      setIsImportOpen(false)
+      router.push(`/products/structure?product=${created.id}`)
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to save product")
+    }
   }
 
-  const handleApplyManual = (data: ManualProductData) => {
-    const created = addProduct({
-      name: data.name,
-      code: data.code,
-      description: data.description,
-      source: "manual",
-      version: { label: data.versionLabel, source: "manual", lines: data.lines },
-    })
-    setIsManualOpen(false)
-    router.push(`/products/structure?product=${created.id}`)
+  const handleApplyManual = async (data: ManualProductData) => {
+    try {
+      const created = await addProduct({
+        name: data.name,
+        code: data.code,
+        description: data.description,
+        source: "manual",
+        version: { label: data.versionLabel, source: "manual", lines: data.lines },
+      })
+      setIsManualOpen(false)
+      router.push(`/products/structure?product=${created.id}`)
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to save product")
+    }
   }
 
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -336,7 +346,12 @@ export default function ProductListPage() {
                   variant="outline"
                   size="icon"
                   aria-label="Remove product"
-                  onClick={() => removeProduct(product.id)}
+                  onClick={() => {
+                    removeProduct(product.id).catch((err) => {
+                      console.error(err)
+                      alert(err instanceof Error ? err.message : "Failed to remove product")
+                    })
+                  }}
                   className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
                 >
                   <Trash2 className="h-4 w-4" />

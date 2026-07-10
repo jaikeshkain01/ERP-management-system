@@ -12,6 +12,7 @@ import {
 import { buildProductionData } from "@/mockdata/production"
 import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 // Types
 interface PurchaseRequest {
@@ -304,7 +305,7 @@ export default function ProductionPlannerPage() {
 
       case "matrix":
         return (
-          <div className="overflow-x-auto border border-border rounded-lg bg-background">
+          <DragScrollArea className="overflow-x-auto border border-border rounded-lg bg-background">
             <table className="w-full text-xs text-left text-foreground">
               <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                 <tr>
@@ -335,7 +336,7 @@ export default function ProductionPlannerPage() {
                 </tr>
               </tbody>
             </table>
-          </div>
+          </DragScrollArea>
         )
 
       case "shortage":

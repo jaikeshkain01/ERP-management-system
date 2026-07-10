@@ -45,6 +45,8 @@ export interface Component {
   specs: Spec[]
   brandVariants: ComponentBrandVariant[]
   offers: ComponentOffer[]
+  /** User-chosen preferred supplier (supplier slug/id). Undefined ⇒ derive cheapest. */
+  preferredSupplierId?: string
 }
 
 /** Direction of a stock movement in the inventory ledger. */

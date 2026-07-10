@@ -1,11 +1,8 @@
 "use client"
 
 import * as React from "react"
-import {
-  DEFAULT_ENABLED,
-  MODULES_STORAGE_KEY,
-  type ModuleId,
-} from "@/lib/modules"
+import { DEFAULT_ENABLED, type ModuleId } from "@/lib/modules"
+import { useData } from "@/lib/data-provider"
 
 type ModuleContextValue = {
   enabled: Record<ModuleId, boolean>
@@ -19,55 +16,70 @@ const ModuleContext = React.createContext<ModuleContextValue | null>(null)
 
 export function ModuleProvider({ children }: { children: React.ReactNode }) {
   // SSR and the first client render always see all modules on, so server HTML
-  // and hydration output match; stored state is applied after mount.
+  // and hydration output match; the server state is applied after the session
+  // is ready (module licensing now persists per-company in the DB, not localStorage).
   const [enabled, setEnabled] = React.useState<Record<ModuleId, boolean>>(DEFAULT_ENABLED)
   const [hydrated, setHydrated] = React.useState(false)
+  const { me } = useData()
+  // Latest enabled map, for reading current value inside stable callbacks.
+  const enabledRef = React.useRef(enabled)
+  React.useEffect(() => {
+    enabledRef.current = enabled
+  }, [enabled])
 
   React.useEffect(() => {
-    try {
-      const stored = localStorage.getItem(MODULES_STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored) as Partial<Record<ModuleId, boolean>>
-        setEnabled({ ...DEFAULT_ENABLED, ...parsed })
-      }
-    } catch {
-      // Corrupt stored state falls back to defaults
-    }
-    setHydrated(true)
-  }, [])
-
-  const setModuleEnabled = React.useCallback((id: ModuleId, on: boolean) => {
-    setEnabled((prev) => {
-      const next = { ...prev, [id]: on }
+    if (!me) return
+    let cancelled = false
+    ;(async () => {
       try {
-        localStorage.setItem(MODULES_STORAGE_KEY, JSON.stringify(next))
+        const res = await fetch("/api/modules", { credentials: "same-origin", cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (res.ok && body?.data && !cancelled) {
+          setEnabled({ ...DEFAULT_ENABLED, ...body.data })
+        }
       } catch {
-        // Persistence is best-effort; in-memory state still updates
+        // keep defaults on failure
+      } finally {
+        if (!cancelled) setHydrated(true)
       }
-      return next
-    })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [me])
+
+  const persist = React.useCallback((id: ModuleId, on: boolean) => {
+    // Optimistic: flip locally, then persist; revert on failure.
+    setEnabled((prev) => ({ ...prev, [id]: on }))
+    ;(async () => {
+      try {
+        const res = await fetch("/api/modules", {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, enabled: on }),
+        })
+        if (!res.ok) throw new Error(`Request failed (${res.status})`)
+        const body = await res.json().catch(() => null)
+        if (body?.data) setEnabled({ ...DEFAULT_ENABLED, ...body.data })
+      } catch (err) {
+        console.error("[modules] failed to persist toggle:", err)
+        setEnabled((prev) => ({ ...prev, [id]: !on })) // revert
+      }
+    })()
   }, [])
 
+  const setModuleEnabled = React.useCallback((id: ModuleId, on: boolean) => persist(id, on), [persist])
   const toggleModule = React.useCallback(
-    (id: ModuleId) => {
-      setEnabled((prev) => {
-        const next = { ...prev, [id]: !prev[id] }
-        try {
-          localStorage.setItem(MODULES_STORAGE_KEY, JSON.stringify(next))
-        } catch {
-          // Persistence is best-effort; in-memory state still updates
-        }
-        return next
-      })
-    },
-    []
+    (id: ModuleId) => persist(id, !enabledRef.current[id]),
+    [persist],
   )
 
   const isEnabled = React.useCallback((id: ModuleId) => enabled[id], [enabled])
 
   const value = React.useMemo(
     () => ({ enabled, isEnabled, setModuleEnabled, toggleModule, hydrated }),
-    [enabled, isEnabled, setModuleEnabled, toggleModule, hydrated]
+    [enabled, isEnabled, setModuleEnabled, toggleModule, hydrated],
   )
 
   return <ModuleContext.Provider value={value}>{children}</ModuleContext.Provider>

@@ -52,12 +52,14 @@ export async function getBootstrap(): Promise<DataSet> {
           id: string; genericPN: string; name: string; category: string; description: string;
           unit: string; solderType: string | null; footprint: string; spq: number | null;
           minStock: number; reorderQty: number; annualConsumption: number; specs: Spec[];
+          preferredSupplierId: string | null;
         }[]>`
           SELECT generic_pn AS id, generic_pn AS "genericPN", name, COALESCE(category,'') AS category,
                  COALESCE(description,'') AS description, unit, solder_type AS "solderType",
                  COALESCE(footprint,'') AS footprint, spq, min_stock::float8 AS "minStock",
                  reorder_qty::float8 AS "reorderQty", annual_consumption::float8 AS "annualConsumption",
-                 specs
+                 specs,
+                 (SELECT s.slug FROM suppliers s WHERE s.id = components.preferred_supplier_id) AS "preferredSupplierId"
           FROM components WHERE deleted_at IS NULL ORDER BY name`,
         tx.$queryRaw<{ componentPN: string; brandId: string; partNo: string; stock: number }[]>`
           SELECT c.generic_pn AS "componentPN", b.slug AS "brandId", v.part_no AS "partNo",
@@ -124,6 +126,7 @@ export async function getBootstrap(): Promise<DataSet> {
         footprint: c.footprint, spq: c.spq ?? 0, annualConsumption: c.annualConsumption,
         specs: Array.isArray(c.specs) ? c.specs : [],
         brandVariants, offers,
+        preferredSupplierId: c.preferredSupplierId ?? undefined,
       };
     });
 

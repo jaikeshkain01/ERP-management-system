@@ -7,6 +7,7 @@ import { CheckCircle2, XCircle, ShieldAlert, AlertCircle, RefreshCw, Check, File
 import { buildProductionData } from "@/mockdata/production"
 import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 export default function ProductionReadinessPage() {
   const d = useData()
@@ -117,7 +118,7 @@ export default function ProductionReadinessPage() {
             <CardDescription>Simulated Batch: ROIP 400 (100 Units)</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-x-auto">
+            <DragScrollArea className="overflow-x-auto">
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                   <tr>
@@ -152,7 +153,7 @@ export default function ProductionReadinessPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </DragScrollArea>
           </CardContent>
         </Card>
 

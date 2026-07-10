@@ -7,6 +7,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { BarChart3, TrendingUp, Users, Clock, Percent } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
 import { PRODUCTION_YIELD, type MonthlyYield } from "@/mockdata/reports"
+import type { ReportsSummary } from "@/lib/server/data/production"
 
 const chartConfig = {
   yield: {
@@ -18,14 +19,20 @@ const chartConfig = {
 export default function ReportsPage() {
   const [mounted, setMounted] = React.useState(false)
   const [productionData, setProductionData] = React.useState<MonthlyYield[]>(PRODUCTION_YIELD)
+  const [summary, setSummary] = React.useState<ReportsSummary | null>(null)
 
   React.useEffect(() => {
     setMounted(true)
     ;(async () => {
       try {
-        const res = await fetch("/api/reports/yield?range=6m", { cache: "no-store" })
-        const body = await res.json().catch(() => null)
-        if (res.ok && Array.isArray(body?.data) && body.data.length) setProductionData(body.data)
+        const [yieldRes, summaryRes] = await Promise.all([
+          fetch("/api/reports/yield?range=6m", { cache: "no-store" }),
+          fetch("/api/reports/summary", { cache: "no-store" }),
+        ])
+        const yieldBody = await yieldRes.json().catch(() => null)
+        if (yieldRes.ok && Array.isArray(yieldBody?.data) && yieldBody.data.length) setProductionData(yieldBody.data)
+        const summaryBody = await summaryRes.json().catch(() => null)
+        if (summaryRes.ok && summaryBody?.data) setSummary(summaryBody.data as ReportsSummary)
       } catch {
         // keep the static fallback series
       }
@@ -33,11 +40,14 @@ export default function ReportsPage() {
   }, [])
 
   const stats = [
-    { title: "Total Batches Run", value: "186", description: "+12 from last month", icon: TrendingUp },
-    { title: "Units Produced", value: "3,420", description: "+8% production volume", icon: BarChart3 },
-    { title: "Avg Yield Rate", value: "98.6%", description: "+0.4% efficiency increase", icon: Percent },
-    { title: "Avg Lead Time", value: "4.2 Days", description: "-0.8 days optimization", icon: Clock },
+    { title: "Total Batches Run", value: (summary?.totalBatches ?? 0).toLocaleString(), description: "Completed production batches", icon: TrendingUp },
+    { title: "Units Produced", value: (summary?.unitsProduced ?? 0).toLocaleString(), description: "Total finished output volume", icon: BarChart3 },
+    { title: "Avg Yield Rate", value: `${(summary?.avgYield ?? 0).toFixed(1)}%`, description: "Completed vs. cancelled batches", icon: Percent },
+    { title: "Avg Lead Time", value: `${(summary?.avgLeadTimeDays ?? 0).toFixed(1)} Days`, description: "Create → complete duration", icon: Clock },
   ]
+
+  const distribution = summary?.distribution ?? []
+  const distTotal = distribution.reduce((s, r) => s + r.units, 0)
 
   return (
     <div className="space-y-6">
@@ -114,25 +124,29 @@ export default function ReportsPage() {
           </CardHeader>
           <CardContent className="p-6 space-y-6">
             <div className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="font-semibold text-foreground">ROIP 400</span>
-                  <span className="font-mono text-muted-foreground">75% (2,565 Units)</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div className="bg-primary h-2 rounded-full" style={{ width: "75%" }} />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="font-semibold text-foreground">Voice Logger</span>
-                  <span className="font-mono text-muted-foreground">25% (855 Units)</span>
-                </div>
-                <div className="w-full bg-muted rounded-full h-2">
-                  <div className="bg-primary/50 h-2 rounded-full" style={{ width: "25%" }} />
-                </div>
-              </div>
+              {distribution.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  No completed production orders yet.
+                </p>
+              ) : (
+                distribution.map((row, idx) => {
+                  const pct = distTotal > 0 ? Math.round((row.units / distTotal) * 100) : 0
+                  return (
+                    <div key={idx} className="space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-semibold text-foreground">{row.product}</span>
+                        <span className="font-mono text-muted-foreground">{pct}% ({row.units.toLocaleString()} Units)</span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2">
+                        <div
+                          className={idx === 0 ? "bg-primary h-2 rounded-full" : "bg-primary/50 h-2 rounded-full"}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })
+              )}
             </div>
 
             <div className="border-t border-border/50 pt-4 space-y-2 text-xs text-muted-foreground/80">

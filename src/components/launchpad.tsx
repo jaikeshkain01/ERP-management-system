@@ -64,11 +64,10 @@ export function Launchpad() {
                 <Icon className="h-5 w-5" />
               </div>
               <span
-                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
-                  licensed
+                className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider ${licensed
                     ? "border-success/25 bg-success/10 text-success"
                     : "border-border bg-muted text-muted-foreground"
-                }`}
+                  }`}
               >
                 {licensed ? "Licensed" : "Base"}
               </span>

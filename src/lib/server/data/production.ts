@@ -382,3 +382,65 @@ export async function getYieldReport(range = "6m"): Promise<MonthlyYield[]> {
     return recentMonthBuckets(months).map((b) => ({ month: b.label, yield: byBucket.get(b.key) ?? 0 }));
   });
 }
+
+// ── Reports — headline KPI strip + output distribution ────────────────────────────
+export interface ReportsSummary {
+  totalBatches: number; // completed production orders
+  unitsProduced: number; // Σ qty of completed orders
+  avgYield: number; // completed / (completed + cancelled) × 100
+  avgLeadTimeDays: number; // avg (updated_at − created_at) of completed orders
+  distribution: { product: string; units: number }[]; // completed units by product line
+}
+
+/** Static fallback used in mock mode (mirrors the old hardcoded reports strip). */
+const MOCK_REPORTS_SUMMARY: ReportsSummary = {
+  totalBatches: 186,
+  unitsProduced: 3420,
+  avgYield: 98.6,
+  avgLeadTimeDays: 4.2,
+  distribution: [
+    { product: "ROIP 400", units: 2565 },
+    { product: "Voice Logger", units: 855 },
+  ],
+};
+
+export async function getReportsSummary(): Promise<ReportsSummary> {
+  if (isTesting) return MOCK_REPORTS_SUMMARY;
+  return guarded("report.view", async (tx) => {
+    const [row] = await tx.$queryRaw<{
+      totalBatches: number;
+      unitsProduced: number;
+      completed: number;
+      cancelled: number;
+      avgLeadTimeDays: number | null;
+    }[]>`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'Completed')::int AS "totalBatches",
+        COALESCE(SUM(qty) FILTER (WHERE status = 'Completed'), 0)::int AS "unitsProduced",
+        COUNT(*) FILTER (WHERE status = 'Completed')::int AS completed,
+        COUNT(*) FILTER (WHERE status = 'Cancelled')::int AS cancelled,
+        AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400.0)
+          FILTER (WHERE status = 'Completed')::float8 AS "avgLeadTimeDays"
+      FROM production_orders
+      WHERE deleted_at IS NULL`;
+
+    const distribution = await tx.$queryRaw<{ product: string; units: number }[]>`
+      SELECT p.name AS product, COALESCE(SUM(po.qty), 0)::int AS units
+      FROM production_orders po
+      JOIN products p ON p.id = po.product_id
+      WHERE po.deleted_at IS NULL AND po.status = 'Completed'
+      GROUP BY p.name
+      ORDER BY units DESC
+      LIMIT 6`;
+
+    const closed = row.completed + row.cancelled;
+    const avgYield = closed > 0 ? (row.completed / closed) * 100 : 0;
+    return {
+      totalBatches: row.totalBatches,
+      unitsProduced: row.unitsProduced,
+      avgYield: Math.round(avgYield * 10) / 10,
+      avgLeadTimeDays: row.avgLeadTimeDays != null ? Math.round(row.avgLeadTimeDays * 10) / 10 : 0,
+      distribution,
+    };
+  });
+}
