@@ -24,7 +24,7 @@ When you write or change an endpoint/service:
 
 **Status legend:** ⬜ Not implemented · 🟡 In progress · ✅ Done · ⚠️ Needs revisit
 
-_Last updated: 2026-07-09 — catalog **write** endpoints live: `POST /brands`, `PATCH /brands/{id}`, `PATCH /suppliers/{id}`, `POST /suppliers/{id}/prices` (price-book upsert), `PATCH /components/{id}`, `POST /components/{id}/variants`. The Brands, Supplier-Details and Component-Details pages now persist through these instead of localStorage (localStorage fully removed from all three). Remaining session-only bits: brand↔supplier "map" (no schema link), component "delete" (no DELETE endpoint yet), and "set preferred supplier" (no column)._
+_Last updated: 2026-07-09 — catalog **write** endpoints live: `POST /brands`, `PATCH /brands/{id}`, `POST /suppliers`, `PATCH /suppliers/{id}`, `POST /suppliers/{id}/prices` (price-book upsert), `PATCH /components/{id}`, `POST /components/{id}/variants`, `DELETE /components/{id}` (soft-delete, 409 if used in a BOM). The Brands, Supplier-Details and Component-Details pages persist through these instead of localStorage (localStorage fully removed from all three); Component-Details Add-Supplier auto-creates an unknown supplier/brand then prices it. Remaining session-only bits: brands/list brand↔supplier "map" (no schema link — a price needs a component) and "set preferred supplier" (no column)._
 
 ## Frontend integration (UI → backend)
 
@@ -199,6 +199,7 @@ template entry as it's built.
 - 🟡 `GET  /components` `?category&solderType&footprint&q` — done, now incl. derived `stock`/`available`/`reserved`/`stockStatus`; `brand`/`supplier`/`stockStatus` *filters* still deferred
 - ⬜ `GET  /components/{id}` · `GET /components/{id}/usage`
 - ✅ `PATCH /components/{id}` — edit own fields (name/genericPN/category/unit/solderType/footprint/spq/minStock/reorderQty/specs)
+- ✅ `DELETE /components/{id}` — soft-delete (`component.delete`); 409 if referenced by any active PCB BOM line
 - ✅ `POST /components/{id}/variants` — add a brand variant (+ optional opening stock)
 - ✅ `GET  /components/{id}/stock` — rolled-up {onHand, reserved, available, damaged, byWarehouse[], byVariant[]}
 - ✅ `POST /components` — create component + brand variants (+ opening stock via IN ledger) · ⬜ `POST /components/{id}/prices`
@@ -208,7 +209,8 @@ template entry as it's built.
 - ✅ `GET  /brands` · ✅ `GET /brands/{id}` · ✅ `GET /brands/{id}/components`
 - ✅ `POST /brands` — create (`brand.create`; slug from name) · ✅ `PATCH /brands/{id}` — edit own fields (`brand.edit`; slug immutable)
 - ✅ `GET  /suppliers` · ✅ `GET /suppliers/{id}` · ✅ `GET /suppliers/{id}/prices`
-- ✅ `PATCH /suppliers/{id}` — edit own fields (`supplier.edit`; slug immutable) · ✅ `POST /suppliers/{id}/prices` — upsert current price for a (component, brand) (`supplier.edit`)
+- ✅ `POST /suppliers` — create (`supplier.create`; slug from name) · ✅ `PATCH /suppliers/{id}` — edit own fields (`supplier.edit`; slug immutable)
+- ✅ `POST /suppliers/{id}/prices` — upsert current price for a (component, brand) (`supplier.edit`)
 
 ### Dashboard & Reports
 - ⬜ `GET  /dashboard/summary` — KPIs, low-stock, single-supplier, product status

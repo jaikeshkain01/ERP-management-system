@@ -357,6 +357,30 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
   });
 }
 
+/** Soft-delete a component (by uuid or generic_pn). Blocked if it is used in any PCB BOM. */
+export async function deleteComponent(idOrSlug: string): Promise<{ id: string; genericPN: string }> {
+  if (isTesting) throw new ApiError(400, "mock_read_only", "Component writes are not available in mock mode (isTesting=true).");
+  return guarded("component.delete", async (tx, ctx) => {
+    const comp = await tx.components.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { generic_pn: idOrSlug }) },
+      select: { id: true, generic_pn: true },
+    });
+    if (!comp) throw Errors.notFound("Component");
+
+    const inUse = await tx.pcb_lines.findFirst({
+      where: { component_id: comp.id, deleted_at: null },
+      select: { id: true },
+    });
+    if (inUse) throw Errors.conflict("Component is used in one or more PCB BOMs and cannot be deleted");
+
+    await tx.components.update({
+      where: { id: comp.id },
+      data: { deleted_at: new Date(), updated_by: ctx.userId },
+    });
+    return { id: comp.id, genericPN: comp.generic_pn };
+  });
+}
+
 // ── DB source ────────────────────────────────────────────────────────────────
 
 function buildWhere(f: ComponentFilters): Prisma.componentsWhereInput {

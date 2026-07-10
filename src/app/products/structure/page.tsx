@@ -1,15 +1,20 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle, Table2, Download } from "lucide-react"
+import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, Award, ShieldCheck, Landmark, Star, Check, AlertCircle, Table2, Download, Upload, Plus, Trash2, FileSpreadsheet, PencilRuler, GitBranch } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
 import type { Component as MComponent } from "@/mockdata"
+import { ImportBomModal } from "@/components/products/import-bom-modal"
+import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
+import { ImportedBomView } from "@/components/products/imported-bom-view"
+import type { BomImportResult, ImportedBomLine } from "@/lib/bom-import"
+import { useUserProducts, activeVersionOf, isUserProductId } from "@/lib/user-products"
 
 interface ComponentItem {
   name: string
@@ -66,6 +71,45 @@ function ProductStructureContent() {
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [expandedComponents, setExpandedComponents] = React.useState<Record<string, boolean>>({})
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
+  const [importVersionOpen, setImportVersionOpen] = React.useState(false)
+  const [manualVersionOpen, setManualVersionOpen] = React.useState(false)
+
+  const router = useRouter()
+  const { getProduct: getUserProduct, addVersion, setActiveVersion, removeProduct } = useUserProducts()
+
+  const userProduct = getUserProduct(productId)
+  const isUserProduct = !!userProduct
+  const activeVersion = userProduct ? activeVersionOf(userProduct) : undefined
+  const activeLines = activeVersion?.lines ?? []
+  // A user-product id whose record isn't in the store yet: the localStorage-backed
+  // store is still hydrating (or the product was removed). Avoid flashing catalog data.
+  const looksUser = isUserProductId(productId)
+
+  // User-product BOMs read best as a flat table; default to that on navigation.
+  React.useEffect(() => {
+    if (isUserProduct) setViewMode("excel")
+  }, [productId, isUserProduct])
+
+  const nextVersionLabel = `v${(userProduct?.versions.length ?? 0) + 1}`
+
+  const handleImportVersion = (result: BomImportResult, versionLabel: string, fileName: string) => {
+    if (!userProduct) return
+    addVersion(productId, { label: versionLabel, source: "import", fileName, lines: result.lines })
+    setImportVersionOpen(false)
+    setSelectedCompId(null)
+  }
+
+  const handleManualVersion = (data: ManualProductData) => {
+    if (!userProduct) return
+    addVersion(productId, { label: data.versionLabel, source: "manual", lines: data.lines })
+    setManualVersionOpen(false)
+    setSelectedCompId(null)
+  }
+
+  const handleDeleteProduct = () => {
+    removeProduct(productId)
+    router.push("/products/list")
+  }
 
   const formatINR = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -116,6 +160,54 @@ function ProductStructureContent() {
         lookupId: component.id,
       })),
     })),
+  }
+
+  // User-product (imported/manual) summary — drives the Product Details panel + export.
+  const userTotalParts = activeLines.reduce((s, l) => s + l.qty, 0)
+  const userTypeGroups = new Set(activeLines.map((l) => l.type || "Uncategorized")).size
+
+  const displayName = isUserProduct ? userProduct!.name : product.name
+  const displayDescription = isUserProduct ? userProduct!.description : product.description
+  const displayCode = isUserProduct ? userProduct!.code || "—" : product.code
+  const displayVersion = isUserProduct ? activeVersion?.label ?? "—" : product.version
+  const displayPcbCount = isUserProduct ? userTypeGroups : product.pcbsCount
+  const displayUniqueCount = isUserProduct ? activeLines.length : product.uniqueComponentsCount
+  const displayTotalCount = isUserProduct ? userTotalParts : product.totalComponentsCount
+  const displayCost = isUserProduct ? "—" : product.estimatedCost
+
+  const handleExportUser = () => {
+    if (!userProduct || !activeVersion) return
+    const scaled = buildQty > 1
+    const tag = `${userProduct.name}-${activeVersion.label}`.replace(/\s+/g, "-")
+    exportToExcel({
+      fileName: `${tag}-BOM${scaled ? `-x${buildQty}` : ""}`,
+      sheetName: `${userProduct.name} ${activeVersion.label}`.slice(0, 28) || "BOM",
+      columns: [
+        { header: "#", value: (_l, i) => i + 1, type: "Number", width: 4 },
+        { header: "Type", value: (l) => l.type, width: 14 },
+        { header: "Name", value: (l) => l.name, width: 28 },
+        { header: "Part Number", value: (l) => l.partNumber, width: 20 },
+        { header: "Solder Type", value: (l) => l.solderType, width: 10 },
+        { header: "Footprint", value: (l) => l.footprint, width: 20 },
+        { header: "Manufacturer", value: (l) => l.manufacturer, width: 16 },
+        { header: "Qty / Unit", value: (l) => l.qty, type: "Number", width: 10 },
+        ...(scaled
+          ? [{ header: "Qty Needed", value: (l: ImportedBomLine) => l.qty * buildQty, type: "Number" as const, width: 12 }]
+          : []),
+      ],
+      rows: activeLines,
+      totalsRow: [
+        "",
+        "TOTAL",
+        `${activeLines.length} items`,
+        "",
+        "",
+        "",
+        "",
+        userTotalParts,
+        ...(scaled ? [userTotalParts * buildQty] : []),
+      ],
+    })
   }
 
   const handleComponentClick = (comp: ComponentItem) => {
@@ -191,6 +283,21 @@ function ProductStructureContent() {
   const selectedComp = selectedCompId ? getComponent(selectedCompId) : null
   const selectedComponentDetail = selectedComp ? toDrawerDetail(selectedComp) : null
 
+  // User-product id but nothing in the store yet: either the store is still
+  // hydrating from localStorage, or the product was removed. Avoid flashing an
+  // unrelated catalog product.
+  if (looksUser && !userProduct) {
+    return (
+      <div className="flex h-[400px] flex-col items-center justify-center gap-3 text-center">
+        <Package className="h-10 w-10 text-muted-foreground/50 stroke-1" />
+        <p className="text-sm font-semibold text-muted-foreground">Loading product…</p>
+        <Link href="/products/list" className="text-xs font-semibold text-primary hover:underline">
+          Back to Product List
+        </Link>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 relative">
       {/* Header */}
@@ -208,7 +315,7 @@ function ProductStructureContent() {
         </div>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <Button
-            onClick={handleExportExcel}
+            onClick={isUserProduct ? handleExportUser : handleExportExcel}
             variant="outline"
             className="gap-2 border-border bg-background cursor-pointer"
           >
@@ -226,6 +333,78 @@ function ProductStructureContent() {
         </div>
       </div>
 
+      {/* BOM version toolbar (user products) */}
+      {isUserProduct && userProduct && activeVersion && (
+        <div className="rounded-xl border border-primary/25 bg-primary/5 px-4 py-3 space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary shrink-0">
+                {userProduct.source === "manual" ? (
+                  <PencilRuler className="h-4 w-4" />
+                ) : (
+                  <FileSpreadsheet className="h-4 w-4" />
+                )}
+              </div>
+              <div className="text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-foreground">{userProduct.name}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                    {userProduct.source === "manual" ? "Manual" : "Imported"}
+                  </span>
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  Active BOM: <span className="font-bold text-foreground">{activeVersion.label}</span> ·{" "}
+                  {activeVersion.source === "import"
+                    ? <>imported from <span className="font-mono">{activeVersion.fileName || "file"}</span></>
+                    : "entered manually"}{" "}
+                  · {activeLines.length} lines
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 self-start sm:self-auto">
+              <Button variant="outline" size="sm" onClick={() => setImportVersionOpen(true)} className="gap-1.5 border-border bg-background cursor-pointer">
+                <Upload className="h-3.5 w-3.5" />
+                <span>Import version</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setManualVersionOpen(true)} className="gap-1.5 border-border bg-background cursor-pointer">
+                <Plus className="h-3.5 w-3.5" />
+                <span>Manual version</span>
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleDeleteProduct} className="gap-1.5 border-border bg-background text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer">
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete</span>
+              </Button>
+            </div>
+          </div>
+
+          {/* Version selector tabs */}
+          <div className="flex items-center gap-1.5 flex-wrap border-t border-primary/15 pt-2.5">
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-muted-foreground/70 tracking-wider mr-1">
+              <GitBranch className="h-3.5 w-3.5" />
+              BOM Versions
+            </span>
+            {userProduct.versions.map((v) => {
+              const active = v.id === activeVersion.id
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => { setActiveVersion(productId, v.id); setSelectedCompId(null) }}
+                  title={`${v.source === "import" ? "Imported" : "Manual"} · ${v.lines.length} lines`}
+                  className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-bold transition-colors cursor-pointer ${
+                    active
+                      ? "border-primary bg-primary text-primary-foreground shadow-2xs"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground hover:border-primary/40"
+                  }`}
+                >
+                  <span>{v.label}</span>
+                  <span className={`h-1.5 w-1.5 rounded-full ${v.source === "import" ? "bg-sky-400" : "bg-amber-400"}`} />
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Structure Panel (Hero) */}
         <Card className="lg:col-span-2 border border-border shadow-sm">
@@ -242,9 +421,13 @@ function ProductStructureContent() {
                     {viewMode === "tree" ? "Assembly Tree" : "Bill of Materials (Excel View)"}
                   </CardTitle>
                   <CardDescription>
-                    {viewMode === "tree"
-                      ? `Visual breakdown of ${product.name} components. Click on a component to view specifications.`
-                      : `Flat BOM sheet for ${product.name} across all PCBs. Click a row to view details.`}
+                    {isUserProduct
+                      ? viewMode === "tree"
+                        ? `BOM ${displayVersion} for ${displayName}, grouped by component type.`
+                        : `Flat BOM sheet (${displayVersion}) for ${displayName}.`
+                      : viewMode === "tree"
+                        ? `Visual breakdown of ${displayName} components. Click on a component to view specifications.`
+                        : `Flat BOM sheet for ${displayName} across all PCBs. Click a row to view details.`}
                   </CardDescription>
                 </div>
               </div>
@@ -277,8 +460,20 @@ function ProductStructureContent() {
             </div>
           </CardHeader>
 
+          {/* ===== USER-PRODUCT BOM VIEW (imported or manual) ===== */}
+          {isUserProduct && (
+            <CardContent className="p-0">
+              <ImportedBomView
+                productName={displayName}
+                lines={activeLines}
+                viewMode={viewMode}
+                buildQty={buildQty}
+              />
+            </CardContent>
+          )}
+
           {/* ===== TREE VIEW ===== */}
-          {viewMode === "tree" && (
+          {!isUserProduct && viewMode === "tree" && (
           <CardContent className="p-6 md:p-8 overflow-x-auto">
             {/* Root Product Node */}
             <div className="space-y-6">
@@ -400,7 +595,7 @@ function ProductStructureContent() {
           )}
 
           {/* ===== EXCEL / BOM VIEW ===== */}
-          {viewMode === "excel" && (
+          {!isUserProduct && viewMode === "excel" && (
           <CardContent className="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
@@ -535,44 +730,44 @@ function ProductStructureContent() {
               <div className="space-y-4">
                 <div className="flex flex-col gap-1">
                   <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Product Name</span>
-                  <span className="text-xl font-extrabold text-foreground">{product.name}</span>
+                  <span className="text-xl font-extrabold text-foreground">{displayName}</span>
                 </div>
-                
+
                 <div className="flex flex-col gap-1 border-t border-border/50 pt-3">
                   <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Description</span>
-                  <span className="text-sm text-muted-foreground leading-normal">{product.description}</span>
+                  <span className="text-sm text-muted-foreground leading-normal">{displayDescription}</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Code</span>
-                    <span className="font-mono font-bold text-foreground text-sm">{product.code}</span>
+                    <span className="font-mono font-bold text-foreground text-sm">{displayCode}</span>
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Version</span>
-                    <span className="font-semibold text-foreground text-sm">{product.version}</span>
+                    <span className="font-semibold text-foreground text-sm">{displayVersion}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-3">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">PCBs Used</span>
-                    <span className="font-bold text-foreground text-sm">{product.pcbsCount}</span>
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">{isUserProduct ? "Type Groups" : "PCBs Used"}</span>
+                    <span className="font-bold text-foreground text-sm">{displayPcbCount}</span>
                   </div>
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Unique Components</span>
-                    <span className="font-bold text-foreground text-sm">{product.uniqueComponentsCount}</span>
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">{isUserProduct ? "BOM Lines" : "Unique Components"}</span>
+                    <span className="font-bold text-foreground text-sm">{displayUniqueCount}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Total Components</span>
-                    <span className="font-bold text-foreground text-sm">{product.totalComponentsCount.toLocaleString()}</span>
+                    <span className="font-bold text-foreground text-sm">{displayTotalCount.toLocaleString()}</span>
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Estimated Cost</span>
-                    <span className="font-bold text-primary text-sm font-mono">{product.estimatedCost}</span>
+                    <span className="font-bold text-primary text-sm font-mono">{displayCost}</span>
                   </div>
                 </div>
               </div>
@@ -779,6 +974,30 @@ function ProductStructureContent() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add BOM version — via import */}
+      {importVersionOpen && (
+        <ImportBomModal
+          title="Import a new BOM version"
+          subtitle="Upload an .xlsx, .xls or .csv file — it becomes a new version of this product."
+          nameLabel="BOM Version Label"
+          namePlaceholder="e.g. v2, Rev B"
+          submitLabel="Add Version"
+          defaultProductName={nextVersionLabel}
+          onApply={handleImportVersion}
+          onClose={() => setImportVersionOpen(false)}
+        />
+      )}
+
+      {/* Add BOM version — manual */}
+      {manualVersionOpen && (
+        <AddProductModal
+          mode="version"
+          defaultVersionLabel={nextVersionLabel}
+          onApply={handleManualVersion}
+          onClose={() => setManualVersionOpen(false)}
+        />
       )}
     </div>
   )

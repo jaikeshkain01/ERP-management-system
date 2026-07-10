@@ -1,10 +1,11 @@
 /**
- * PATCH /api/components/[id] — edit a component's own fields (`component.edit`).
+ * PATCH  /api/components/[id] — edit a component's own fields (`component.edit`).
+ * DELETE /api/components/[id] — soft-delete a component (`component.delete`; 409 if used in a BOM).
  * `[id]` accepts a uuid or generic_pn. Changing generic_pn must stay unique (409).
  */
 import { z } from "zod";
 import { handle, ok, parseJson } from "@/lib/server/http";
-import { updateComponent } from "@/lib/server/data/components";
+import { deleteComponent, updateComponent } from "@/lib/server/data/components";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,5 +28,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   return handle(async () => {
     const { id } = await params;
     return ok(await updateComponent(id, await parseJson(req, PatchBody)));
+  });
+}
+
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  return handle(async () => {
+    const { id } = await params;
+    return ok(await deleteComponent(id));
   });
 }

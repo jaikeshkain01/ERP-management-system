@@ -101,7 +101,47 @@ export async function getSupplierPrices(idOrSlug: string): Promise<SupplierPrice
   });
 }
 
-// ── writes (edit supplier / upsert price) ───────────────────────────────────────
+// ── writes (create / edit supplier / upsert price) ──────────────────────────────
+const slugify = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+export interface CreateSupplierInput {
+  name: string;
+  description?: string;
+  contact?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  terms?: string;
+  status?: "Active" | "Inactive";
+}
+
+/** Create a supplier (Add Supplier form). slug is derived from the name and is the id-space key. */
+export async function createSupplier(input: CreateSupplierInput): Promise<SupplierView> {
+  if (isTesting) throw new ApiError(400, "mock_read_only", "Supplier writes are not available in mock mode (isTesting=true).");
+  return guarded("supplier.create", async (tx, ctx) => {
+    const name = input.name.trim();
+    const slug = slugify(name);
+    if (!slug) throw Errors.badRequest("Supplier name must contain letters or digits");
+    const dupe = await tx.suppliers.findFirst({ where: { slug, deleted_at: null }, select: { id: true } });
+    if (dupe) throw Errors.conflict("A supplier with this name already exists", { slug });
+    const row = await tx.suppliers.create({
+      data: {
+        company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+        slug, name,
+        description: input.description?.trim() || null,
+        contact: input.contact?.trim() || null,
+        email: input.email?.trim() || null,
+        phone: input.phone?.trim() || null,
+        address: input.address?.trim() || null,
+        terms: input.terms?.trim() || null,
+        status: input.status ?? "Active",
+      },
+    });
+    return fromDb(row);
+  });
+}
+
 export interface UpdateSupplierInput {
   name?: string;
   description?: string | null;

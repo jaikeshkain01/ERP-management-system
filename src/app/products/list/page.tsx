@@ -2,15 +2,20 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
   Cpu, Filter, Nut, Package, Plus, Search,
   CheckCircle2, ArrowRight, Award, Layers,
-  XCircle, AlertTriangle, RefreshCw
+  XCircle, AlertTriangle, RefreshCw, Upload, FileSpreadsheet, Trash2, PencilRuler, GitBranch
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
+import { useUserProducts, activeVersionOf } from "@/lib/user-products"
+import { ImportBomModal } from "@/components/products/import-bom-modal"
+import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
+import type { BomImportResult } from "@/lib/bom-import"
 
 interface ProductData {
   id: string
@@ -21,6 +26,12 @@ interface ProductData {
   brands: number
   buildableQty: number
   status: "Ready" | "Blocked" | "Limited"
+  imported?: boolean
+  /** For user products: how it was created and how many BOM versions it holds. */
+  userSource?: "import" | "manual"
+  versionCount?: number
+  activeVersionLabel?: string
+  totalParts?: number
 }
 
 // View model derived from the centralized product → PCB → component graph.
@@ -39,7 +50,57 @@ function buildProductsData(d: ReturnType<typeof useData>): ProductData[] {
 
 export default function ProductListPage() {
   const d = useData()
-  const PRODUCTS_DATA = React.useMemo(() => buildProductsData(d), [d])
+  const router = useRouter()
+  const { products: userProducts, addProduct, removeProduct } = useUserProducts()
+  const [isImportOpen, setIsImportOpen] = React.useState(false)
+  const [isManualOpen, setIsManualOpen] = React.useState(false)
+
+  const PRODUCTS_DATA = React.useMemo(() => {
+    const catalog = buildProductsData(d)
+    const custom: ProductData[] = userProducts.map((p) => {
+      const active = activeVersionOf(p)
+      const lines = active?.lines ?? []
+      return {
+        id: p.id,
+        name: p.name,
+        description: p.description,
+        pcbs: new Set(lines.map((l) => l.type || "Uncategorized")).size,
+        components: lines.length,
+        brands: new Set(lines.map((l) => l.manufacturer).filter(Boolean)).size,
+        buildableQty: 0,
+        totalParts: lines.reduce((s, l) => s + l.qty, 0),
+        status: "Limited",
+        imported: true,
+        userSource: p.source,
+        versionCount: p.versions.length,
+        activeVersionLabel: active?.label,
+      }
+    })
+    return [...custom, ...catalog]
+  }, [d, userProducts])
+
+  const handleApplyImport = (result: BomImportResult, productName: string, fileName: string) => {
+    const created = addProduct({
+      name: productName,
+      source: "import",
+      version: { label: "v1", source: "import", fileName, lines: result.lines },
+    })
+    setIsImportOpen(false)
+    router.push(`/products/structure?product=${created.id}`)
+  }
+
+  const handleApplyManual = (data: ManualProductData) => {
+    const created = addProduct({
+      name: data.name,
+      code: data.code,
+      description: data.description,
+      source: "manual",
+      version: { label: data.versionLabel, source: "manual", lines: data.lines },
+    })
+    setIsManualOpen(false)
+    router.push(`/products/structure?product=${created.id}`)
+  }
+
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
 
@@ -109,11 +170,24 @@ export default function ProductListPage() {
           </p>
         </div>
 
-        {/* Action Button */}
-        <Button className="gap-2 font-semibold self-start md:self-auto">
-          <Plus className="h-4 w-4" />
-          <span>Add Product</span>
-        </Button>
+        {/* Action Buttons */}
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <Button
+            onClick={() => setIsManualOpen(true)}
+            variant="outline"
+            className="gap-2 font-semibold border-border bg-background"
+          >
+            <PencilRuler className="h-4 w-4" />
+            <span>Add Manually</span>
+          </Button>
+          <Button
+            onClick={() => setIsImportOpen(true)}
+            className="gap-2 font-semibold"
+          >
+            <Upload className="h-4 w-4" />
+            <span>Import BOM</span>
+          </Button>
+        </div>
       </div>
 
       {/* Top Controls: Search & Filter */}
@@ -170,8 +244,27 @@ export default function ProductListPage() {
                     </CardDescription>
                   </div>
                 </div>
-                <div className="shrink-0">
-                  {getStatusBadge(product.status)}
+                <div className="shrink-0 flex flex-col items-end gap-1.5">
+                  {product.imported ? (
+                    <>
+                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-bold bg-primary/10 text-primary border border-primary/20">
+                        {product.userSource === "manual" ? (
+                          <PencilRuler className="h-3 w-3" />
+                        ) : (
+                          <FileSpreadsheet className="h-3 w-3" />
+                        )}
+                        {product.userSource === "manual" ? "Manual" : "Imported"}
+                      </span>
+                      {(product.versionCount ?? 1) > 1 && (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-muted text-muted-foreground border border-border">
+                          <GitBranch className="h-3 w-3" />
+                          {product.versionCount} BOMs
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    getStatusBadge(product.status)
+                  )}
                 </div>
               </div>
             </CardHeader>
@@ -180,13 +273,13 @@ export default function ProductListPage() {
             <CardContent className="flex-1 py-4 border-t border-b border-border/50 bg-muted/5">
               <div className="grid grid-cols-2 gap-y-4 gap-x-6 text-xs">
                 
-                {/* PCBs Metric */}
+                {/* PCBs / Types Metric */}
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md bg-secondary text-secondary-foreground border border-border/60">
                     <Cpu className="h-4 w-4 text-primary" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">PCBs</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">{product.imported ? "Types" : "PCBs"}</span>
                     <span className="text-sm font-black mt-1 text-foreground">{product.pcbs}</span>
                   </div>
                 </div>
@@ -213,29 +306,42 @@ export default function ProductListPage() {
                   </div>
                 </div>
 
-                {/* Buildable Qty Metric */}
+                {/* Buildable Qty / Total Parts Metric */}
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded-md bg-secondary text-secondary-foreground border border-border/60">
                     <Layers className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Buildable Qty</span>
-                    <span className="text-sm font-black mt-1 text-foreground">{product.buildableQty}</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">{product.imported ? "Total Parts" : "Buildable Qty"}</span>
+                    <span className="text-sm font-black mt-1 text-foreground">
+                      {product.imported ? (product.totalParts ?? 0).toLocaleString() : product.buildableQty}
+                    </span>
                   </div>
                 </div>
 
               </div>
             </CardContent>
 
-            <CardFooter className="pt-4">
+            <CardFooter className="pt-4 gap-2">
               <Button
                 render={<Link href={`/products/structure?product=${product.id}`} />}
-                className="w-full font-semibold group/btn"
+                className="flex-1 font-semibold group/btn"
                 variant="secondary"
               >
                 <span>View Structure</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
               </Button>
+              {product.imported && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Remove product"
+                  onClick={() => removeProduct(product.id)}
+                  className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
             </CardFooter>
           </Card>
         ))}
@@ -246,6 +352,23 @@ export default function ProductListPage() {
           </div>
         )}
       </div>
+
+      {/* Add product — import a BOM */}
+      {isImportOpen && (
+        <ImportBomModal
+          onApply={handleApplyImport}
+          onClose={() => setIsImportOpen(false)}
+        />
+      )}
+
+      {/* Add product — manual entry */}
+      {isManualOpen && (
+        <AddProductModal
+          mode="product"
+          onApply={handleApplyManual}
+          onClose={() => setIsManualOpen(false)}
+        />
+      )}
     </div>
   )
 }

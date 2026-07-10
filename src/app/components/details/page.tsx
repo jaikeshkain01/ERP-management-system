@@ -254,10 +254,16 @@ function ComponentDetailsContent() {
     showToast(`Successfully updated component ${updatedComponent.name}!`)
   }
 
-  // Delete component handler.
-  // NOTE: session-only for now — there is no DELETE /components endpoint yet, so the
-  // record still exists in the database and reappears in the list on reload.
-  const handleDeleteComponent = () => {
+  // Delete component handler — soft-deletes on the backend (409 if used in a BOM).
+  const handleDeleteComponent = async () => {
+    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}`, { method: "DELETE" })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to delete component", "error")
+      setActiveModal(null)
+      return
+    }
+
     const updatedData = { ...componentsData }
     delete updatedData[componentId]
     setComponentsData(updatedData)
@@ -288,27 +294,44 @@ function ComponentDetailsContent() {
       return
     }
 
-    // Persist to the price book when the supplier + brand match existing records
-    // (new suppliers must be created in the Suppliers module first — no create-supplier API yet).
-    const supplierSlug = d.SUPPLIERS.find(s => s.name.toLowerCase() === newSupplierName.trim().toLowerCase())?.id
-    const brandSlug = d.BRANDS.find(b => b.name.toLowerCase() === newSupplierMfg.trim().toLowerCase())?.id
+    // Resolve the supplier + brand (creating either on the fly if the typed name is new),
+    // then persist the price against the current component.
     const leadDays = parseInt(newSupplierLeadTime.replace(/[^\d]/g, ""), 10)
-    if (supplierSlug && brandSlug) {
-      const res = await fetch(`/api/suppliers/${supplierSlug}/prices`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          component: componentId, brand: brandSlug, price: priceNum, moq: moqNum,
-          ...(isNaN(leadDays) ? {} : { leadTimeDays: leadDays }),
-        }),
+
+    let supplierSlug = d.SUPPLIERS.find(s => s.name.toLowerCase() === newSupplierName.trim().toLowerCase())?.id
+    if (!supplierSlug) {
+      const r = await fetch("/api/suppliers", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newSupplierName.trim() }),
       })
-      if (!res.ok) {
-        const body = await res.json().catch(() => null)
-        showToast(body?.error?.message || "Failed to save supplier price", "error")
-        return
-      }
-    } else {
-      showToast("Saved for this session — create the supplier/brand to persist it", "success")
+      const b = await r.json().catch(() => null)
+      if (!r.ok) { showToast(b?.error?.message || "Failed to create supplier", "error"); return }
+      supplierSlug = b.data.slug
+    }
+
+    let brandSlug = d.BRANDS.find(b => b.name.toLowerCase() === newSupplierMfg.trim().toLowerCase())?.id
+    if (!brandSlug) {
+      const r = await fetch("/api/brands", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: newSupplierMfg.trim() }),
+      })
+      const b = await r.json().catch(() => null)
+      if (!r.ok) { showToast(b?.error?.message || "Failed to create brand", "error"); return }
+      brandSlug = b.data.slug
+    }
+
+    const res = await fetch(`/api/suppliers/${supplierSlug}/prices`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        component: componentId, brand: brandSlug, price: priceNum, moq: moqNum,
+        ...(isNaN(leadDays) ? {} : { leadTimeDays: leadDays }),
+      }),
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      showToast(body?.error?.message || "Failed to save supplier price", "error")
+      return
     }
 
     const formattedPrice = `₹${priceNum.toFixed(2)}`
