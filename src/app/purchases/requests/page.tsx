@@ -8,22 +8,24 @@ import { AlertCircle, Check, FileText, ShoppingCart, ShoppingBag, Plus, Landmark
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-import {
-  buildRecommendations,
-  type PurchaseRequest, type SourcingRecommendation,
-} from "@/mockdata/purchases"
-import { useData } from "@/lib/data-provider"
+import type {
+  PurchaseRequestView as PurchaseRequest,
+  SourcingRecommendation,
+  RecommendationsView,
+} from "@/lib/server/data/purchases"
 
 function PurchaseRequestsContent() {
-  const d = useData()
-  const RECOMMENDATIONS = React.useMemo(() => buildRecommendations(d), [d])
+  const [recData, setRecData] = React.useState<RecommendationsView | null>(null)
   const [prList, setPrList] = React.useState<PurchaseRequest[]>([])
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  const needQty = 500
+  const RECOMMENDATIONS: SourcingRecommendation[] = recData?.recommendations ?? []
+  const needQty = recData?.suggestedQty ?? 0
+  const shortName = recData?.componentName ?? "—"
+  const shortPN = recData?.componentPN ?? ""
 
-  // Load PRs from the backend (DB or mockdata, per isTesting)
+  // Load PRs from the backend.
   const loadPrs = React.useCallback(async () => {
     try {
       const res = await fetch("/api/purchase-requests", { cache: "no-store" })
@@ -38,6 +40,19 @@ function PurchaseRequestsContent() {
     loadPrs()
   }, [loadPrs])
 
+  // Auto-pick the biggest current shortage and its sourcing options.
+  React.useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await fetch("/api/purchases/recommendations", { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (res.ok && body?.data) setRecData(body.data as RecommendationsView)
+      } catch {
+        /* ignore — panel just stays empty */
+      }
+    })()
+  }, [])
+
   const showToast = (message: string) => {
     setToast(message)
     setTimeout(() => setToast(null), 3000)
@@ -48,7 +63,7 @@ function PurchaseRequestsContent() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        componentPN: "RES-10K",
+        componentPN: shortPN,
         brandSlug: rec.brandId,
         supplierSlug: rec.supplierId,
         qty: needQty,
@@ -60,7 +75,7 @@ function PurchaseRequestsContent() {
       return
     }
     setPrList((prev) => [body.data, ...prev])
-    showToast(`Purchase Request ${body.data.prId} created successfully for ${needQty} units of Resistor 10K.`)
+    showToast(`Purchase Request ${body.data.prId} created successfully for ${needQty} units of ${shortName}.`)
   }
 
   const handleApprovePR = async (prId: string) => {
@@ -143,16 +158,16 @@ function PurchaseRequestsContent() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-amber-500/5 dark:bg-amber-500/10 border border-amber-500/10 dark:border-amber-500/20 p-4 rounded-lg gap-4">
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-500 block">Shortage Item</span>
-                  <Link 
-                    href="/components/details?component=resistor-10k" 
+                  <Link
+                    href={`/components/details?component=${shortPN}`}
                     className="text-lg font-extrabold text-foreground hover:underline mt-1 block"
                   >
-                    Resistor 10K
+                    {shortName}
                   </Link>
                 </div>
                 <div className="text-right sm:text-left">
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">Needed Quantity</span>
-                  <span className="text-2xl font-black text-destructive mt-1 block">500 Units</span>
+                  <span className="text-2xl font-black text-destructive mt-1 block">{needQty.toLocaleString()} Units</span>
                 </div>
               </div>
 

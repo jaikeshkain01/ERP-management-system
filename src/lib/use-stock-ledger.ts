@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import type { StockTransaction } from "@/mockdata/types"
+import type { StockTransaction } from "@/lib/catalog"
 import type { NewTransactionInput } from "@/lib/stock-ledger"
 
 export type MoveResult = { ok: boolean; error?: string }

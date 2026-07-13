@@ -1,20 +1,16 @@
 /**
- * Components data access — the single place the `isTesting` toggle branches for
- * this resource. Route handlers call these functions and never care about the
- * source: mock mode reads `src/mockdata`, real mode queries Postgres (with auth,
- * RLS tenant context, and the permission gate).
+ * Components data access (Postgres). Route handlers call these functions; every
+ * query runs under auth + RLS tenant context + the permission gate.
  *
- * Stock fields are DERIVED, never stored: DB mode rolls up `inventory_balances`
- * over the component's brand variants; mock mode uses the mockdata derived stock.
+ * Stock fields are DERIVED, never stored: on-hand rolls up `inventory_balances`
+ * over the component's brand variants.
  */
 import { Prisma } from "@/generated/prisma/client";
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { COMPONENTS } from "@/mockdata/components";
 
 export interface ComponentFilters {
   category?: string;
@@ -25,7 +21,7 @@ export interface ComponentFilters {
 
 export type StockStatus = "Healthy" | "Low" | "Critical";
 
-/** The camelCase view returned to the client (matches src/mockdata/types.ts). */
+/** The camelCase view returned to the client (matches @/lib/catalog types). */
 export interface ComponentView {
   id: string;
   genericPN: string;
@@ -53,7 +49,7 @@ interface StockAgg {
   reserved: number;
 }
 
-/** Healthy / Low / Critical from stock vs min-stock (mirrors mockdata selector). */
+/** Healthy / Low / Critical from stock vs min-stock (mirrors the catalog selector). */
 function statusOf(stock: number, minStock: number): StockStatus {
   if (stock <= minStock * 0.5) return "Critical";
   if (stock < minStock) return "Low";
@@ -61,8 +57,6 @@ function statusOf(stock: number, minStock: number): StockStatus {
 }
 
 export async function listComponents(filters: ComponentFilters): Promise<ComponentView[]> {
-  if (isTesting) return listComponentsMock(filters);
-
   const ctx = await requireSession();
   return withTenant(ctx, async (tx) => {
     await assertPermission(tx, ctx, "component.view");
@@ -144,9 +138,6 @@ async function resolveOrCreateBrand(tx: TxClient, ctx: TenantContext, name: stri
  * IN ledger rows into the default bin). Brands are resolved by name / created on the fly.
  */
 export async function createComponent(input: CreateComponentInput): Promise<ComponentView> {
-  if (isTesting) {
-    throw new ApiError(400, "mock_read_only", "Component writes are not available in mock mode (isTesting=true).");
-  }
   return guarded("component.create", async (tx, ctx) => {
     const genericPN = input.genericPN.trim();
     const dupe = await tx.components.findFirst({ where: { generic_pn: genericPN, deleted_at: null }, select: { id: true } });
@@ -253,7 +244,6 @@ export interface UpdateComponentInput {
 
 /** Edit a component's own fields (by uuid or generic_pn). Changing generic_pn is allowed but must stay unique. */
 export async function updateComponent(idOrSlug: string, patch: UpdateComponentInput): Promise<ComponentView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Component writes are not available in mock mode (isTesting=true).");
   return guarded("component.edit", async (tx, ctx) => {
     const existing = await tx.components.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { generic_pn: idOrSlug }) },
@@ -332,7 +322,6 @@ export interface VariantView {
 
 /** Add a brand variant to a component (Link Component / Add Variant forms). Optional opening stock. */
 export async function addComponentVariant(idOrSlug: string, input: AddVariantInput): Promise<VariantView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Component writes are not available in mock mode (isTesting=true).");
   return guarded("component.edit", async (tx, ctx) => {
     const comp = await tx.components.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { generic_pn: idOrSlug }) },
@@ -385,7 +374,6 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
 
 /** Soft-delete a component (by uuid or generic_pn). Blocked if it is used in any PCB BOM. */
 export async function deleteComponent(idOrSlug: string): Promise<{ id: string; genericPN: string }> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Component writes are not available in mock mode (isTesting=true).");
   return guarded("component.delete", async (tx, ctx) => {
     const comp = await tx.components.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { generic_pn: idOrSlug }) },
@@ -466,41 +454,4 @@ function fromDb(
     reserved: agg?.reserved ?? 0,
     stockStatus: statusOf(stock, minStock),
   };
-}
-
-// ── Mock source ──────────────────────────────────────────────────────────────
-
-function listComponentsMock(f: ComponentFilters): ComponentView[] {
-  const q = f.q?.toLowerCase();
-  return COMPONENTS.filter((c) => {
-    if (f.category && c.category !== f.category) return false;
-    if (f.solderType && c.solderType !== f.solderType) return false;
-    if (f.footprint && c.footprint !== f.footprint) return false;
-    if (q) {
-      const hay = `${c.genericPN} ${c.name} ${c.description}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  })
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({
-      id: c.id,
-      genericPN: c.genericPN,
-      name: c.name,
-      category: c.category,
-      description: c.description,
-      unit: c.unit,
-      solderType: c.solderType,
-      footprint: c.footprint,
-      spq: c.spq,
-      minStock: c.minStock,
-      reorderQty: c.reorderQty,
-      annualConsumption: c.annualConsumption,
-      specs: c.specs,
-      stock: c.stock,
-      available: c.stock, // no reservations in the mock
-      reserved: 0,
-      stockStatus: statusOf(c.stock, c.minStock),
-    }));
 }

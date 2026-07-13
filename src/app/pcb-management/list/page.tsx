@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
 import { useData } from "@/lib/data-provider"
-import type { PcbStatus } from "@/mockdata"
+import type { PcbStatus } from "@/lib/catalog"
 
 const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
   Active: {

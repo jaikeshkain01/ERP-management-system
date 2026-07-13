@@ -1,32 +1,64 @@
 /**
- * Dashboard aggregates (mock/DB). Cross-module overview numbers that are NOT
- * derivable from the catalog bootstrap alone (inventory valuation, production
- * shortages, purchasing pipeline counts, recent activity). Catalog-derived
- * panels (product status, low stock, single-supplier, top-consumed, usage,
- * distribution) are still built client-side from /api/bootstrap via
- * buildDashboardData() — this endpoint only fills the operational gaps.
- *
- * Mock mode returns the static panels from src/mockdata/dashboard.
+ * Dashboard aggregates (DB-only). Everything the dashboard renders, computed
+ * from the normalized tables in one round of queries: inventory valuation,
+ * production blockers, purchasing pipeline counts, recent activity, PLUS the
+ * catalog-derived panels (product build-readiness, low stock, single-supplier
+ * risk, top-consumed, usage impact) that used to be built client-side.
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
 import { requireSession } from "@/lib/server/session";
 import { assertPermission } from "@/lib/server/rbac";
-import { COMPONENTS } from "@/mockdata";
-import {
-  PRODUCTION_BLOCKERS,
-  PRODUCTION_ORDERS_RECENT,
-  PURCHASE_SUMMARY,
-  RECENT_ACTIVITIES,
-  type BlockerItem,
-  type DashProductionOrder,
-  type ActivityItem,
-} from "@/mockdata/dashboard";
 
 export interface PurchaseSummaryItem {
   title: string;
   value: number;
   desc: string;
+}
+
+export interface BlockerItem {
+  product: string;
+  missingComp: string;
+  qty: number;
+}
+
+export interface DashProductionOrder {
+  orderId: string;
+  product: string;
+  qty: number;
+  status: "In Progress" | "Completed" | "Draft";
+}
+
+export interface ActivityItem {
+  text: string;
+  time: string;
+}
+
+export interface ProductStatusItem {
+  product: string;
+  status: string;
+  buildableQty: number;
+}
+
+export interface LowStockItem {
+  component: string;
+  current: number;
+  minimum: number;
+  status: "Low" | "Critical";
+}
+
+export interface SingleSupplierItem {
+  component: string;
+  supplier: string;
+}
+
+export interface ConsumedComponent {
+  component: string;
+  monthlyUsage: string;
+}
+
+export interface UsageImpactItem {
+  component: string;
+  usedInProducts: number;
 }
 
 export interface DashboardSummary {
@@ -35,6 +67,12 @@ export interface DashboardSummary {
   purchaseSummary: PurchaseSummaryItem[];
   recentProductionOrders: DashProductionOrder[];
   recentActivities: ActivityItem[];
+  // Catalog-derived panels (now computed server-side from the DB).
+  productStatus: ProductStatusItem[];
+  lowStock: LowStockItem[];
+  singleSupplier: SingleSupplierItem[];
+  topConsumed: ConsumedComponent[];
+  usageImpact: UsageImpactItem[];
 }
 
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
@@ -64,25 +102,7 @@ function dashOrderStatus(s: string): DashProductionOrder["status"] {
   return "Draft";
 }
 
-/** Mock-mode inventory valuation: Σ stock × cheapest offer price across the seed catalog. */
-function mockInventoryValue(): number {
-  return COMPONENTS.reduce((sum, c) => {
-    const best = c.offers.length ? Math.min(...c.offers.map((o) => o.price)) : 0;
-    return sum + c.stock * best;
-  }, 0);
-}
-
 export async function getDashboard(): Promise<DashboardSummary> {
-  if (isTesting) {
-    return {
-      inventoryValue: mockInventoryValue(),
-      productionBlockers: PRODUCTION_BLOCKERS,
-      purchaseSummary: PURCHASE_SUMMARY,
-      recentProductionOrders: PRODUCTION_ORDERS_RECENT,
-      recentActivities: RECENT_ACTIVITIES,
-    };
-  }
-
   return guarded("component.view", async (tx) => {
     // ── Inventory valuation: on_hand × cheapest current price for the variant's part ──
     const [{ value }] = await tx.$queryRaw<{ value: number }[]>`
@@ -177,12 +197,105 @@ export async function getDashboard(): Promise<DashboardSummary> {
       time: relTime(r.ts),
     }));
 
+    // ── Product build-readiness: buildable units = min over BOM of ⌊available ÷ per-unit⌋ ──
+    const productStatus = await tx.$queryRaw<ProductStatusItem[]>`
+      WITH demand AS (
+        SELECT p.id AS product_id, p.name, p.status::text AS status,
+               pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
+        FROM products p
+        JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
+        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
+        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL
+        GROUP BY p.id, p.name, p.status, pl.component_id
+      ),
+      avail AS (
+        SELECT v.component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
+        FROM component_brand_variants v
+        LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
+        WHERE v.deleted_at IS NULL
+        GROUP BY v.component_id
+      )
+      SELECT d.name AS product, d.status,
+             COALESCE(MIN(FLOOR(COALESCE(a.available, 0) / NULLIF(d.per_unit, 0))), 0)::int AS "buildableQty"
+      FROM demand d
+      LEFT JOIN avail a ON a.component_id = d.component_id
+      GROUP BY d.product_id, d.name, d.status
+      ORDER BY d.name`;
+
+    // ── Low-stock components: on-hand below min (Critical ≤ 50% of min) ──
+    const lowStock = await tx.$queryRaw<LowStockItem[]>`
+      SELECT c.name AS component, bal.on_hand::int AS current, c.min_stock::int AS minimum,
+             CASE WHEN bal.on_hand <= c.min_stock * 0.5 THEN 'Critical' ELSE 'Low' END AS status
+      FROM components c
+      JOIN LATERAL (
+        SELECT COALESCE(SUM(ib.on_hand), 0) AS on_hand
+        FROM component_brand_variants v
+        LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
+        WHERE v.component_id = c.id AND v.deleted_at IS NULL
+      ) bal ON TRUE
+      WHERE c.deleted_at IS NULL AND bal.on_hand < c.min_stock
+      ORDER BY bal.on_hand`;
+
+    // ── Single-supplier risk: components with ≤ 1 distinct current supplier ──
+    const singleSupplier = await tx.$queryRaw<SingleSupplierItem[]>`
+      WITH offers AS (
+        SELECT scp.component_id, COUNT(DISTINCT scp.supplier_id)::int AS n
+        FROM supplier_component_prices scp
+        WHERE scp.valid_to IS NULL AND scp.deleted_at IS NULL
+        GROUP BY scp.component_id
+      )
+      SELECT c.name AS component,
+             COALESCE((
+               SELECT s.name FROM supplier_component_prices scp2
+               JOIN suppliers s ON s.id = scp2.supplier_id
+               WHERE scp2.component_id = c.id AND scp2.valid_to IS NULL AND scp2.deleted_at IS NULL
+               ORDER BY scp2.price ASC LIMIT 1
+             ), '—') AS supplier
+      FROM components c
+      LEFT JOIN offers o ON o.component_id = c.id
+      WHERE c.deleted_at IS NULL AND COALESCE(o.n, 0) <= 1
+      ORDER BY c.name
+      LIMIT 6`;
+
+    // ── Top-consumed (by annual consumption) ──
+    const consumedRows = await tx.$queryRaw<{ component: string; monthly: number }[]>`
+      SELECT name AS component, ROUND(annual_consumption / 12.0)::int AS monthly
+      FROM components WHERE deleted_at IS NULL
+      ORDER BY annual_consumption DESC LIMIT 3`;
+    const topConsumed: ConsumedComponent[] = consumedRows.map((r) => ({
+      component: r.component,
+      monthlyUsage: r.monthly.toLocaleString(),
+    }));
+
+    // ── Usage impact: components used across the most products (via Active BOMs) ──
+    const usageImpact = await tx.$queryRaw<UsageImpactItem[]>`
+      WITH usage AS (
+        SELECT pl.component_id, COUNT(DISTINCT p.id)::int AS products
+        FROM products p
+        JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
+        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
+        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
+        WHERE p.deleted_at IS NULL
+        GROUP BY pl.component_id
+      )
+      SELECT c.name AS component, u.products AS "usedInProducts"
+      FROM usage u JOIN components c ON c.id = u.component_id
+      ORDER BY u.products DESC, c.name LIMIT 3`;
+
     return {
       inventoryValue: value,
       productionBlockers: blockerRows,
       purchaseSummary,
       recentProductionOrders,
       recentActivities,
+      productStatus,
+      lowStock,
+      singleSupplier,
+      topConsumed,
+      usageImpact,
     };
   });
 }

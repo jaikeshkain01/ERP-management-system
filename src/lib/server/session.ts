@@ -4,7 +4,6 @@
  * sets/clears the cookie on login, logout, and company switch.
  */
 import { cookies } from "next/headers";
-import { isTesting } from "@/lib/config";
 import type { TenantContext } from "@/lib/prisma";
 import {
   SESSION_COOKIE,
@@ -13,7 +12,6 @@ import {
   verifySession,
 } from "@/lib/server/auth";
 import { Errors } from "@/lib/server/http";
-import { MOCK_CONTEXT } from "@/lib/server/mock";
 
 /** Return the session context, or null if unauthenticated. */
 export async function getSession(): Promise<TenantContext | null> {
@@ -24,10 +22,8 @@ export async function getSession(): Promise<TenantContext | null> {
   return claims ? { userId: claims.userId, companyId: claims.companyId } : null;
 }
 
-/** Return the session context or throw 401. Use at the top of protected routes.
- *  In FULL MOCK MODE auth is stubbed — the in-memory admin context is returned. */
+/** Return the session context or throw 401. Use at the top of protected routes. */
 export async function requireSession(): Promise<TenantContext> {
-  if (isTesting) return MOCK_CONTEXT;
   const session = await getSession();
   if (!session) throw Errors.unauthorized();
   return session;

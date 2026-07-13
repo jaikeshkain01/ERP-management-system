@@ -1,16 +1,13 @@
 "use client";
 
 /**
- * Client data provider — the frontend's single source of truth, replacing direct
- * `@/mockdata` imports. It loads /api/bootstrap once (auto-logging-in via
- * /api/auth/dev-login if there's no session in DB mode), binds the shared
- * selector factory to the result, and exposes everything through `useData()`.
- *
- * Because it always goes through the API, the UI works identically whether the
- * backend is on the database (isTesting=false) or mockdata (isTesting=true).
+ * Client data provider — the frontend's single source of truth. It loads
+ * /api/bootstrap once (auto-logging-in via /api/auth/dev-login if there's no
+ * session), binds the shared selector factory (@/lib/catalog) to the result,
+ * and exposes everything through `useData()`.
  */
 import * as React from "react";
-import { createSelectors, type DataSet, type Selectors } from "@/mockdata";
+import { createSelectors, type DataSet, type Selectors } from "@/lib/catalog";
 
 const EMPTY: DataSet = { components: [], brands: [], suppliers: [], pcbs: [], products: [] };
 

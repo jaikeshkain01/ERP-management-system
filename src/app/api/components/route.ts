@@ -1,8 +1,8 @@
 /**
  * GET  /api/components — list components in the active company.
  * POST /api/components — create a component + brand variants (+ optional opening stock).
- * Real mode requires `component.view` / `.create` (auth + RLS); mock mode reads src/mockdata.
- * Both paths run through the same provider — see src/lib/server/data/components.ts.
+ * Requires `component.view` / `.create` (auth + RLS). See the provider in
+ * src/lib/server/data/components.ts.
  * Supports filters: category, solderType, footprint, q (search).
  *
  * NOTE: stock/stockStatus and brand/supplier filters are DERIVED from the

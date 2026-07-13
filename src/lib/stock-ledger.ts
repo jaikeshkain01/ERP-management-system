@@ -1,4 +1,4 @@
-import type { Component, StockTransaction, StockDirection } from "@/mockdata/types"
+import type { Component, StockTransaction, StockDirection } from "@/lib/catalog"
 
 /** Signed contribution of a transaction to a running balance. */
 export function signedQty(t: StockTransaction): number {

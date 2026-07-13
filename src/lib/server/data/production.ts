@@ -17,20 +17,22 @@
  *                      brand variants, and products aren't components. See note below.)
  *
  * Plus `getYieldReport` — monthly finished-batch output for the Reports chart.
- *
- * Mock mode: reads come from src/mockdata; writes are rejected 400 mock_read_only.
  */
 import { Prisma } from "@/generated/prisma/client";
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { PRODUCTION_ORDERS } from "@/mockdata/production";
-import { PRODUCTION_YIELD, type MonthlyYield } from "@/mockdata/reports";
+import { formatINR, formatLeadTime } from "@/lib/catalog";
 
-// ── view shapes (mirror src/mockdata/production.ts so the kanban swaps sources) ──
+/** A month bucket of finished-batch output for the Reports yield chart. */
+export interface MonthlyYield {
+  month: string;
+  yield: number;
+}
+
+// ── view shapes ────────────────────────────────────────────────────────────────
 export interface ProductionOrderView {
   id: string; // order_no (business key)
   product: string;
@@ -55,9 +57,6 @@ export interface CreateProductionOrderInput {
   qty: number;
   targetDate?: string; // ISO date
 }
-
-const mockReadOnly = () =>
-  new ApiError(400, "mock_read_only", "Production writes are not available in mock mode (isTesting=true).");
 
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
   const ctx = await requireSession();
@@ -94,9 +93,6 @@ async function nextOrderNo(tx: TxClient): Promise<string> {
 
 // ── reads ────────────────────────────────────────────────────────────────────
 export async function listProductionOrders(): Promise<ProductionOrderView[]> {
-  if (isTesting) {
-    return PRODUCTION_ORDERS.map((o) => ({ ...o, targetDate: null }));
-  }
   return guarded("production_order.view", async (tx) => {
     const rows = await tx.$queryRaw<{ id: string; product: string; qty: number; status: string; targetDate: Date | null }[]>`
       SELECT po.order_no AS id, p.name AS product, po.qty::int AS qty,
@@ -116,7 +112,6 @@ export async function listProductionOrders(): Promise<ProductionOrderView[]> {
 }
 
 export async function getProductionOrderItems(orderNo: string): Promise<ProductionItemView[]> {
-  if (isTesting) throw mockReadOnly();
   return guarded("production_order.view", async (tx) => {
     const po = await resolveProductionOrder(tx, orderNo);
     return tx.$queryRaw<ProductionItemView[]>`
@@ -140,7 +135,6 @@ export async function getProductionOrderItems(orderNo: string): Promise<Producti
 
 // ── STAGE 1 — create + explode BOM ─────────────────────────────────────────────
 export async function createProductionOrder(input: CreateProductionOrderInput): Promise<ProductionOrderView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("production_order.create", async (tx, ctx) => {
     const product = await tx.products.findFirst({
       where: {
@@ -207,7 +201,6 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
 
 // ── STAGE 2 — allocate (reserve) ────────────────────────────────────────────────
 export async function allocateProductionOrder(orderNo: string): Promise<{ order: string; allocated: number }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("production_order.edit", async (tx, ctx) => {
     const po = await resolveProductionOrder(tx, orderNo);
     if (po.status !== "Draft") throw Errors.conflict(`Order is not in Draft (status: ${po.status.replace("_", " ")})`);
@@ -279,7 +272,6 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
 
 // ── STAGE 3 — consume (issue to the build) ──────────────────────────────────────
 export async function consumeProductionOrder(orderNo: string): Promise<{ order: string; consumed: number }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("production_order.edit", async (tx, ctx) => {
     await assertPermission(tx, ctx, "inventory.create"); // consumption writes the ledger
 
@@ -339,7 +331,6 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
 
 // ── STAGE 4 — complete (close the batch) ─────────────────────────────────────────
 export async function completeProductionOrder(orderNo: string): Promise<{ order: string }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("production_order.edit", async (tx, ctx) => {
     const po = await resolveProductionOrder(tx, orderNo);
     if (po.status !== "In_Progress") {
@@ -369,7 +360,6 @@ function recentMonthBuckets(months: number): { key: string; label: string }[] {
 }
 
 export async function getYieldReport(range = "6m"): Promise<MonthlyYield[]> {
-  if (isTesting) return PRODUCTION_YIELD;
   const months = Math.min(Math.max(parseInt(range, 10) || 6, 1), 24);
   return guarded("report.view", async (tx) => {
     const rows = await tx.$queryRaw<{ bucket: string; yield: number }[]>`
@@ -392,20 +382,7 @@ export interface ReportsSummary {
   distribution: { product: string; units: number }[]; // completed units by product line
 }
 
-/** Static fallback used in mock mode (mirrors the old hardcoded reports strip). */
-const MOCK_REPORTS_SUMMARY: ReportsSummary = {
-  totalBatches: 186,
-  unitsProduced: 3420,
-  avgYield: 98.6,
-  avgLeadTimeDays: 4.2,
-  distribution: [
-    { product: "ROIP 400", units: 2565 },
-    { product: "Voice Logger", units: 855 },
-  ],
-};
-
 export async function getReportsSummary(): Promise<ReportsSummary> {
-  if (isTesting) return MOCK_REPORTS_SUMMARY;
   return guarded("report.view", async (tx) => {
     const [row] = await tx.$queryRaw<{
       totalBatches: number;
@@ -441,6 +418,132 @@ export async function getReportsSummary(): Promise<ReportsSummary> {
       avgYield: Math.round(avgYield * 10) / 10,
       avgLeadTimeDays: row.avgLeadTimeDays != null ? Math.round(row.avgLeadTimeDays * 10) / 10 : 0,
       distribution,
+    };
+  });
+}
+
+// ── Production readiness — batch material audit for a product × qty ──────────────
+export interface ReadinessItemView {
+  component: string;
+  genericPN: string;
+  required: number;
+  available: number;
+  status: boolean; // true = enough stock
+}
+
+export interface ReadinessSupplierView {
+  brand: string;
+  brandId: string;
+  supplierId: string;
+  supplierName: string;
+  price: string;
+  leadTime: string;
+}
+
+export interface ReadinessView {
+  product: string;
+  productSlug: string;
+  qty: number;
+  items: ReadinessItemView[];
+  shortComponent: string;
+  shortPN: string;
+  missingQty: number;
+  sourcing: ReadinessSupplierView[];
+}
+
+/**
+ * Audit whether stock covers a build of `qty` units of a product: per-component
+ * required (Σ pcb_line.qty × product_pcbs.qty × qty) vs available (Σ balances).
+ * Picks the largest shortage as the "blocked" component and returns its sourcing
+ * options from the supplier price book. `productKey` omitted → first product with
+ * an Active BOM.
+ */
+export async function getReadiness(productKey: string | undefined, qty: number): Promise<ReadinessView> {
+  const batch = Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 100;
+  return guarded("production_order.view", async (tx) => {
+    const product = productKey
+      ? await tx.products.findFirst({
+          where: {
+            deleted_at: null,
+            ...(isUuid(productKey) ? { id: productKey } : { OR: [{ slug: productKey }, { code: productKey }] }),
+          },
+          select: { id: true, name: true, slug: true },
+        })
+      : (
+          await tx.$queryRaw<{ id: string; name: string; slug: string }[]>`
+            SELECT p.id, p.name, p.slug FROM products p
+            JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+            WHERE p.deleted_at IS NULL ORDER BY p.name LIMIT 1`
+        )[0] ?? null;
+    if (!product) throw Errors.notFound("Product");
+
+    const rows = await tx.$queryRaw<{ genericPN: string; component: string; required: number; available: number }[]>`
+      WITH demand AS (
+        SELECT pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
+        FROM bom_versions bv
+        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
+        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
+        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
+        WHERE bv.product_id = ${product.id}::uuid AND bv.status = 'Active' AND bv.deleted_at IS NULL
+        GROUP BY pl.component_id
+      )
+      SELECT c.generic_pn AS "genericPN", c.name AS component,
+             (d.per_unit * ${batch})::float8 AS required,
+             COALESCE((
+               SELECT SUM(ib.available) FROM component_brand_variants v
+               LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
+               WHERE v.component_id = d.component_id AND v.deleted_at IS NULL
+             ), 0)::float8 AS available
+      FROM demand d JOIN components c ON c.id = d.component_id
+      ORDER BY c.name`;
+
+    const items: ReadinessItemView[] = rows.map((r) => ({
+      component: r.component,
+      genericPN: r.genericPN,
+      required: r.required,
+      available: r.available,
+      status: r.available >= r.required,
+    }));
+
+    // Largest shortage drives the "production blocked" panel + sourcing.
+    const shorts = items.filter((i) => !i.status).sort((a, b) => (b.required - b.available) - (a.required - a.available));
+    const shorted = shorts[0];
+    const shortComponent = shorted?.component ?? "—";
+    const shortPN = shorted?.genericPN ?? "";
+    const missingQty = shorted ? Math.ceil(shorted.required - shorted.available) : 0;
+
+    let sourcing: ReadinessSupplierView[] = [];
+    if (shortPN) {
+      const offers = await tx.$queryRaw<{
+        brandId: string; brand: string; supplierId: string; supplierName: string; price: number; leadTimeDays: number | null;
+      }[]>`
+        SELECT b.slug AS "brandId", b.name AS brand, s.slug AS "supplierId", s.name AS "supplierName",
+               scp.price::float8 AS price, scp.lead_time_days AS "leadTimeDays"
+        FROM supplier_component_prices scp
+        JOIN components c ON c.id = scp.component_id AND c.deleted_at IS NULL
+        JOIN brands b ON b.id = scp.brand_id
+        JOIN suppliers s ON s.id = scp.supplier_id
+        WHERE c.generic_pn = ${shortPN} AND scp.valid_to IS NULL AND scp.deleted_at IS NULL
+        ORDER BY scp.price`;
+      sourcing = offers.map((o) => ({
+        brand: o.brand,
+        brandId: o.brandId,
+        supplierId: o.supplierId,
+        supplierName: o.supplierName,
+        price: formatINR(o.price),
+        leadTime: formatLeadTime(o.leadTimeDays ?? 0),
+      }));
+    }
+
+    return {
+      product: product.name,
+      productSlug: product.slug,
+      qty: batch,
+      items,
+      shortComponent,
+      shortPN,
+      missingQty,
+      sourcing,
     };
   });
 }

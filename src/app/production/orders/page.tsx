@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ClipboardList, GripVertical, Plus, X, Check, AlertCircle, Loader2, ListTree } from "lucide-react"
 import { useData } from "@/lib/data-provider"
-import type { ProductionOrder } from "@/mockdata/production"
+import type { ProductionOrderView as ProductionOrder } from "@/lib/server/data/production"
 
 type StatusColumn = "Draft" | "Ready" | "In Progress" | "Completed"
 
@@ -18,9 +18,7 @@ const STAGE_ENDPOINT: Record<Exclude<StatusColumn, "Draft">, string> = {
   Completed: "complete",
 }
 
-interface OrderView extends ProductionOrder {
-  targetDate?: string | null
-}
+type OrderView = ProductionOrder
 
 interface PlanItem {
   id: string

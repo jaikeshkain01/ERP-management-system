@@ -2,13 +2,11 @@
  * Suppliers data access (mock/DB). Endpoints: list, detail, and the supplier's
  * current price book (supplier_component_prices with valid_to IS NULL).
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { SUPPLIERS, COMPONENTS, getSupplier, getBrandName } from "@/mockdata";
 
 export interface SupplierView {
   id: string;
@@ -44,7 +42,6 @@ async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) =
 }
 
 export async function listSuppliers(): Promise<SupplierView[]> {
-  if (isTesting) return SUPPLIERS.map(mockSupplier).sort((a, b) => a.name.localeCompare(b.name));
   return guarded("supplier.view", async (tx) => {
     const rows = await tx.suppliers.findMany({ where: { deleted_at: null }, orderBy: { name: "asc" } });
     return rows.map(fromDb);
@@ -52,11 +49,6 @@ export async function listSuppliers(): Promise<SupplierView[]> {
 }
 
 export async function getSupplierDetail(idOrSlug: string): Promise<SupplierView> {
-  if (isTesting) {
-    const s = getSupplier(idOrSlug);
-    if (!s) throw Errors.notFound("Supplier");
-    return mockSupplier(s);
-  }
   return guarded("supplier.view", async (tx) => {
     const row = await tx.suppliers.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -67,22 +59,6 @@ export async function getSupplierDetail(idOrSlug: string): Promise<SupplierView>
 }
 
 export async function getSupplierPrices(idOrSlug: string): Promise<SupplierPriceView[]> {
-  if (isTesting) {
-    const s = getSupplier(idOrSlug);
-    if (!s) throw Errors.notFound("Supplier");
-    const out: SupplierPriceView[] = [];
-    for (const c of COMPONENTS) {
-      for (const o of c.offers) {
-        if (o.supplierId !== s.id) continue;
-        out.push({
-          componentId: c.id, genericPN: c.genericPN, componentName: c.name,
-          brandId: o.brandId, brandName: getBrandName(o.brandId),
-          price: o.price, currency: "INR", leadTimeDays: o.leadTimeDays,
-        });
-      }
-    }
-    return out.sort((a, b) => a.componentName.localeCompare(b.componentName));
-  }
   return guarded("supplier.view", async (tx) => {
     const supplier = await tx.suppliers.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -118,7 +94,6 @@ export interface CreateSupplierInput {
 
 /** Create a supplier (Add Supplier form). slug is derived from the name and is the id-space key. */
 export async function createSupplier(input: CreateSupplierInput): Promise<SupplierView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Supplier writes are not available in mock mode (isTesting=true).");
   return guarded("supplier.create", async (tx, ctx) => {
     const name = input.name.trim();
     const slug = slugify(name);
@@ -156,7 +131,6 @@ export interface UpdateSupplierInput {
 
 /** Edit a supplier's own fields (by uuid or slug). slug is immutable. */
 export async function updateSupplier(idOrSlug: string, patch: UpdateSupplierInput): Promise<SupplierView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Supplier writes are not available in mock mode (isTesting=true).");
   return guarded("supplier.edit", async (tx, ctx) => {
     const existing = await tx.suppliers.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -199,7 +173,6 @@ export interface UpsertSupplierPriceInput {
  * a new current row. Used by the "Map Component" / "Add / Edit Supplier" price forms.
  */
 export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplierPriceInput): Promise<SupplierPriceView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Supplier price writes are not available in mock mode (isTesting=true).");
   return guarded("supplier.edit", async (tx, ctx) => {
     const supplier = await tx.suppliers.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -259,13 +232,6 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
 }
 
 // ── mappers ──────────────────────────────────────────────────────────────────
-function mockSupplier(s: (typeof SUPPLIERS)[number]): SupplierView {
-  return {
-    id: s.id, slug: s.id, name: s.name, description: s.description, contact: s.contact,
-    email: s.email, phone: s.phone, address: s.address, terms: s.terms, rating: s.rating, status: s.status,
-  };
-}
-
 function fromDb(s: {
   id: string; slug: string; name: string; description: string | null; contact: string | null;
   email: string | null; phone: string | null; address: string | null; terms: string | null;

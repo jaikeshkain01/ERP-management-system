@@ -9,8 +9,15 @@ import {
   ShieldAlert, ShoppingBag, Nut, PlayCircle, ChevronDown,
   ChevronUp, Check, Package, Plus, ArrowLeft, ArrowRight, RotateCcw,
 } from "lucide-react"
-import { buildProductionData } from "@/mockdata/production"
+import type { ReadinessView } from "@/lib/server/data/production"
 import { useData } from "@/lib/data-provider"
+
+interface PlannerShortage {
+  item: string
+  genericPN: string
+  brand: string
+  missing: number
+}
 import { useModules } from "@/components/module-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
@@ -32,11 +39,16 @@ interface PurchaseRequest {
 export default function ProductionPlannerPage() {
   const { isEnabled } = useModules()
   const d = useData()
-  const { PLANNER_SHORTAGES: SHORTAGES } = React.useMemo(() => buildProductionData(d), [d])
   const inventoryOn = isEnabled("inventory")
   const purchasingOn = isEnabled("purchasing")
+  const [SHORTAGES, setShortages] = React.useState<PlannerShortage[]>([])
   const [product, setProduct] = React.useState("roip-400")
   const [quantity, setQuantity] = React.useState(100)
+
+  // Default the product selector to a real seeded product.
+  React.useEffect(() => {
+    if (d.PRODUCTS.length && !d.PRODUCTS.some((p) => p.id === product)) setProduct(d.PRODUCTS[0].id)
+  }, [d.PRODUCTS, product])
   const [targetDate, setTargetDate] = React.useState("2026-07-15")
   const [calculated, setCalculated] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0)
@@ -59,13 +71,32 @@ export default function ProductionPlannerPage() {
 
   const resetCalc = () => setCalculated(false)
 
-  const handleCalculate = (e: React.FormEvent) => {
+  const handleCalculate = async (e: React.FormEvent) => {
     e.preventDefault()
+    let list: PlannerShortage[] = []
+    if (inventoryOn) {
+      try {
+        const params = new URLSearchParams({ product, qty: String(quantity || 1) })
+        const res = await fetch(`/api/production/readiness?${params}`, { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (res.ok && body?.data) {
+          list = (body.data as ReadinessView).items
+            .filter((i) => !i.status)
+            .map((i) => {
+              const comp = d.COMPONENTS.find((c) => c.genericPN === i.genericPN)
+              const brand = comp && comp.brandVariants[0] ? d.getBrandName(comp.brandVariants[0].brandId) : "—"
+              return { item: i.component, genericPN: i.genericPN, brand, missing: Math.ceil(i.required - i.available) }
+            })
+        }
+      } catch {
+        /* leave list empty on failure */
+      }
+    }
+    setShortages(list)
     setCalculated(true)
     setCurrentStep(0)
-    const count = inventoryOn ? SHORTAGES.length : 0
-    if (count > 0) {
-      showToast(`Calculation complete — ${count} component shortage${count > 1 ? "s" : ""} detected!`, "warning")
+    if (list.length > 0) {
+      showToast(`Calculation complete — ${list.length} component shortage${list.length > 1 ? "s" : ""} detected!`, "warning")
     } else {
       showToast("MRP requirements calculated successfully — no shortages!")
     }
@@ -100,7 +131,7 @@ export default function ProductionPlannerPage() {
     }
   }
 
-  const productName = product === "roip-400" ? "ROIP 400" : "Voice Logger"
+  const productName = d.getProduct(product)?.name ?? "—"
 
   // ─── Wizard step definitions ─────────────────────────────────────────────
   const steps: { key: string; label: string; title: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -522,8 +553,9 @@ export default function ProductionPlannerPage() {
                 onChange={(e) => { setProduct(e.target.value); resetCalc() }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               >
-                <option value="roip-400">ROIP 400</option>
-                <option value="voice-logger">Voice Logger</option>
+                {d.PRODUCTS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
               </select>
             </div>
             <div className="space-y-2">

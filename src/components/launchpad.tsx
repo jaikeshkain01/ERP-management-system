@@ -5,7 +5,7 @@ import { Lock, ArrowUpRight } from "lucide-react"
 import * as React from "react"
 import { useModules } from "@/components/module-provider"
 import { WORKSPACES } from "@/lib/modules"
-import { buildWorkspaceStats } from "@/mockdata/launchpad"
+import { buildWorkspaceStats } from "@/lib/launchpad-data"
 import { useData } from "@/lib/data-provider"
 
 const toneClass: Record<string, string> = {

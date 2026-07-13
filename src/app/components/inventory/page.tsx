@@ -13,7 +13,7 @@ import {
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-import type { StockDirection } from "@/mockdata/types"
+import type { StockDirection } from "@/lib/catalog"
 import { useStockLedger } from "@/lib/use-stock-ledger"
 import { effectiveComponentStock, effectiveBrandStocks, type NewTransactionInput } from "@/lib/stock-ledger"
 import { StockMoveModal } from "@/components/inventory/stock-move-modal"
@@ -57,7 +57,7 @@ interface InventoryItem {
 // --- Inventory view model derived from the centralized component store ---
 // Stock/brand quantities come from the live transaction ledger (perpetual
 // inventory), so recording a stock-in/out updates every derived figure.
-import type { StockTransaction } from "@/mockdata/types"
+import type { StockTransaction } from "@/lib/catalog"
 
 // Ledger keys on genericPN (stable across mock/DB modes), so brand stocks are
 // computed against a genericPN-keyed component view.

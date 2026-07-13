@@ -5,7 +5,7 @@ import { X, ArrowDownToLine, ArrowUpFromLine } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useData } from "@/lib/data-provider"
-import type { StockDirection } from "@/mockdata/types"
+import type { StockDirection } from "@/lib/catalog"
 import type { BrandStock, NewTransactionInput } from "@/lib/stock-ledger"
 
 type Props = {

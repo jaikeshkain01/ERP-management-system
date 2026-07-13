@@ -1,25 +1,17 @@
 /**
- * Inventory ledger (mock/DB). THE write path is `createInventoryTransaction`:
+ * Inventory ledger (Postgres). THE write path is `createInventoryTransaction`:
  * it appends immutable `inventory_transactions` rows; the DB trigger
  * (apply_inventory_txn) projects them into `inventory_balances`. Stock is never
  * written directly (ARCHITECTURE.md §7a).
- *
- * Mock mode is READ-ONLY: reads derive from src/mockdata's client-ledger
- * prototype; writes are rejected.
  */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { Prisma } from "@/generated/prisma/client";
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { MOCK_BIN, MOCK_WAREHOUSE } from "@/lib/server/mock";
-import { COMPONENTS } from "@/mockdata";
-import { buildSeedTransactions } from "@/mockdata/transactions";
-import { signedQty } from "@/lib/stock-ledger";
 
 // ── shapes ───────────────────────────────────────────────────────────────────
 export interface BalanceView {
@@ -166,7 +158,6 @@ async function availableAt(tx: TxClient, variantId: string, locationId: string):
 
 // ── reads ────────────────────────────────────────────────────────────────────
 export async function listBalances(f: BalanceFilters): Promise<BalanceView[]> {
-  if (isTesting) return mockBalances(f);
   return guarded("inventory.view", async (tx) => {
     const cond: Prisma.Sql[] = [];
     if (f.componentId && isUuid(f.componentId)) cond.push(Prisma.sql`AND c.id = ${f.componentId}::uuid`);
@@ -178,7 +169,6 @@ export async function listBalances(f: BalanceFilters): Promise<BalanceView[]> {
 }
 
 export async function listLedger(f: LedgerFilters): Promise<LedgerView[]> {
-  if (isTesting) return mockLedger(f);
   return guarded("inventory.view", async (tx) => {
     const cond: Prisma.Sql[] = [];
     if (f.variantId) cond.push(Prisma.sql`AND it.component_brand_variant_id = ${f.variantId}::uuid`);
@@ -207,7 +197,6 @@ export async function listLedger(f: LedgerFilters): Promise<LedgerView[]> {
 }
 
 export async function getComponentStock(idOrPn: string): Promise<ComponentStockView> {
-  if (isTesting) return mockComponentStock(idOrPn);
   return guarded("inventory.view", async (tx) => {
     const comp = await tx.components.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrPn) ? { id: idOrPn } : { generic_pn: idOrPn }) },
@@ -244,9 +233,6 @@ export async function getComponentStock(idOrPn: string): Promise<ComponentStockV
 
 // ── write path ───────────────────────────────────────────────────────────────
 export async function createInventoryTransaction(input: InventoryTxnInput) {
-  if (isTesting) {
-    throw new ApiError(400, "mock_read_only", "Inventory writes are not available in mock mode (isTesting=true).");
-  }
   return guarded("inventory.create", async (tx, ctx) => {
     const variant = await tx.component_brand_variants.findFirst({ where: { id: input.variantId, deleted_at: null }, select: { id: true } });
     if (!variant) throw Errors.badRequest("Unknown variant", { variantId: input.variantId });
@@ -298,80 +284,4 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
     );
     return { ok: true, type: input.type, balances };
   });
-}
-
-// ── mock sources ─────────────────────────────────────────────────────────────
-function mockVariantId(componentId: string, brandId: string): string {
-  return `${componentId}:${brandId}`;
-}
-
-function mockBalances(f: BalanceFilters): BalanceView[] {
-  const txns = buildSeedTransactions();
-  const totals = new Map<string, number>(); // key componentId|brandId
-  for (const t of txns) {
-    const key = `${t.componentId}|${t.brandId}`;
-    totals.set(key, (totals.get(key) ?? 0) + signedQty(t));
-  }
-  const out: BalanceView[] = [];
-  for (const c of COMPONENTS) {
-    for (const v of c.brandVariants) {
-      const onHand = totals.get(`${c.id}|${v.brandId}`) ?? 0;
-      const variantId = mockVariantId(c.id, v.brandId);
-      if (f.componentId && f.componentId !== c.id) continue;
-      if (f.variantId && f.variantId !== variantId) continue;
-      out.push({
-        variantId, componentId: c.id, genericPN: c.genericPN, componentName: c.name,
-        brandId: v.brandId, brandSlug: v.brandId, partNo: v.partNo,
-        warehouseId: MOCK_WAREHOUSE.id, warehouseCode: MOCK_WAREHOUSE.code,
-        locationId: MOCK_BIN.id, locationCode: MOCK_BIN.code,
-        onHand, reserved: 0, available: onHand, damaged: 0,
-      });
-    }
-  }
-  return out.sort((a, b) => a.componentName.localeCompare(b.componentName));
-}
-
-function mockLedger(f: LedgerFilters): LedgerView[] {
-  const rows = buildSeedTransactions().map((t): LedgerView => ({
-    id: t.id,
-    type: t.direction === "in" ? "IN" : "OUT",
-    variantId: mockVariantId(t.componentId, t.brandId),
-    componentId: t.componentId,
-    genericPN: COMPONENTS.find((c) => c.id === t.componentId)?.genericPN ?? t.componentId,
-    brandId: t.brandId,
-    brandSlug: t.brandId,
-    warehouseId: MOCK_WAREHOUSE.id,
-    locationId: MOCK_BIN.id,
-    qtyDelta: signedQty(t),
-    transferGroupId: null,
-    refType: t.supplierId ? "supplier" : null,
-    refId: null,
-    grnNo: null,
-    reason: null,
-    note: t.note ?? null,
-    createdAt: t.date,
-  }));
-  const filtered = rows.filter((r) => {
-    if (f.variantId && r.variantId !== f.variantId) return false;
-    if (f.type && r.type !== f.type) return false;
-    return true;
-  });
-  return filtered.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, Math.min(f.limit ?? 200, 1000));
-}
-
-function mockComponentStock(idOrPn: string): ComponentStockView {
-  const c = COMPONENTS.find((x) => x.id === idOrPn || x.genericPN === idOrPn);
-  if (!c) throw Errors.notFound("Component");
-  const txns = buildSeedTransactions().filter((t) => t.componentId === c.id);
-  const byBrand = new Map<string, number>();
-  for (const t of txns) byBrand.set(t.brandId, (byBrand.get(t.brandId) ?? 0) + signedQty(t));
-  const onHand = [...byBrand.values()].reduce((s, n) => s + n, 0);
-  return {
-    componentId: c.id, genericPN: c.genericPN, onHand, reserved: 0, available: onHand, damaged: 0,
-    byWarehouse: [{ warehouseId: MOCK_WAREHOUSE.id, code: MOCK_WAREHOUSE.code, onHand }],
-    byVariant: c.brandVariants.map((v) => ({
-      variantId: mockVariantId(c.id, v.brandId), brandId: v.brandId, brandSlug: v.brandId,
-      partNo: v.partNo, onHand: byBrand.get(v.brandId) ?? 0, available: byBrand.get(v.brandId) ?? 0,
-    })),
-  };
 }

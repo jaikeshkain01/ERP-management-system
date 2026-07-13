@@ -11,7 +11,6 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
-import { buildDashboardData } from "@/mockdata/dashboard"
 import type { DashboardSummary } from "@/lib/server/data/dashboard"
 import { useData } from "@/lib/data-provider"
 import { StatStrip } from "@/components/stat-strip"
@@ -33,10 +32,8 @@ export default function Dashboard() {
   const { isEnabled } = useModules()
 
   const d = useData()
-  const { PRODUCT_STATUS, LOW_STOCK, SINGLE_SUPPLIER, TOP_CONSUMED, USAGE_IMPACT, INVENTORY_CHART } =
-    React.useMemo(() => buildDashboardData(d), [d])
 
-  // Operational aggregates not derivable from the catalog bootstrap (/api/dashboard).
+  // All dashboard aggregates come from /api/dashboard (computed server-side).
   const [ops, setOps] = React.useState<DashboardSummary | null>(null)
 
   // Sync state on mount to prevent SSR hydration mismatch
@@ -63,17 +60,22 @@ export default function Dashboard() {
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
-  // Catalog panels derive from the bootstrap store; operational panels from /api/dashboard.
-  const productStatus = PRODUCT_STATUS
+  // Every panel is served by /api/dashboard; the distribution chart is a simple
+  // count of the live catalog entities already loaded via useData().
+  const productStatus = ops?.productStatus ?? []
   const productionBlockers = ops?.productionBlockers ?? []
-  const lowStock = LOW_STOCK
+  const lowStock = ops?.lowStock ?? []
   const purchaseSummary = ops?.purchaseSummary ?? []
   const productionOrders = ops?.recentProductionOrders ?? []
-  const singleSupplierComponents = SINGLE_SUPPLIER
-  const topConsumed = TOP_CONSUMED
-  const usageImpact = USAGE_IMPACT
+  const singleSupplierComponents = ops?.singleSupplier ?? []
+  const topConsumed = ops?.topConsumed ?? []
+  const usageImpact = ops?.usageImpact ?? []
   const recentActivities = ops?.recentActivities ?? []
-  const inventoryChartData = INVENTORY_CHART
+  const inventoryChartData = [
+    { name: "Components", value: d.COMPONENTS.length, color: "#875A7B" },
+    { name: "PCBs", value: d.PCBS.length, color: "#28C76F" },
+    { name: "Products", value: d.PRODUCTS.length, color: "#FF9F43" },
+  ]
 
   const allTabs: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }>; alert?: number; moduleId?: ModuleId }[] = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },

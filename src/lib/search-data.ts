@@ -1,6 +1,6 @@
 // Universal-search index — derived from the active data store (mockdata or DB)
 // via the shared selector factory, so results stay consistent with every page.
-import type { Selectors } from "@/mockdata"
+import type { Selectors } from "@/lib/catalog"
 
 export interface SearchProduct {
   id: string

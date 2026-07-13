@@ -9,7 +9,7 @@ import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, A
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
-import type { Component as MComponent } from "@/mockdata"
+import type { Component as MComponent } from "@/lib/catalog"
 import { ImportBomModal } from "@/components/products/import-bom-modal"
 import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
 import { ImportedBomView } from "@/components/products/imported-bom-view"

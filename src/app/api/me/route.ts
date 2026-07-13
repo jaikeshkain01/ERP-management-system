@@ -3,11 +3,8 @@
  * effective permissions in that company. The client uses `permissions` to
  * hide/disable actions the role can't perform (stacks with module licensing).
  */
-import { isTesting } from "@/lib/config";
 import { prisma, withTenant } from "@/lib/prisma";
-import { ALL_PERMISSIONS } from "@/lib/permissions";
 import { Errors, handle, ok } from "@/lib/server/http";
-import { MOCK_COMPANY, MOCK_USER } from "@/lib/server/mock";
 import { getEffectivePermissions } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 
@@ -17,11 +14,6 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   return handle(async () => {
     const ctx = await requireSession();
-
-    // FULL MOCK MODE: fixed admin with every permission granted.
-    if (isTesting) {
-      return ok({ user: MOCK_USER, company: MOCK_COMPANY, permissions: [...ALL_PERMISSIONS].sort() });
-    }
 
     // users is global; read the identity directly.
     const user = await prisma.users.findFirst({

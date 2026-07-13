@@ -107,10 +107,7 @@ export function UserProductsProvider({ children }: { children: React.ReactNode }
     let cancelled = false
     ;(async () => {
       try {
-        let list = await api<UserProduct[]>("/api/custom-products")
-        // One-time best-effort migration of any products left in localStorage.
-        const migrated = await migrateLegacyProducts(list)
-        if (migrated) list = await api<UserProduct[]>("/api/custom-products")
+        const list = await api<UserProduct[]>("/api/custom-products")
         if (!cancelled) setProducts(list)
       } catch (err) {
         console.error("[user-products] failed to load:", err)
@@ -201,98 +198,4 @@ export function useUserProducts(): Ctx {
 /** The currently-active BOM version of a product (falls back to the first). */
 export function activeVersionOf(product: UserProduct): BomVersion {
   return product.versions.find((v) => v.id === product.activeVersionId) ?? product.versions[0]
-}
-
-// ── legacy localStorage migration (one-time) ────────────────────────────────────
-const LEGACY_KEYS = ["erp:user-products", "erp:imported-products"]
-
-type LegacyVersion = Partial<BomVersion> & { lines?: ImportedBomLine[] }
-type LegacyProduct = Partial<UserProduct> & { lines?: ImportedBomLine[]; fileName?: string }
-
-/**
- * If products from the old per-browser store are still in localStorage, push them
- * to the server once, preserving every version and which one was active. Only
- * clears the key after ALL products migrate, so a failure never loses data.
- * Returns true if anything was migrated (caller should refetch).
- */
-async function migrateLegacyProducts(existing: UserProduct[]): Promise<boolean> {
-  if (typeof window === "undefined") return false
-  const key = LEGACY_KEYS.find((k) => window.localStorage.getItem(k))
-  if (!key) return false
-
-  let legacy: LegacyProduct[]
-  try {
-    legacy = JSON.parse(window.localStorage.getItem(key) || "[]")
-  } catch {
-    window.localStorage.removeItem(key)
-    return false
-  }
-  if (!Array.isArray(legacy) || legacy.length === 0) {
-    window.localStorage.removeItem(key)
-    return false
-  }
-
-  const existingNames = new Set(existing.map((p) => p.name.toLowerCase()))
-  let migratedAny = false
-  let allOk = true
-
-  for (const p of legacy) {
-    const name = (p.name || "").trim()
-    if (!name || existingNames.has(name.toLowerCase())) continue
-
-    // Normalise to a list of versions (old entries may store lines directly).
-    const versions: LegacyVersion[] =
-      Array.isArray(p.versions) && p.versions.length
-        ? p.versions
-        : [{ label: "v1", source: "import", fileName: p.fileName, lines: p.lines ?? [] }]
-    const source: BomSource = (p.source as BomSource) || "import"
-    const activeIdx = Math.max(
-      0,
-      versions.findIndex((v) => v.id && v.id === p.activeVersionId),
-    )
-
-    try {
-      let product = await api<UserProduct>("/api/custom-products", {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          code: p.code,
-          description: p.description,
-          source,
-          version: normalizeVersion(versions[0], source),
-        }),
-      })
-      for (let i = 1; i < versions.length; i++) {
-        product = await api<UserProduct>(
-          `/api/custom-products/${encodeURIComponent(product.id)}/versions`,
-          { method: "POST", body: JSON.stringify(normalizeVersion(versions[i], source)) },
-        )
-      }
-      // Restore the originally-active version (versions come back in creation order).
-      const targetVersionId = product.versions[activeIdx]?.id
-      if (targetVersionId && targetVersionId !== product.activeVersionId) {
-        await api<UserProduct>(`/api/custom-products/${encodeURIComponent(product.id)}`, {
-          method: "PATCH",
-          body: JSON.stringify({ activeVersionId: targetVersionId }),
-        })
-      }
-      migratedAny = true
-    } catch (err) {
-      console.error(`[user-products] migration failed for "${name}":`, err)
-      allOk = false
-    }
-  }
-
-  if (allOk) window.localStorage.removeItem(key)
-  return migratedAny
-}
-
-function normalizeVersion(v: LegacyVersion, fallbackSource: BomSource): NewVersionInput {
-  return {
-    label: v.label,
-    source: (v.source as BomSource) || fallbackSource,
-    fileName: v.fileName,
-    note: v.note,
-    lines: v.lines ?? [],
-  }
 }

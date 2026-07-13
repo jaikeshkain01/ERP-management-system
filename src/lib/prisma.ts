@@ -29,8 +29,8 @@ function createClient(): PrismaClient {
 
 /**
  * Lazily-initialised singleton. The client (and its pg pool) is created only on
- * first use, so in FULL MOCK MODE (isTesting) — where the DB is never queried —
- * no connection is opened and DATABASE_URL isn't required.
+ * first use (e.g. build-time analysis or codepaths that never touch the DB open
+ * no connection).
  */
 export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
   get(_target, prop) {

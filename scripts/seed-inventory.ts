@@ -13,7 +13,7 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { COMPONENTS } from "../src/mockdata/components";
+import { COMPONENTS } from "./seed-data/components";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DIRECT_URL }) });
 

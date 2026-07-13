@@ -28,12 +28,13 @@ _Last updated: 2026-07-09 — catalog **write** endpoints live: `POST /brands`, 
 
 ## Frontend integration (UI → backend)
 
-The UI is migrating from direct `@/mockdata` imports to the backend via a **global data
-provider**, so it works identically on the DB (`isTesting=false`) or mockdata (`isTesting=true`).
+The UI consumes the backend exclusively via a **global data provider** — the app is **DB-only**
+(the `isTesting` mock mode and `src/mockdata` have been removed).
 
-- **Selector factory** — [src/mockdata/selectors.ts](../src/mockdata/selectors.ts) `createSelectors(dataset)`
-  holds ALL derivations (pcbBom, productBom, cheapestOffer, componentUsage, …). `@/mockdata/index`
-  binds it to the seed arrays (unchanged public API); the provider binds it to live data.
+- **Selector factory** — [src/lib/catalog/selectors.ts](../src/lib/catalog/selectors.ts)
+  `createSelectors(dataset)` holds ALL derivations (pcbBom, productBom, cheapestOffer, componentUsage,
+  …); the provider binds it to the live `/api/bootstrap` payload. Shared entity types live in
+  [src/lib/catalog/types.ts](../src/lib/catalog/types.ts).
 - **`GET /api/bootstrap`** returns the whole catalog in the exact `DataSet` shape (business-key
   id-space: slug / generic_pn; live stock folded into brand variants).
 - **`DataProvider` / `useData()`** — [src/lib/data-provider.tsx](../src/lib/data-provider.tsx): on mount
@@ -44,16 +45,16 @@ provider**, so it works identically on the DB (`isTesting=false`) or mockdata (`
 - **Status:** ✅ Components List, Products List/Structure, PCB List/Structure, Suppliers List/Details,
   Brands List, Component Details/Usage, **Universal Search** (via `buildSearchData(useData())`).
   `DataProvider` now wraps the whole shell (so the TopBar/search use it); `DataGate` gates only `<main>`.
-  ✅ Dashboard + Home Launchpad + Production Planner + Production Readiness (catalog-derived via
-  `buildDashboardData`/`buildWorkspaceStats`/`buildProductionData` factories).
+  ✅ Dashboard (all panels via `GET /api/dashboard`) + Home Launchpad (`buildWorkspaceStats` over live
+  selectors) + Production Planner/Readiness (via `GET /api/production/readiness` — product+qty driven).
   ✅ **Inventory** (`/components/inventory`) — now reads/writes the REAL ledger: `useStockLedger` is
   backed by `GET /api/inventory` (balances → variant/location resolution) + `GET /api/inventory/transactions`,
   and stock moves `POST /api/inventory/transactions` (verified: a move updates the projected balance and
   the page reflects it). Keyed on `genericPN`+brand slug so it works in both modes; mock mode is read-only
   (moves return 400). `LedgerView` gained `brandSlug`.
   ✅ **Purchases** (`/purchases/requests`, `/purchases/orders`) — lists from GET, create/approve/receive
-  POST the API; localStorage removed. Readiness + Planner PR-creation also POST `/api/purchase-requests`
-  (sourced from real offers). Mock mode: purchasing reads work, writes 400.
+  POST the API; localStorage removed. Readiness + Planner PR-creation also POST `/api/purchase-requests`.
+  The requests screen's active shortage + sourcing come from `GET /api/purchases/recommendations`.
   ✅ **Production Orders** (`/production/orders`) — kanban reads `GET /production-orders`; dragging a card
   to the next lane advances the batch via the lifecycle endpoints (Draft→Ready = allocate, Ready→In
   Progress = consume, In Progress→Complete = complete); non-adjacent moves are rejected with a toast.
@@ -73,18 +74,15 @@ provider**, so it works identically on the DB (`isTesting=false`) or mockdata (`
 These apply to **every** endpoint unless its entry says otherwise. Documented here so per-endpoint
 entries stay short.
 
-### Data source toggle — `isTesting` (full mock mode)
-- `isTesting` (`.env`, default `false`) → [src/lib/config.ts](../src/lib/config.ts). When **true**, the
-  backend runs in **FULL MOCK MODE**: no database is touched at all. Auth/session is stubbed with an
-  in-memory admin ([src/lib/server/mock.ts](../src/lib/server/mock.ts)) — `requireSession()` returns
-  `MOCK_CONTEXT`, `login` accepts anything, `/me` reports every permission — and all reads come from
-  `src/mockdata`. `DATABASE_URL`/`AUTH_SECRET` aren't required (the Prisma client is lazy, never
-  initialised).
-- **Pattern:** the mock/DB branch lives in a per-resource **data provider** under
-  `src/lib/server/data/*` (e.g. `listComponents()` in [components.ts](../src/lib/server/data/components.ts)),
-  so route handlers are source-agnostic and the API contract is identical either way.
-  Mock mode is **read-only** (writes are no-ops / unsupported).
-- Every new data endpoint MUST add its two sources to a provider, not branch inline in the route.
+### Data access — DB-only (mock mode removed)
+- The app always uses PostgreSQL (real auth + RLS). The former `isTesting` full-mock mode, the
+  `src/mockdata` datasets, and `src/lib/server/mock.ts` have been removed. `DATABASE_URL` + `AUTH_SECRET`
+  are required.
+- **Pattern:** each resource's queries live in a **data provider** under `src/lib/server/data/*`
+  (e.g. `listComponents()` in [components.ts](../src/lib/server/data/components.ts)), so route handlers
+  stay thin. Every new data endpoint MUST go through a provider, not query inline in the route.
+- **Demo seed data** now lives outside the app as dev-only fixtures in
+  [scripts/seed-data/](../scripts/seed-data/), consumed only by the `scripts/seed-*.ts` seeders.
 
 ### Tenancy & RLS — non-negotiable
 - The active company/user come from the **session**, never from the URL/query/body. No endpoint
@@ -350,6 +348,14 @@ template entry as it's built.
   `brandCount`, and the `pcbs[]` board list (qty/sequence). BOM is flattened with
   **qty = pcb_line.qty × product_pcbs.qty**.
 - **Returns:** `ProductView` / `ProductDetailView`; BOM lines as `{ pcb:{id,name}, component:{id,genericPN,name}, qty }`.
+- **`POST /products`** (`product.create`): create a **catalog** product from a set of PCBs —
+  body `{ name, code?, description?, versionLabel?, status?, pcbs:[{ name?, qty?, lines:[{ componentId?, name?, partNumber?, type?, solderType?, footprint?, qty }] }] }`.
+  Each PCB becomes a `pcbs` row + Active `pcb_revision` (`Rev A`) + `pcb_lines`, linked via an Active
+  `bom_version` → `product_pcbs` (with the board's `qty` per unit + sequence). Each line links an existing
+  component (`componentId` = generic_pn) or is **created on the fly** (deduped by generic_pn). A flat
+  `lines:[…]` body is still accepted and wrapped into a single auto **"<name> Main Board"**. This is the
+  "Add Manually" path — it lands in the catalog graph (not `custom_products`), so it feeds the dashboard.
+  Returns the created `ProductView`.
 - **TODO:** `?version=` selector; derived `buildableQty`/`estimatedCost`-from-BOM (needs inventory + best price).
 
 > **Shared pattern for the four above:** each provider exposes plain async functions that branch on
@@ -394,7 +400,10 @@ template entry as it's built.
   and the IN ledger row present; double-receive 409.
 - **Seeding:** `npx tsx scripts/seed-purchases.ts` (mock PRs/POs; Completed POs get received_qty but NO
   ledger rows — opening stock already covers levels). Idempotent by pr_no/po_no.
-- **Mock mode:** lists return `src/mockdata/purchases`; writes → 400 `mock_read_only`.
+- **Recommendations** (`GET /purchases/recommendations?component=<pn|slug|uuid>`): supplier sourcing
+  options for a component; `component` omitted → auto-picks the biggest current BOM shortage (per-unit
+  demand vs available) with a `suggestedQty`. Powers the PR screen's active-shortage panel. Provider
+  `getRecommendations` in [purchases.ts](../src/lib/server/data/purchases.ts); permission `purchase_request.view`.
 
 ### Inventory ledger — ✅ (warehouses, balances, ledger GET/POST, component stock)
 - **Source:** routes under [warehouses](../src/app/api/warehouses/), [inventory](../src/app/api/inventory/),
@@ -450,10 +459,18 @@ template entry as it's built.
   available dropped, order Ready) → consume (on_hand −qty, reservation released, CONSUMPTION rows tagged
   `production_order`, order In Progress) → complete. Guards: re-complete 409; oversized batch → allocate 409
   with the shortage list (atomic, nothing reserved). All verification data was reversed/removed afterwards.
-- **Mock mode:** `GET /production-orders` returns `src/mockdata/production` (static kanban); every write and the
-  items read reject 400 `mock_read_only`.
 - **TODO:** `PATCH /production-orders/{id}` (header edit / cancel); a finished-goods warehouse model if products
   ever need to be stocked as sellable inventory.
+
+### Production readiness — ✅ (`GET /production/readiness`)
+- **Source:** [route](../src/app/api/production/readiness/route.ts) · [production.ts](../src/lib/server/data/production.ts) `getReadiness`.
+- **Permission (DB):** `production_order.view`.
+- **Query:** `product` (slug|code|uuid; omitted → first product with an Active BOM), `qty` (default 100).
+- **Logic:** per-component `required = Σ pcb_line.qty × product_pcbs.qty × qty` vs `available`
+  (Σ `inventory_balances.available` across the component's variants). The biggest shortage becomes
+  `shortComponent`/`shortPN`/`missingQty` with its `sourcing` options (supplier price book). Returns
+  `{ product, productSlug, qty, items[{component,genericPN,required,available,status}], shortComponent,
+  shortPN, missingQty, sourcing[] }`. Drives the Readiness page and the Planner's shortage step.
 
 ### Component create — ✅ (`POST /components`)
 - **Source:** [route](../src/app/api/components/route.ts) · [components.ts](../src/lib/server/data/components.ts) `createComponent`.
@@ -475,5 +492,4 @@ template entry as it's built.
 - **Query:** `range` = `<n>m` (default `6m`, clamped 1–24). **Logic:** Σ `qty` of Completed `production_orders`
   bucketed by `date_trunc('month', updated_at)`, then **zero-filled** onto the last N calendar months (labelled
   `Jan…Dec`, oldest→newest) so the chart always renders. Returns `[{ month, yield }]`.
-- **Mock mode:** returns the static `PRODUCTION_YIELD` series.
 - **Note:** there is no `completed_at` column, so the month is taken from `updated_at` while status is Completed.

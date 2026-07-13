@@ -4,27 +4,54 @@ import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { CheckCircle2, XCircle, ShieldAlert, AlertCircle, RefreshCw, Check, FileText } from "lucide-react"
-import { buildProductionData } from "@/mockdata/production"
+import type { ReadinessView } from "@/lib/server/data/production"
 import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 export default function ProductionReadinessPage() {
   const d = useData()
-  const { READINESS_ITEMS, READINESS_SOURCING, READINESS_MISSING_QTY, READINESS_SHORT_COMPONENT, READINESS_SHORT_PN } =
-    React.useMemo(() => buildProductionData(d), [d])
-  const [readinessItems] = React.useState(READINESS_ITEMS)
   const { isEnabled } = useModules()
   const inventoryOn = isEnabled("inventory")
   const purchasingOn = isEnabled("purchasing")
 
+  const products = d.PRODUCTS
+  const [productSlug, setProductSlug] = React.useState<string>("")
+  const [qty, setQty] = React.useState<number>(100)
+  const [readiness, setReadiness] = React.useState<ReadinessView | null>(null)
   const [selectedSupplierIdx, setSelectedSupplierIdx] = React.useState<number>(0)
   const [toast, setToast] = React.useState<{ message: string; prId: string } | null>(null)
   const [auditRunning, setAuditRunning] = React.useState(false)
 
-  const missingQty = READINESS_MISSING_QTY
+  const loadReadiness = React.useCallback(async () => {
+    setAuditRunning(true)
+    try {
+      const params = new URLSearchParams()
+      if (productSlug) params.set("product", productSlug)
+      params.set("qty", String(qty || 1))
+      const res = await fetch(`/api/production/readiness?${params}`, { cache: "no-store" })
+      const body = await res.json().catch(() => null)
+      if (res.ok && body?.data) {
+        const data = body.data as ReadinessView
+        setReadiness(data)
+        setSelectedSupplierIdx(0)
+        // Adopt the auto-picked product so the selector reflects what's shown.
+        if (!productSlug && data.productSlug) setProductSlug(data.productSlug)
+      }
+    } finally {
+      setAuditRunning(false)
+    }
+  }, [productSlug, qty])
 
-  const suppliers = READINESS_SOURCING
+  React.useEffect(() => {
+    loadReadiness()
+  }, [loadReadiness])
+
+  const readinessItems = readiness?.items ?? []
+  const suppliers = readiness?.sourcing ?? []
+  const missingQty = readiness?.missingQty ?? 0
+  const READINESS_SHORT_COMPONENT = readiness?.shortComponent ?? "—"
+  const READINESS_SHORT_PN = readiness?.shortPN ?? ""
 
   const handleCreatePR = async () => {
     const s = suppliers[selectedSupplierIdx] || suppliers[0]
@@ -55,14 +82,6 @@ export default function ProductionReadinessPage() {
     setTimeout(() => {
       setToast(null)
     }, 4500)
-  }
-
-  const runAudit = () => {
-    setAuditRunning(true)
-    setTimeout(() => {
-      setAuditRunning(false)
-      // Done auditing
-    }, 1000)
   }
 
   return (
@@ -96,17 +115,41 @@ export default function ProductionReadinessPage() {
             Verify if raw material stock is sufficient to execute scheduled batches.
           </p>
         </div>
-        {inventoryOn && (
-          <Button
-            variant="outline"
-            onClick={runAudit}
-            disabled={auditRunning}
-            className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
-          >
-            <RefreshCw className={`h-4 w-4 ${auditRunning ? "animate-spin" : ""}`} />
-            <span>{auditRunning ? "Auditing BOM..." : "Re-run Audit"}</span>
-          </Button>
-        )}
+        <div className="flex flex-wrap items-end gap-3 self-start sm:self-auto">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">
+            Product
+            <select
+              value={productSlug}
+              onChange={(e) => setProductSlug(e.target.value)}
+              className="h-9 rounded-md border border-border bg-background px-2 text-sm text-foreground cursor-pointer"
+            >
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-muted-foreground">
+            Batch Qty
+            <input
+              type="number"
+              min={1}
+              value={qty}
+              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+              className="h-9 w-24 rounded-md border border-border bg-background px-2 text-sm font-mono text-foreground"
+            />
+          </label>
+          {inventoryOn && (
+            <Button
+              variant="outline"
+              onClick={loadReadiness}
+              disabled={auditRunning}
+              className="h-9 gap-2 border-border bg-background cursor-pointer"
+            >
+              <RefreshCw className={`h-4 w-4 ${auditRunning ? "animate-spin" : ""}`} />
+              <span>{auditRunning ? "Auditing BOM..." : "Re-run Audit"}</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Master Detail Layout */}
@@ -115,7 +158,9 @@ export default function ProductionReadinessPage() {
         <Card className="lg:col-span-2 border border-border shadow-sm overflow-hidden">
           <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
             <CardTitle className="text-lg font-bold">Component Allocation Audit</CardTitle>
-            <CardDescription>Simulated Batch: ROIP 400 (100 Units)</CardDescription>
+            <CardDescription>
+              {readiness ? `Batch: ${readiness.product} (${readiness.qty.toLocaleString()} Units)` : "Select a product and batch quantity"}
+            </CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             <DragScrollArea className="overflow-x-auto">

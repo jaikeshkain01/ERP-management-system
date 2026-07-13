@@ -96,15 +96,39 @@ export default function ProductListPage() {
 
   const handleApplyManual = async (data: ManualProductData) => {
     try {
-      const created = await addProduct({
-        name: data.name,
-        code: data.code,
-        description: data.description,
-        source: "manual",
-        version: { label: data.versionLabel, source: "manual", lines: data.lines },
+      // Manual entry now creates a REAL catalog product (product → BOM → Main Board
+      // PCB → components) via POST /api/products, so it shows on the dashboard.
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: data.name,
+          code: data.code || undefined,
+          description: data.description || undefined,
+          versionLabel: data.versionLabel || undefined,
+          pcbs: data.pcbs.map((pcb) => ({
+            name: pcb.name || undefined,
+            qty: pcb.qty,
+            linkedPcbId: pcb.linkedPcbId || undefined,
+            lines: pcb.lines.map((l) => ({
+              componentId: l.componentId,
+              name: l.name || undefined,
+              partNumber: l.partNumber || undefined,
+              type: l.type || undefined,
+              solderType: l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
+              footprint: l.footprint || undefined,
+              qty: l.qty,
+            })),
+          })),
+        }),
       })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      const created = body.data as { slug: string }
       setIsManualOpen(false)
-      router.push(`/products/structure?product=${created.id}`)
+      await d.reload() // refetch the catalog so the new product appears in the list/structure
+      router.push(`/products/structure?product=${created.slug}`)
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : "Failed to save product")

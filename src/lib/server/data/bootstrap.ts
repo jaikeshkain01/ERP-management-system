@@ -1,37 +1,26 @@
 /**
- * GET /api/bootstrap — the whole catalog in ONE payload, shaped exactly like
- * `src/mockdata` (DataSet) so the client can bind the shared selector factory to
- * it. Mock mode returns the seed arrays; DB mode reconstructs the mockdata shape
- * from the normalized tables in business-key id-space (slug / generic_pn), with
- * live stock folded into each brand variant.
+ * GET /api/bootstrap — the whole catalog in ONE payload, shaped as the catalog
+ * `DataSet` (@/lib/catalog) so the client can bind the shared selector factory to
+ * it. Reconstructs that shape from the normalized tables in business-key id-space
+ * (slug / generic_pn), with live stock folded into each brand variant.
  */
-import { isTesting } from "@/lib/config";
 import { withTenant } from "@/lib/prisma";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
-import {
-  COMPONENTS,
-  BRANDS,
-  SUPPLIERS,
-  PCBS,
-  PRODUCTS,
-  type DataSet,
-  type Brand,
-  type Supplier,
-  type Component,
-  type Pcb,
-  type Product,
-  type Spec,
-  type SolderType,
-  type PcbStatus,
-  type ProductStatus,
-} from "@/mockdata";
+import type {
+  DataSet,
+  Brand,
+  Supplier,
+  Component,
+  Pcb,
+  Product,
+  Spec,
+  SolderType,
+  PcbStatus,
+  ProductStatus,
+} from "@/lib/catalog";
 
 export async function getBootstrap(): Promise<DataSet> {
-  if (isTesting) {
-    return { components: COMPONENTS, brands: BRANDS, suppliers: SUPPLIERS, pcbs: PCBS, products: PRODUCTS };
-  }
-
   const ctx = await requireSession();
   return withTenant(ctx, async (tx) => {
     await assertPermission(tx, ctx, "component.view");

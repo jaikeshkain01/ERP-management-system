@@ -11,9 +11,8 @@
  * `useUserProducts` context expects, so it maps 1:1.
  */
 import { Prisma } from "@/generated/prisma/client";
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
@@ -60,9 +59,6 @@ export interface NewProductInput {
   source: CustomBomSource;
   version: NewVersionInput;
 }
-
-const mockReadOnly = () =>
-  new ApiError(400, "mock_read_only", "Custom product writes are not available in mock mode (isTesting=true).");
 
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
   const ctx = await requireSession();
@@ -132,7 +128,6 @@ async function buildProductView(tx: TxClient, id: string): Promise<CustomProduct
 }
 
 export async function listCustomProducts(): Promise<CustomProductView[]> {
-  if (isTesting) return [];
   return guarded("product.view", async (tx) => {
     const products = await tx.$queryRaw<ProductRow[]>`
       SELECT id, slug, name, code, description, source, active_version_id, created_at
@@ -151,7 +146,6 @@ export async function listCustomProducts(): Promise<CustomProductView[]> {
 }
 
 export async function createCustomProduct(input: NewProductInput): Promise<CustomProductView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("product.create", async (tx, ctx) => {
     const name = input.name.trim();
     if (!name) throw Errors.badRequest("Product name is required");
@@ -189,7 +183,6 @@ export async function createCustomProduct(input: NewProductInput): Promise<Custo
 }
 
 export async function addCustomVersion(key: string, input: NewVersionInput): Promise<CustomProductView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("product.create", async (tx, ctx) => {
     const productId = await resolveProductId(tx, key);
     const [{ count }] = await tx.$queryRaw<{ count: bigint }[]>`
@@ -205,7 +198,6 @@ export async function addCustomVersion(key: string, input: NewVersionInput): Pro
 }
 
 export async function setActiveCustomVersion(key: string, versionId: string): Promise<CustomProductView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("product.edit", async (tx, ctx) => {
     const productId = await resolveProductId(tx, key);
     const [exists] = await tx.$queryRaw<{ id: string }[]>`
@@ -220,7 +212,6 @@ export async function setActiveCustomVersion(key: string, versionId: string): Pr
 }
 
 export async function removeCustomVersion(key: string, versionId: string): Promise<CustomProductView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("product.edit", async (tx, ctx) => {
     const productId = await resolveProductId(tx, key);
     const live = await tx.$queryRaw<{ id: string; active: boolean }[]>`
@@ -249,7 +240,6 @@ export async function removeCustomVersion(key: string, versionId: string): Promi
 }
 
 export async function removeCustomProduct(key: string): Promise<{ id: string }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("product.delete", async (tx, ctx) => {
     const productId = await resolveProductId(tx, key);
     // Drop the active pointer first so the version soft-delete doesn't dangle, then soft-delete both.

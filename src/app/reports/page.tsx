@@ -6,8 +6,7 @@ import { Bar, BarChart, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Toolti
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { BarChart3, TrendingUp, Users, Clock, Percent } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
-import { PRODUCTION_YIELD, type MonthlyYield } from "@/mockdata/reports"
-import type { ReportsSummary } from "@/lib/server/data/production"
+import type { MonthlyYield, ReportsSummary } from "@/lib/server/data/production"
 
 const chartConfig = {
   yield: {
@@ -18,7 +17,7 @@ const chartConfig = {
 
 export default function ReportsPage() {
   const [mounted, setMounted] = React.useState(false)
-  const [productionData, setProductionData] = React.useState<MonthlyYield[]>(PRODUCTION_YIELD)
+  const [productionData, setProductionData] = React.useState<MonthlyYield[]>([])
   const [summary, setSummary] = React.useState<ReportsSummary | null>(null)
 
   React.useEffect(() => {

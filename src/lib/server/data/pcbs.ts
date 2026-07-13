@@ -4,20 +4,11 @@
  * (the versioning layer the mock doesn't have — see ARCHITECTURE.md §7d).
  */
 import { Prisma } from "@/generated/prisma/client";
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
 import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import {
-  PCBS,
-  getPcb,
-  getBrandName,
-  pcbBom as mockPcbBom,
-  pcbTotalParts,
-  pcbUsedInLabels,
-} from "@/mockdata";
 
 export interface PcbView {
   id: string;
@@ -79,18 +70,10 @@ function pcbAggregate(tx: TxClient, id?: string) {
 }
 
 export async function listPcbs(): Promise<PcbView[]> {
-  if (isTesting) {
-    return PCBS.map(mockPcbView).sort((a, b) => a.name.localeCompare(b.name));
-  }
   return guarded("pcb.view", (tx) => pcbAggregate(tx));
 }
 
 export async function getPcbDetail(idOrSlug: string): Promise<PcbView> {
-  if (isTesting) {
-    const p = getPcb(idOrSlug);
-    if (!p) throw Errors.notFound("PCB");
-    return mockPcbView(p);
-  }
   return guarded("pcb.view", async (tx) => {
     const id = await resolvePcbId(tx, idOrSlug);
     const rows = await pcbAggregate(tx, id);
@@ -100,20 +83,6 @@ export async function getPcbDetail(idOrSlug: string): Promise<PcbView> {
 }
 
 export async function getPcbBom(idOrSlug: string): Promise<PcbBomLineView[]> {
-  if (isTesting) {
-    const p = getPcb(idOrSlug);
-    if (!p) throw Errors.notFound("PCB");
-    return mockPcbBom(p).map((l) => ({
-      component: {
-        id: l.component.id, genericPN: l.component.genericPN, name: l.component.name,
-        category: l.component.category, unit: l.component.unit,
-      },
-      qty: l.qty,
-      refDes: l.refDes ?? null,
-      preferredBrand: l.preferredBrandId ? { id: l.preferredBrandId, name: getBrandName(l.preferredBrandId) } : null,
-      remarks: l.remarks ?? null,
-    }));
-  }
   return guarded("pcb.view", async (tx) => {
     const id = await resolvePcbId(tx, idOrSlug);
     const rows = await tx.$queryRaw<{
@@ -138,11 +107,4 @@ export async function getPcbBom(idOrSlug: string): Promise<PcbBomLineView[]> {
       remarks: r.remarks,
     }));
   });
-}
-
-function mockPcbView(p: (typeof PCBS)[number]): PcbView {
-  return {
-    id: p.id, slug: p.id, name: p.name, description: p.description, layers: p.layers, status: p.status,
-    lineCount: p.lines.length, totalParts: pcbTotalParts(p), usedInProducts: pcbUsedInLabels(p.id),
-  };
 }

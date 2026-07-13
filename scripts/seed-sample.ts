@@ -1,5 +1,5 @@
 /**
- * Seed a SINGLE product and its full graph from src/mockdata into the DB:
+ * Seed a SINGLE product and its full graph from scripts/seed-data into the DB:
  *   product → bom_version → product_pcbs → pcb_revisions → pcb_lines →
  *   components → component_brand_variants + supplier_component_prices → brands + suppliers
  *
@@ -14,11 +14,11 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, type Prisma } from "../src/generated/prisma/client";
-import { PRODUCTS } from "../src/mockdata/products";
-import { PCBS } from "../src/mockdata/pcbs";
-import { COMPONENTS } from "../src/mockdata/components";
-import { BRANDS } from "../src/mockdata/brands";
-import { SUPPLIERS } from "../src/mockdata/suppliers";
+import { PRODUCTS } from "./seed-data/products";
+import { PCBS } from "./seed-data/pcbs";
+import { COMPONENTS } from "./seed-data/components";
+import { BRANDS } from "./seed-data/brands";
+import { SUPPLIERS } from "./seed-data/suppliers";
 
 const TARGET = process.argv[2] ?? "roip-400";
 

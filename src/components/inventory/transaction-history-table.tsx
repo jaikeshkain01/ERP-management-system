@@ -2,7 +2,7 @@
 
 import { ArrowDownToLine, ArrowUpFromLine, History } from "lucide-react"
 import { useData } from "@/lib/data-provider"
-import type { StockTransaction } from "@/mockdata/types"
+import type { StockTransaction } from "@/lib/catalog"
 import { componentTxns } from "@/lib/stock-ledger"
 
 function formatDate(iso: string): string {

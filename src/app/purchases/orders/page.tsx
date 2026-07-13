@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle, Landmark } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
-import type { PurchaseOrder } from "@/mockdata/purchases"
+import type { PurchaseOrderView as PurchaseOrder } from "@/lib/server/data/purchases"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 function PurchaseOrdersContent() {
@@ -14,7 +14,7 @@ function PurchaseOrdersContent() {
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  // Load POs from the backend (DB or mockdata, per isTesting)
+  // Load POs from the backend.
   const loadPos = React.useCallback(async () => {
     try {
       const res = await fetch("/api/purchase-orders", { cache: "no-store" })

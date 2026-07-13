@@ -11,8 +11,8 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { COMPONENTS } from "../src/mockdata/components";
-import { PURCHASE_ORDERS, PURCHASE_REQUESTS } from "../src/mockdata/purchases";
+import { COMPONENTS } from "./seed-data/components";
+import { PURCHASE_ORDERS, PURCHASE_REQUESTS } from "./seed-data/purchases";
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DIRECT_URL }) });
 

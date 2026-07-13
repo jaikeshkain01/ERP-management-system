@@ -4,11 +4,9 @@
  * the session cookie for that {userId, companyId}, and return the user + company.
  */
 import { z } from "zod";
-import { isTesting } from "@/lib/config";
 import { prisma, withUser } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/server/auth";
 import { Errors, handle, ok, parseJson } from "@/lib/server/http";
-import { MOCK_COMPANY, MOCK_USER } from "@/lib/server/mock";
 import { setSessionCookie } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -22,11 +20,6 @@ const LoginBody = z.object({
 export async function POST(req: Request) {
   return handle(async () => {
     const { email, password } = await parseJson(req, LoginBody);
-
-    // FULL MOCK MODE: no DB — any well-formed credentials "succeed" as the admin.
-    if (isTesting) {
-      return ok({ user: MOCK_USER, company: MOCK_COMPANY });
-    }
 
     // users is GLOBAL (no RLS) — safe to read without a tenant context.
     const user = await prisma.users.findFirst({

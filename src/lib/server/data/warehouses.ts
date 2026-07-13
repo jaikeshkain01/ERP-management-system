@@ -1,14 +1,12 @@
 /**
- * Warehouses + storage-location tree (mock/DB). Reads only for now
- * (location CRUD deferred). Mock mode returns a single synthetic warehouse/bin.
+ * Warehouses + storage-location tree (DB). Reads only for now
+ * (location CRUD deferred).
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
 import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { MOCK_BIN, MOCK_WAREHOUSE } from "@/lib/server/mock";
 
 export interface WarehouseView {
   id: string;
@@ -37,7 +35,6 @@ async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) =
 }
 
 export async function listWarehouses(): Promise<WarehouseView[]> {
-  if (isTesting) return [MOCK_WAREHOUSE];
   return guarded("warehouse.view", async (tx) => {
     const rows = await tx.warehouses.findMany({ where: { deleted_at: null }, orderBy: { code: "asc" } });
     return rows.map((w) => ({
@@ -47,10 +44,6 @@ export async function listWarehouses(): Promise<WarehouseView[]> {
 }
 
 export async function getWarehouseLocations(idOrCode: string): Promise<LocationView[]> {
-  if (isTesting) {
-    if (idOrCode !== MOCK_WAREHOUSE.id && idOrCode !== MOCK_WAREHOUSE.code) throw Errors.notFound("Warehouse");
-    return [{ ...MOCK_BIN }];
-  }
   return guarded("warehouse.view", async (tx) => {
     const wh = await tx.warehouses.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrCode) ? { id: idOrCode } : { code: idOrCode }) },

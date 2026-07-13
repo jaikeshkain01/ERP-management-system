@@ -3,10 +3,8 @@
  * with no credentials, so the UI can run against the DB without a login screen.
  * Disabled in production (returns 403); replace with the real login flow there.
  */
-import { isTesting } from "@/lib/config";
 import { prisma, withUser } from "@/lib/prisma";
 import { Errors, handle, ok } from "@/lib/server/http";
-import { MOCK_COMPANY, MOCK_USER } from "@/lib/server/mock";
 import { setSessionCookie } from "@/lib/server/session";
 
 export const runtime = "nodejs";
@@ -16,9 +14,6 @@ export async function POST() {
   return handle(async () => {
     if (process.env.NODE_ENV === "production") {
       throw Errors.forbidden("dev-login is disabled in production");
-    }
-    if (isTesting) {
-      return ok({ user: MOCK_USER, company: MOCK_COMPANY });
     }
 
     const user = await prisma.users.findFirst({

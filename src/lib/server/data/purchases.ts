@@ -10,18 +10,15 @@
  *   receive PO → goods-in: appends inventory_transactions(type='IN',
  *                ref_type='purchase_order_item') into the default bin, bumps
  *                received_qty, PO → Completed. Stock is NEVER written directly.
- *
- * Mock mode: lists come from src/mockdata/purchases; writes are rejected.
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
-import { formatINR } from "@/mockdata";
-import { PURCHASE_ORDERS, PURCHASE_REQUESTS } from "@/mockdata/purchases";
+import { isUuid } from "@/lib/server/data/util";
+import { formatINR, formatLeadTime } from "@/lib/catalog";
 
-// View shapes mirror src/mockdata/purchases.ts so pages swap sources cleanly.
+// Flattened one-row-per-item view shapes, consumed directly by the purchasing pages.
 export interface PurchaseRequestView {
   prId: string;
   componentId: string; // genericPN
@@ -56,9 +53,6 @@ export interface CreatePrInput {
   remarks?: string;
 }
 
-const mockReadOnly = () =>
-  new ApiError(400, "mock_read_only", "Purchasing writes are not available in mock mode (isTesting=true).");
-
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
   const ctx = await requireSession();
   return withTenant(ctx, async (tx) => {
@@ -79,7 +73,6 @@ const dateOf = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
 // ── reads ────────────────────────────────────────────────────────────────────
 
 export async function listPurchaseRequests(): Promise<PurchaseRequestView[]> {
-  if (isTesting) return PURCHASE_REQUESTS;
   return guarded("purchase_request.view", async (tx) => {
     const rows = await tx.$queryRaw<{
       prNo: string; status: string; date: Date; qty: number; lineTotal: number | null;
@@ -115,7 +108,6 @@ export async function listPurchaseRequests(): Promise<PurchaseRequestView[]> {
 }
 
 export async function listPurchaseOrders(): Promise<PurchaseOrderView[]> {
-  if (isTesting) return PURCHASE_ORDERS;
   return guarded("purchase_order.view", async (tx) => {
     const rows = await tx.$queryRaw<{
       poNo: string; prNo: string | null; status: string; date: Date; qty: number;
@@ -161,7 +153,6 @@ async function nextDocNo(tx: TxClient, table: "purchase_requests" | "purchase_or
 }
 
 export async function createPurchaseRequest(input: CreatePrInput): Promise<PurchaseRequestView> {
-  if (isTesting) throw mockReadOnly();
   return guarded("purchase_request.create", async (tx, ctx) => {
     const component = await tx.components.findFirst({
       where: { generic_pn: input.componentPN, deleted_at: null },
@@ -223,7 +214,6 @@ export async function createPurchaseRequest(input: CreatePrInput): Promise<Purch
  * sources it into ONE purchase order (status Sent) with PR-line traceability.
  */
 export async function approvePurchaseRequest(prNo: string): Promise<{ pr: string; po: string }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("purchase_request.approve", async (tx, ctx) => {
     const pr = await tx.purchase_requests.findFirst({
       where: { pr_no: prNo, deleted_at: null },
@@ -285,7 +275,6 @@ export async function approvePurchaseRequest(prNo: string): Promise<{ pr: string
  * projects balances — and set received_qty. PO → Completed.
  */
 export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; linesReceived: number }> {
-  if (isTesting) throw mockReadOnly();
   return guarded("purchase_order.edit", async (tx, ctx) => {
     await assertPermission(tx, ctx, "inventory.create"); // goods-in writes the ledger
 
@@ -343,5 +332,108 @@ export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; 
 
     await tx.purchase_orders.update({ where: { id: po.id }, data: { status: "Completed", updated_by: ctx.userId } });
     return { po: poNo, linesReceived: received };
+  });
+}
+
+// ── Sourcing recommendations ─────────────────────────────────────────────────────
+export interface SourcingRecommendation {
+  supplierId: string; // supplier slug
+  supplierName: string;
+  brandId: string; // brand slug
+  brandName: string;
+  price: string; // formatted ₹
+  leadTime: string;
+}
+
+export interface RecommendationsView {
+  componentPN: string;
+  componentName: string;
+  suggestedQty: number;
+  recommendations: SourcingRecommendation[];
+}
+
+/**
+ * Supplier sourcing options for a component. `componentKey` (generic PN / slug /
+ * uuid) omitted → auto-pick the biggest current BOM shortage, so the PR screen
+ * lands on a real, actionable part. suggestedQty is that shortage (per single
+ * build unit); for an explicit component it falls back to its reorder qty.
+ */
+export async function getRecommendations(componentKey?: string): Promise<RecommendationsView> {
+  return guarded("purchase_request.view", async (tx) => {
+    let comp: { id: string; generic_pn: string; name: string } | null = null;
+    let suggestedQty = 0;
+
+    if (componentKey) {
+      comp = await tx.components.findFirst({
+        where: { deleted_at: null, ...(isUuid(componentKey) ? { id: componentKey } : { generic_pn: componentKey }) },
+        select: { id: true, generic_pn: true, name: true },
+      });
+      if (!comp) throw Errors.notFound("Component");
+      const [c] = await tx.$queryRaw<{ reorder: number }[]>`
+        SELECT COALESCE(reorder_qty, 0)::int AS reorder FROM components WHERE id = ${comp.id}::uuid`;
+      suggestedQty = c?.reorder ?? 0;
+    } else {
+      // Auto-pick the component most below its minimum stock (the natural target
+      // for a replenishment PR), with a reorder-based suggested quantity.
+      const [top] = await tx.$queryRaw<{
+        id: string; generic_pn: string; name: string; reorder: number; deficit: number;
+      }[]>`
+        WITH bal AS (
+          SELECT c.id, c.generic_pn, c.name,
+                 COALESCE(c.reorder_qty, 0)::numeric AS reorder_qty,
+                 c.min_stock::numeric AS min_stock,
+                 COALESCE((
+                   SELECT SUM(ib.on_hand) FROM component_brand_variants v
+                   LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
+                   WHERE v.component_id = c.id AND v.deleted_at IS NULL
+                 ), 0)::numeric AS on_hand
+          FROM components c WHERE c.deleted_at IS NULL
+        )
+        SELECT id, generic_pn, name, reorder_qty::float8 AS reorder,
+               (min_stock - on_hand)::float8 AS deficit
+        FROM bal
+        WHERE on_hand < min_stock
+        ORDER BY (min_stock - on_hand) DESC LIMIT 1`;
+      if (top) {
+        comp = { id: top.id, generic_pn: top.generic_pn, name: top.name };
+        suggestedQty = Math.max(1, Math.ceil(top.reorder > 0 ? top.reorder : top.deficit));
+      } else {
+        // Nothing below minimum — fall back to the first component alphabetically.
+        comp = await tx.components.findFirst({
+          where: { deleted_at: null },
+          orderBy: { name: "asc" },
+          select: { id: true, generic_pn: true, name: true },
+        });
+        if (!comp) throw Errors.notFound("Component");
+        const [c] = await tx.$queryRaw<{ reorder: number }[]>`
+          SELECT COALESCE(reorder_qty, 0)::int AS reorder FROM components WHERE id = ${comp.id}::uuid`;
+        suggestedQty = Math.max(1, c?.reorder ?? 1);
+      }
+    }
+
+    const offers = await tx.$queryRaw<{
+      supplierId: string; supplierName: string; brandId: string; brandName: string; price: number; leadTimeDays: number | null;
+    }[]>`
+      SELECT s.slug AS "supplierId", s.name AS "supplierName", b.slug AS "brandId", b.name AS "brandName",
+             scp.price::float8 AS price, scp.lead_time_days AS "leadTimeDays"
+      FROM supplier_component_prices scp
+      JOIN suppliers s ON s.id = scp.supplier_id
+      JOIN brands b ON b.id = scp.brand_id
+      WHERE scp.component_id = ${comp.id}::uuid AND scp.valid_to IS NULL AND scp.deleted_at IS NULL
+      ORDER BY scp.price`;
+
+    return {
+      componentPN: comp.generic_pn,
+      componentName: comp.name,
+      suggestedQty,
+      recommendations: offers.map((o) => ({
+        supplierId: o.supplierId,
+        supplierName: o.supplierName,
+        brandId: o.brandId,
+        brandName: o.brandName,
+        price: formatINR(o.price),
+        leadTime: formatLeadTime(o.leadTimeDays ?? 0),
+      })),
+    };
   });
 }

@@ -2,13 +2,11 @@
  * Brands data access (mock/DB, see docs/API.md "Data source toggle").
  * Endpoints: list, detail (by uuid or slug), and the brand's components.
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError, Errors } from "@/lib/server/http";
+import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { BRANDS, brandComponents as mockBrandComponents, getBrand } from "@/mockdata";
 
 export interface BrandView {
   id: string;
@@ -37,9 +35,6 @@ async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) =
 }
 
 export async function listBrands(): Promise<BrandView[]> {
-  if (isTesting) {
-    return BRANDS.map(mockBrand).sort((a, b) => a.name.localeCompare(b.name));
-  }
   return guarded("brand.view", async (tx) => {
     const rows = await tx.brands.findMany({ where: { deleted_at: null }, orderBy: { name: "asc" } });
     return rows.map(fromDb);
@@ -47,11 +42,6 @@ export async function listBrands(): Promise<BrandView[]> {
 }
 
 export async function getBrandDetail(idOrSlug: string): Promise<BrandView> {
-  if (isTesting) {
-    const b = getBrand(idOrSlug) ?? BRANDS.find((x) => x.name === idOrSlug);
-    if (!b) throw Errors.notFound("Brand");
-    return mockBrand(b);
-  }
   return guarded("brand.view", async (tx) => {
     const row = await tx.brands.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -62,13 +52,6 @@ export async function getBrandDetail(idOrSlug: string): Promise<BrandView> {
 }
 
 export async function getBrandComponents(idOrSlug: string): Promise<BrandComponentView[]> {
-  if (isTesting) {
-    const b = getBrand(idOrSlug);
-    if (!b) throw Errors.notFound("Brand");
-    return mockBrandComponents(b.id)
-      .map((c) => ({ id: c.id, genericPN: c.genericPN, name: c.name, category: c.category }))
-      .sort((a, b2) => a.name.localeCompare(b2.name));
-  }
   return guarded("brand.view", async (tx) => {
     const brand = await tx.brands.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -98,7 +81,6 @@ export interface CreateBrandInput {
 
 /** Create a brand (Add Brand form). slug is derived from the name and is the id-space key. */
 export async function createBrand(input: CreateBrandInput): Promise<BrandView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand writes are not available in mock mode (isTesting=true).");
   return guarded("brand.create", async (tx, ctx) => {
     const name = input.name.trim();
     const slug = slugify(name);
@@ -130,7 +112,6 @@ export interface UpdateBrandInput {
 
 /** Edit a brand's own fields (by uuid or slug). slug is immutable so id-space stays stable. */
 export async function updateBrand(idOrSlug: string, patch: UpdateBrandInput): Promise<BrandView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand writes are not available in mock mode (isTesting=true).");
   return guarded("brand.edit", async (tx, ctx) => {
     const existing = await tx.brands.findFirst({
       where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
@@ -193,7 +174,6 @@ async function resolveSupplier(tx: TxClient, key: string): Promise<{ id: string;
 }
 
 export async function listBrandSuppliers(brandKey: string): Promise<BrandSupplierView[]> {
-  if (isTesting) return [];
   return guarded("brand.view", async (tx) => {
     const brandId = await resolveBrandId(tx, brandKey);
     return tx.$queryRaw<BrandSupplierView[]>`
@@ -207,7 +187,6 @@ export async function listBrandSuppliers(brandKey: string): Promise<BrandSupplie
 }
 
 export async function addBrandSupplier(brandKey: string, input: AddBrandSupplierInput): Promise<BrandSupplierView> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand-supplier writes are not available in mock mode (isTesting=true).");
   return guarded("brand.edit", async (tx, ctx) => {
     const brandId = await resolveBrandId(tx, brandKey);
     const sup = await resolveSupplier(tx, input.supplier);
@@ -232,7 +211,6 @@ export async function addBrandSupplier(brandKey: string, input: AddBrandSupplier
 }
 
 export async function removeBrandSupplier(brandKey: string, supplierKey: string): Promise<{ ok: true }> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Brand-supplier writes are not available in mock mode (isTesting=true).");
   return guarded("brand.edit", async (tx, ctx) => {
     const brandId = await resolveBrandId(tx, brandKey);
     const sup = await resolveSupplier(tx, supplierKey);
@@ -244,13 +222,6 @@ export async function removeBrandSupplier(brandKey: string, supplierKey: string)
 }
 
 // ── mappers ──────────────────────────────────────────────────────────────────
-function mockBrand(b: (typeof BRANDS)[number]): BrandView {
-  return {
-    id: b.id, slug: b.id, name: b.name, description: b.description,
-    headquarter: b.headquarter, founded: b.founded, status: b.status, rating: b.rating,
-  };
-}
-
 function fromDb(b: {
   id: string; slug: string; name: string; description: string | null;
   headquarter: string | null; founded: string | null; status: string; rating: unknown;

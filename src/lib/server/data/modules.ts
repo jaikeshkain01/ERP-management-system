@@ -3,9 +3,7 @@
  * modules (registry lives in code: src/lib/modules.ts). Persists what used to be
  * a localStorage toggle. An absent row means the module is enabled (default on).
  */
-import { isTesting } from "@/lib/config";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
-import { ApiError } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 
@@ -24,7 +22,6 @@ async function withSession<T>(fn: (tx: TxClient, ctx: TenantContext) => Promise<
 
 /** Current enable map for the active company (defaults every module to on). */
 export async function getModules(): Promise<ModuleMap> {
-  if (isTesting) return allEnabled();
   return withSession(async (tx) => {
     const rows = await tx.$queryRaw<{ module_id: string; enabled: boolean }[]>`
       SELECT module_id, enabled FROM company_modules WHERE deleted_at IS NULL`;
@@ -38,7 +35,6 @@ export async function getModules(): Promise<ModuleMap> {
 
 /** Set one module's enabled flag (upsert) and return the full updated map. */
 export async function setModule(id: ModuleId, enabled: boolean): Promise<ModuleMap> {
-  if (isTesting) throw new ApiError(400, "mock_read_only", "Module writes are not available in mock mode (isTesting=true).");
   return withSession(async (tx, ctx) => {
     await assertPermission(tx, ctx, "role.edit");
     await tx.$executeRaw`
