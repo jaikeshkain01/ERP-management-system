@@ -50,13 +50,13 @@ export default function Dashboard() {
       })()
   }, [])
 
-  const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId }[] = [
-    { title: "Products", value: d.PRODUCTS.length.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10" },
-    { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10" },
-    { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10" },
-    { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10" },
-    { title: "Brands", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10" },
-    { title: "Inventory Value", value: compactINR(ops?.inventoryValue ?? 0), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory" },
+  const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
+    { title: "Products", value: d.PRODUCTS.length.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
+    { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
+    { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
+    { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
+    { title: "Brands", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
+    { title: "Inventory Value", value: compactINR(ops?.inventoryValue ?? 0), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
@@ -543,6 +543,7 @@ export default function Dashboard() {
           desc: kpi.desc,
           icon: kpi.icon,
           tone: kpi.color.includes("success") ? "success" : "default",
+          href: kpi.href,
         }))}
       />
 

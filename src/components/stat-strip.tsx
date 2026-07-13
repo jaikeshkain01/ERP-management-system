@@ -1,5 +1,6 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
+import Link from "next/link"
 
 export type StatTone = "default" | "success" | "warning" | "danger"
 
@@ -10,6 +11,7 @@ export type StatItem = {
   icon?: React.ComponentType<{ className?: string }>
   /** Accepted for API compatibility; the strip is intentionally monochrome. */
   tone?: StatTone
+  href?: string
 }
 
 // Literal class strings so Tailwind's scanner can see them (no dynamic interpolation).
@@ -45,11 +47,9 @@ export function StatStrip({
     >
       {items.map((item, idx) => {
         const Icon = item.icon
-        return (
-          <div
-            key={idx}
-            className="group relative flex items-center gap-3.5 bg-card px-5 py-4 transition-colors hover:bg-accent/40"
-          >
+        
+        const content = (
+          <>
             {/* Monochrome hover accent rail */}
             <span className="absolute inset-y-0 left-0 w-0.5 bg-foreground/70 opacity-0 transition-opacity group-hover:opacity-100" />
             {Icon && (
@@ -68,6 +68,25 @@ export function StatStrip({
                 <span className="mt-1 truncate text-[11px] leading-tight text-muted-foreground">{item.desc}</span>
               )}
             </div>
+          </>
+        )
+
+        const containerClasses = "group relative flex items-center gap-3.5 bg-card px-5 py-4 transition-colors hover:bg-accent/40 block"
+
+        if (item.href) {
+          return (
+            <Link key={idx} href={item.href} className={containerClasses}>
+              {content}
+            </Link>
+          )
+        }
+
+        return (
+          <div
+            key={idx}
+            className={containerClasses}
+          >
+            {content}
           </div>
         )
       })}
