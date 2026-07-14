@@ -3,12 +3,10 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TopBar } from "@/components/top-bar";
-import { WorkspaceTabs } from "@/components/workspace-tabs";
 import { ModuleProvider } from "@/components/module-provider";
-import { ModuleGate } from "@/components/module-gate";
-import { DataProvider, DataGate } from "@/lib/data-provider";
+import { DataProvider } from "@/lib/data-provider";
 import { UserProductsProvider } from "@/lib/user-products";
+import { AppShell } from "@/components/app-shell";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -47,15 +45,7 @@ export default function RootLayout({
           <DataProvider>
             <ModuleProvider>
               <UserProductsProvider>
-                <div className="flex min-h-screen w-full flex-col bg-background">
-                  <TopBar />
-                  <WorkspaceTabs />
-                  <main className="flex-1 overflow-y-auto p-6 md:p-8">
-                    <DataGate>
-                      <ModuleGate>{children}</ModuleGate>
-                    </DataGate>
-                  </main>
-                </div>
+                <AppShell>{children}</AppShell>
               </UserProductsProvider>
             </ModuleProvider>
           </DataProvider>

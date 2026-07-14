@@ -237,7 +237,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
     const variant = await tx.component_brand_variants.findFirst({ where: { id: input.variantId, deleted_at: null }, select: { id: true } });
     if (!variant) throw Errors.badRequest("Unknown variant", { variantId: input.variantId });
 
-    const base = { company_id: ctx.companyId, component_brand_variant_id: input.variantId, created_by: ctx.userId };
+    const base = { company_id: ctx.companyId!, component_brand_variant_id: input.variantId, created_by: ctx.userId };
     const touched: { locationId: string }[] = [];
 
     if (input.type === "TRANSFER") {

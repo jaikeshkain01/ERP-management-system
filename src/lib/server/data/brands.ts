@@ -89,7 +89,7 @@ export async function createBrand(input: CreateBrandInput): Promise<BrandView> {
     if (dupe) throw Errors.conflict("A brand with this name already exists", { slug });
     const row = await tx.brands.create({
       data: {
-        company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+        company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
         slug, name,
         description: input.description?.trim() || null,
         headquarter: input.headquarter?.trim() || null,

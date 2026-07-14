@@ -98,8 +98,8 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
 export function UserProductsProvider({ children }: { children: React.ReactNode }) {
   const [products, setProducts] = React.useState<UserProduct[]>([])
   const [loaded, setLoaded] = React.useState(false)
-  // Wait for the session to be established (DataProvider auto dev-logs-in) before
-  // hitting the API, otherwise the fetch races the login and 401s.
+  // Wait for an authenticated session (me set by DataProvider after login) before
+  // hitting the API, otherwise the fetch races the session and 401s.
   const { me } = useData()
 
   React.useEffect(() => {

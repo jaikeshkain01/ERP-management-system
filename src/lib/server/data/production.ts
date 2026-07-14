@@ -161,7 +161,7 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
       GROUP BY pl.component_id`;
     if (!demand.length) throw Errors.conflict("Active BOM has no component lines to plan");
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const orderNo = await nextOrderNo(tx);
 
     const order = await tx.production_orders.create({
@@ -245,7 +245,7 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
       throw Errors.conflict("Insufficient stock to allocate this batch", { shorts });
     }
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     let allocated = 0;
     for (const { itemId, picks } of plan) {
       for (const { bin, qty } of picks) {
@@ -291,7 +291,7 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
       // Issue: append a CONSUMPTION ledger row (on_hand −qty) …
       await tx.inventory_transactions.create({
         data: {
-          company_id: ctx.companyId,
+          company_id: ctx.companyId!,
           type: "CONSUMPTION",
           component_brand_variant_id: a.component_brand_variant_id,
           warehouse_id: a.warehouse_id,
@@ -306,7 +306,7 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
       // … record the consumption move …
       await tx.production_material_moves.create({
         data: {
-          company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+          company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
           production_order_item_id: a.production_order_item_id,
           kind: "consumption",
           component_brand_variant_id: a.component_brand_variant_id,

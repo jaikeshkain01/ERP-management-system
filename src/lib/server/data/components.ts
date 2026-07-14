@@ -125,7 +125,7 @@ async function resolveOrCreateBrand(tx: TxClient, ctx: TenantContext, name: stri
   if (existing) return existing.id;
   const created = await tx.brands.create({
     data: {
-      company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+      company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
       slug: slugify(name), name, status: "Approved",
     },
     select: { id: true },
@@ -143,7 +143,7 @@ export async function createComponent(input: CreateComponentInput): Promise<Comp
     const dupe = await tx.components.findFirst({ where: { generic_pn: genericPN, deleted_at: null }, select: { id: true } });
     if (dupe) throw Errors.conflict("A component with this generic part number already exists", { genericPN });
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const minStock = input.minStock ?? 0;
     const specs = (input.specs ?? []).filter((s) => s.key.trim());
 
@@ -191,7 +191,7 @@ export async function createComponent(input: CreateComponentInput): Promise<Comp
       if (qty > 0 && bin) {
         await tx.inventory_transactions.create({
           data: {
-            company_id: ctx.companyId, type: "IN",
+            company_id: ctx.companyId!, type: "IN",
             component_brand_variant_id: variant.id,
             warehouse_id: bin.warehouse_id, location_id: bin.id,
             qty_delta: qty, ref_type: "opening", reason: `Opening stock for ${genericPN}`,
@@ -336,7 +336,7 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
     });
     if (dupe) throw Errors.conflict("This brand already has a variant for this component");
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const variant = await tx.component_brand_variants.create({
       data: { ...audit, component_id: comp.id, brand_id: brandId, part_no: input.partNo.trim() },
       select: { id: true },
@@ -352,7 +352,7 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
       if (!bin) throw Errors.conflict("No default bin configured for opening stock");
       await tx.inventory_transactions.create({
         data: {
-          company_id: ctx.companyId, type: "IN",
+          company_id: ctx.companyId!, type: "IN",
           component_brand_variant_id: variant.id,
           warehouse_id: bin.warehouse_id, location_id: bin.id,
           qty_delta: qty, ref_type: "opening", reason: `Opening stock for ${comp.generic_pn}`,

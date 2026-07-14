@@ -182,7 +182,7 @@ async function resolveOrCreateComponent(
   ctx: TenantContext,
   line: CreateCatalogProductLine,
 ): Promise<string> {
-  const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+  const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
 
   // Explicit link to an existing catalog component.
   const explicit = line.componentId?.trim();
@@ -230,7 +230,7 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
     ).filter((g) => g.lines.length > 0);
     if (groups.length === 0) throw Errors.badRequest("Add at least one component line");
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
 
     // 1) Product (unique slug) + Active BOM version.
     const slug = await uniqueSlug(tx, "products", slugify(name));

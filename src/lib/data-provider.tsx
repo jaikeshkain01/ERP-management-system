@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Client data provider — the frontend's single source of truth. It loads
- * /api/bootstrap once (auto-logging-in via /api/auth/dev-login if there's no
- * session), binds the shared selector factory (@/lib/catalog) to the result,
- * and exposes everything through `useData()`.
+ * Client data provider — the frontend's single source of truth. It reads
+ * /api/me and /api/bootstrap; if there is no session it stays `unauthenticated`
+ * (the app shell redirects to /login — no auto dev-login). Binds the shared
+ * selector factory (@/lib/catalog) to the result and exposes it via `useData()`.
  */
 import * as React from "react";
 import { createSelectors, type DataSet, type Selectors } from "@/lib/catalog";
@@ -12,18 +12,25 @@ import { createSelectors, type DataSet, type Selectors } from "@/lib/catalog";
 const EMPTY: DataSet = { components: [], brands: [], suppliers: [], pcbs: [], products: [] };
 
 export interface Me {
-  user: { id: string; name: string; email: string };
+  user: { id: string; name: string; email: string; is_superadmin?: boolean };
   company: { id: string; code: string; name: string };
   permissions: string[];
+  roleName?: string;
 }
+
+export type AuthState = "loading" | "authenticated" | "unauthenticated";
 
 type DataContextValue = Selectors & {
   loading: boolean;
   error: string | null;
   me: Me | null;
+  /** Coarse auth state used by the app shell to gate the chrome / redirect to /login. */
+  authState: AuthState;
   /** True if the caller's role holds `resource.action` (always true in mock mode). */
   can: (permission: string) => boolean;
   reload: () => void;
+  /** Clear the session and drop to the unauthenticated state (shell redirects to /login). */
+  logout: () => Promise<void>;
 };
 
 const DataContext = React.createContext<DataContextValue | null>(null);
@@ -44,10 +51,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     setLoading(true);
     setError(null);
     try {
-      let meRes = await fetch("/api/me", { cache: "no-store" });
+      const meRes = await fetch("/api/me", { cache: "no-store" });
+      // No session → unauthenticated. The app shell redirects to /login; we do NOT
+      // auto dev-login anymore (there is a real login page).
       if (meRes.status === 401) {
-        await fetch("/api/auth/dev-login", { method: "POST" });
-        meRes = await fetch("/api/me", { cache: "no-store" });
+        setMe(null);
+        setData(EMPTY);
+        return;
       }
       setMe(await dataOrThrow(meRes));
       setData(await dataOrThrow(await fetch("/api/bootstrap", { cache: "no-store" })));
@@ -62,16 +72,30 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     load();
   }, [load]);
 
+  const logout = React.useCallback(async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setMe(null);
+      setData(EMPTY);
+      setError(null);
+    }
+  }, []);
+
   const selectors = React.useMemo(() => createSelectors(data), [data]);
   const permissionSet = React.useMemo(() => new Set(me?.permissions ?? []), [me]);
+
+  const authState: AuthState = loading ? "loading" : me ? "authenticated" : "unauthenticated";
 
   const value: DataContextValue = {
     ...selectors,
     loading,
     error,
     me,
+    authState,
     can: (permission: string) => permissionSet.size === 0 || permissionSet.has(permission),
     reload: load,
+    logout,
   };
 
   return <DataContext.Provider value={value}>{children}</DataContext.Provider>;

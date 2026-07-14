@@ -89,6 +89,7 @@ CREATE TABLE users (                       -- GLOBAL identity (no company_id)
   email         text NOT NULL,
   password_hash text,
   is_active     boolean NOT NULL DEFAULT true,
+  is_superadmin boolean NOT NULL DEFAULT false,  -- cross-tenant platform admin (see §RLS is_superadmin())
   created_by    uuid, updated_by uuid,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -1013,6 +1014,26 @@ CREATE POLICY audit_read ON audit_logs
 
 -- users is GLOBAL (no RLS): shared identity pool. Access is mediated by the service layer.
 
+-- ---- Superadmin: cross-tenant platform administration --------------------------
+-- A superadmin (users.is_superadmin) manages users, companies, roles/permissions
+-- and module licensing across ALL tenants. is_superadmin() reads the GLOBAL users
+-- table for current_user_id(); the PERMISSIVE superadmin_all policies below are
+-- OR'd with each table's tenant_isolation / member-visibility policy, so tenant
+-- scoping is unchanged for non-superadmins. The service layer runs superadmin work
+-- with ONLY the user GUC set (no active company) — see withSuperadmin().
+CREATE OR REPLACE FUNCTION is_superadmin() RETURNS boolean
+  LANGUAGE sql STABLE AS $$
+    SELECT coalesce(
+      (SELECT u.is_superadmin FROM users u
+        WHERE u.id = current_user_id() AND u.deleted_at IS NULL),
+      false)
+$$;
+CREATE POLICY superadmin_all ON companies           USING (is_superadmin()) WITH CHECK (is_superadmin());
+CREATE POLICY superadmin_all ON company_memberships USING (is_superadmin()) WITH CHECK (is_superadmin());
+CREATE POLICY superadmin_all ON roles               USING (is_superadmin()) WITH CHECK (is_superadmin());
+CREATE POLICY superadmin_all ON role_permissions    USING (is_superadmin()) WITH CHECK (is_superadmin());
+CREATE POLICY superadmin_all ON company_modules     USING (is_superadmin()) WITH CHECK (is_superadmin());
+
 -- ============================================================================
 --  SEED / BOOTSTRAP  (first-run: create tenant #1 so the app has a context)
 -- ============================================================================
@@ -1031,7 +1052,7 @@ BEGIN
     ON CONFLICT DO NOTHING;
   SELECT id INTO v_company FROM companies WHERE lower(code) = 'stackiot' AND deleted_at IS NULL;
 
-  INSERT INTO users (name, email, is_active) VALUES ('Administrator', 'admin@stackiot.local', true)
+  INSERT INTO users (name, email, is_active, is_superadmin) VALUES ('Administrator', 'admin@stackiot.local', true, true)
     ON CONFLICT DO NOTHING;
   SELECT id INTO v_user FROM users WHERE lower(email) = 'admin@stackiot.local' AND deleted_at IS NULL;
 

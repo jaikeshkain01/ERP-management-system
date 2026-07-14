@@ -175,7 +175,7 @@ export async function createPurchaseRequest(input: CreatePrInput): Promise<Purch
     const lineTotal = unitPrice != null ? unitPrice * input.qty : null;
 
     const prNo = await nextDocNo(tx, "purchase_requests", "PR");
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
 
     const pr = await tx.purchase_requests.create({
       data: {
@@ -232,7 +232,7 @@ export async function approvePurchaseRequest(prNo: string): Promise<{ pr: string
     const supplierId = items[0].supplier_id;
     if (!supplierId) throw Errors.conflict("PR item has no supplier to source from");
 
-    const audit = { company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId };
+    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const now = new Date();
 
     // Approval audit trail — both steps of the chain.
@@ -311,7 +311,7 @@ export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; 
 
       await tx.inventory_transactions.create({
         data: {
-          company_id: ctx.companyId,
+          company_id: ctx.companyId!,
           type: "IN",
           component_brand_variant_id: variant.id,
           warehouse_id: bin.warehouse_id,

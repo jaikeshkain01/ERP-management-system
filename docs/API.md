@@ -38,8 +38,11 @@ The UI consumes the backend exclusively via a **global data provider** — the a
 - **`GET /api/bootstrap`** returns the whole catalog in the exact `DataSet` shape (business-key
   id-space: slug / generic_pn; live stock folded into brand variants).
 - **`DataProvider` / `useData()`** — [src/lib/data-provider.tsx](../src/lib/data-provider.tsx): on mount
-  calls `/api/me`; if 401 (DB mode) calls `/api/auth/dev-login`, then loads `/api/bootstrap`, binds the
-  factory, and exposes all selectors + `me` + `can(permission)`. Gates render until loaded.
+  calls `/api/me`; a 401 leaves it `unauthenticated` (no auto dev-login) and [`AppShell`](../src/components/app-shell.tsx)
+  redirects to `/login`. When authenticated it loads `/api/bootstrap`, binds the factory, and exposes all
+  selectors + `me` (incl. `is_superadmin`) + `can(permission)` + `authState` + `logout()`. Gates render until loaded.
+- **Login** — [`/login`](../src/app/login/page.tsx) posts `/api/auth/login` (email + password); the top-bar
+  account menu calls `logout()` → `/api/auth/logout`. There is no credential-free / demo login path.
 - **Migration pattern per page:** replace `import … from "@/mockdata"` with `const d = useData()`, and
   move any module-scope view-model build into the component (a `useMemo`). Pages then behave the same.
 - **Status:** ✅ Components List, Products List/Structure, PCB List/Structure, Suppliers List/Details,
@@ -65,7 +68,8 @@ The UI consumes the backend exclusively via a **global data provider** — the a
   ✅ **Reports** (`/reports`) — the Monthly Production Output chart loads `GET /reports/yield?range=6m`
   (falls back to the static series if the fetch fails). Distribution/KPI tiles remain presentational.
   (localStorage demo writes on Brands/Supplier/Component Details left intact — real write endpoints later.)
-- **Prod note:** `dev-login` is disabled in production — a real login page/flow replaces it there.
+- **Auth note:** the only way to establish a session is `POST /api/auth/login` with valid credentials.
+  (The former dev-only `dev-login` bypass was removed for privacy — it granted a superadmin session with no password.)
 
 ---
 
@@ -170,11 +174,11 @@ template entry as it's built.
 ### Auth & tenant session
 - ✅ `POST /auth/login` — verify credentials, issue session cookie, return user + active company
 - ✅ `POST /auth/logout` — clear the session cookie (added; not in original §7 list)
-- ✅ `POST /auth/dev-login` — DEV ONLY: session as the seeded admin, no creds (403 in prod)
 - ✅ `GET  /bootstrap` — whole catalog as a `DataSet` for the frontend data provider
 - ✅ `GET  /me/companies` — companies this user can access
 - ✅ `POST /session/company` — switch active company (re-issues cookie)
-- ✅ `GET  /me` — current user + active company + effective permissions
+- ✅ `GET  /me` — current user (incl. `is_superadmin`) + active company + effective permissions
+- ✅ `POST /me/password` — self-service password change (verifies current password; any authenticated user)
 
 ### RBAC admin
 - ✅ `GET  /permissions` — the resource × action matrix (static app constant, §7h)
@@ -183,6 +187,18 @@ template entry as it's built.
 - ⬜ `PUT  /roles/{id}/permissions` — set granted (resource, action) pairs
 - ⬜ `GET  /users` `?q` — members of the active company
 - ⬜ `PUT  /memberships/{id}/role` — set a user's role in the active company
+
+### Superadmin (cross-tenant governance — `users.is_superadmin`)
+All routes are superadmin-only (403 otherwise) and run cross-tenant via `withSuperadmin`
+(user GUC only + the `superadmin_all` RLS policies). Backs the `/superadmin` console.
+- ✅ `GET   /superadmin/overview` — users, companies, roles (+grants), permission matrix, module ids
+- ✅ `POST  /superadmin/users` · `PATCH /superadmin/users/{id}` — create / edit a global user (PATCH also resets password: `{ password }`, no current-password check)
+- ✅ `POST  /superadmin/users/{id}/memberships` — add user to a company (+ optional role)
+- ✅ `PATCH /superadmin/memberships/{id}` · `DELETE /superadmin/memberships/{id}` — role/status/default; remove
+- ✅ `POST  /superadmin/companies` (seeds an Admin role) · `PATCH /superadmin/companies/{id}`
+- ✅ `PUT   /superadmin/companies/{id}/modules` — toggle one module for that company
+- ✅ `POST  /superadmin/roles` · `PATCH /superadmin/roles/{id}` · `DELETE /superadmin/roles/{id}`
+- ✅ `PUT   /superadmin/roles/{id}/permissions` — replace a role's grants
 
 ### Products
 - ✅ `GET  /products` · ✅ `GET /products/{id}` (detail: counts + board list)
@@ -493,3 +509,15 @@ template entry as it's built.
   bucketed by `date_trunc('month', updated_at)`, then **zero-filled** onto the last N calendar months (labelled
   `Jan…Dec`, oldest→newest) so the chart always renders. Returns `[{ month, yield }]`.
 - **Note:** there is no `completed_at` column, so the month is taken from `updated_at` while status is Completed.
+
+### Superadmin console — ✅ (`/superadmin/*`)
+- **Source:** [routes](../src/app/api/superadmin) · [superadmin.ts (data)](../src/lib/server/data/superadmin.ts) · [superadmin.ts (guard)](../src/lib/server/superadmin.ts).
+- **Access:** superadmin-only. `requireSuperadmin` reads `users.is_superadmin` (global table, no RLS); every
+  mutation runs in `withSuperadmin`, which sets ONLY the user GUC — the `superadmin_all` PERMISSIVE RLS policies
+  (docs/schema.sql §RLS) then grant full cross-tenant visibility/write on companies, memberships, roles,
+  role_permissions and company_modules. Non-superadmins see the normal tenant-scoped policies (unchanged).
+- **Overview:** one round-trip for the whole console — `users` (+memberships), `companies` (+counts +module maps),
+  `roles` (+grants +member counts), plus `permissionMatrix` / `allPermissions` / `moduleIds` for the UI.
+- **Guards:** duplicate email/code → 409; creating a company seeds an Admin role granting the full matrix;
+  a superadmin cannot deactivate or de-superadmin themselves; a role with members cannot be deleted;
+  grants are validated against the permission matrix; setting a default membership clears the prior default.

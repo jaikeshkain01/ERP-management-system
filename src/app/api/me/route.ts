@@ -18,21 +18,25 @@ export async function GET() {
     // users is global; read the identity directly.
     const user = await prisma.users.findFirst({
       where: { id: ctx.userId, deleted_at: null },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, is_superadmin: true },
     });
     if (!user) throw Errors.unauthorized();
 
-    const { company, permissions } = await withTenant(ctx, async (tx) => {
+    const { company, permissions, roleName } = await withTenant(ctx, async (tx) => {
       const company = await tx.companies.findFirst({
         where: { id: ctx.companyId },
         select: { id: true, code: true, name: true },
       });
+      const membership = await tx.company_memberships.findFirst({
+        where: { user_id: ctx.userId, company_id: ctx.companyId, deleted_at: null },
+        select: { roles: { select: { name: true } } },
+      });
       const perms = await getEffectivePermissions(tx, ctx);
-      return { company, permissions: [...perms].sort() };
+      return { company, permissions: [...perms].sort(), roleName: membership?.roles?.name };
     });
 
     if (!company) throw Errors.forbidden("Active company not accessible");
 
-    return ok({ user, company, permissions });
+    return ok({ user, company, permissions, roleName });
   });
 }

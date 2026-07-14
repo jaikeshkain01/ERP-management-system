@@ -3,22 +3,38 @@
 import * as React from "react"
 import Link from "next/link"
 import Image from "next/image"
-import { usePathname } from "next/navigation"
-import { LayoutGrid, Lock, Settings, ChevronRight } from "lucide-react"
+import { usePathname, useRouter } from "next/navigation"
+import { LayoutGrid, Lock, Settings, ChevronRight, ShieldAlert, LogOut, ShieldCheck } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { UniversalSearch } from "@/components/universal-search"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useModules } from "@/components/module-provider"
+import { useData } from "@/lib/data-provider"
 import { WORKSPACES, workspaceForPath } from "@/lib/modules"
+
+function initialsOf(name?: string): string {
+  if (!name) return "?"
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?"
+}
 
 export function TopBar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { isEnabled } = useModules()
+  const { me, logout } = useData()
   const workspace = workspaceForPath(pathname)
+
+  const handleLogout = async () => {
+    await logout()
+    router.replace("/login")
+  }
 
   return (
     <header className="shell-chrome sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-chrome-border bg-chrome px-4 text-chrome-foreground md:px-6">
@@ -110,6 +126,17 @@ export function TopBar() {
           <UniversalSearch />
         </div>
         <ThemeToggle />
+        {me?.user.is_superadmin && (
+          <Link
+            href="/superadmin"
+            aria-label="Superadmin console"
+            title="Superadmin console"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-chrome-foreground transition-colors hover:bg-chrome-hover hover:text-chrome-strong data-[active]:text-chrome-strong"
+            data-active={pathname.startsWith("/superadmin") ? "" : undefined}
+          >
+            <ShieldAlert className="h-[18px] w-[18px]" />
+          </Link>
+        )}
         <Link
           href="/settings"
           aria-label="Settings"
@@ -117,9 +144,47 @@ export function TopBar() {
         >
           <Settings className="h-[18px] w-[18px]" />
         </Link>
-        <div className="ml-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-chrome-accent/25 text-xs font-semibold text-chrome-strong ring-1 ring-chrome-border">
-          JW
-        </div>
+
+        {/* User menu */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label="Account menu"
+            className="ml-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-chrome-accent/25 text-xs font-semibold text-chrome-strong ring-1 ring-chrome-border transition-colors hover:bg-chrome-accent/40 data-[popup-open]:bg-chrome-accent/40"
+          >
+            {initialsOf(me?.user.name)}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={8} className="w-60 p-1.5">
+            <div className="px-2 py-1.5">
+              <p className="truncate text-sm font-semibold text-foreground">{me?.user.name ?? "—"}</p>
+              <p className="truncate text-xs text-muted-foreground">{me?.user.email}</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                {me?.company && (
+                  <span className="inline-flex items-center rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {me.company.name}
+                  </span>
+                )}
+                {me?.user.is_superadmin && (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">
+                    <ShieldCheck className="h-3 w-3" /> Superadmin
+                  </span>
+                )}
+              </div>
+            </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem render={<Link href="/settings" />}>
+              <Settings className="h-4 w-4" /> Settings
+            </DropdownMenuItem>
+            {me?.user.is_superadmin && (
+              <DropdownMenuItem render={<Link href="/superadmin" />}>
+                <ShieldAlert className="h-4 w-4" /> Superadmin console
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={handleLogout}>
+              <LogOut className="h-4 w-4" /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   )

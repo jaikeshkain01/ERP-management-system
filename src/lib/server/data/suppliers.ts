@@ -102,7 +102,7 @@ export async function createSupplier(input: CreateSupplierInput): Promise<Suppli
     if (dupe) throw Errors.conflict("A supplier with this name already exists", { slug });
     const row = await tx.suppliers.create({
       data: {
-        company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+        company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
         slug, name,
         description: input.description?.trim() || null,
         contact: input.contact?.trim() || null,
@@ -215,7 +215,7 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
     } else {
       await tx.supplier_component_prices.create({
         data: {
-          company_id: ctx.companyId, created_by: ctx.userId, updated_by: ctx.userId,
+          company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
           supplier_id: supplier.id, component_id: component.id, brand_id: brand.id,
           price: input.price, currency,
           moq: input.moq ?? null, spq: input.spq ?? null, lead_time_days: input.leadTimeDays ?? null,
