@@ -126,7 +126,7 @@ function ComponentDetailsContent() {
 
   // Component details State
   const [componentsData, setComponentsData] = React.useState<Record<string, ComponentDetailData>>(COMPONENTS_DATA)
-  const [activeModal, setActiveModal] = React.useState<'add-supplier' | 'edit-price' | 'set-preferred' | 'add-variant' | 'edit-component' | 'delete-component' | null>(null)
+  const [activeModal, setActiveModal] = React.useState<'add-supplier' | 'edit-price' | 'set-preferred' | 'add-variant' | 'delete-component' | null>(null)
   
   // Toast notifications State
   const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
@@ -150,14 +150,6 @@ function ComponentDetailsContent() {
   const [newVariantMfg, setNewVariantMfg] = React.useState("")
   const [newVariantPartNo, setNewVariantPartNo] = React.useState("")
   const [newVariantStock, setNewVariantStock] = React.useState("")
-
-  // Edit Component Form State
-  const [editCompName, setEditCompName] = React.useState("")
-  const [editCompCategory, setEditCompCategory] = React.useState("")
-  const [editCompGenericPN, setEditCompGenericPN] = React.useState("")
-  const [editCompSolderType, setEditCompSolderType] = React.useState<"SMD" | "DIP">("SMD")
-  const [editCompFootprint, setEditCompFootprint] = React.useState("")
-  const [editCompSPQ, setEditCompSPQ] = React.useState("")
 
   // Keep the local view model in sync with the backend data (re-derives after d.reload()).
   React.useEffect(() => {
@@ -230,65 +222,6 @@ function ComponentDetailsContent() {
     : null
   const singleSupplierRisk = component.suppliers.length <= 1
   const stockValue = cheapestSupplier ? calculatedTotalStock * parsePrice(cheapestSupplier.price) : 0
-
-  // Prepopulate edit modal state
-  const openEditModal = () => {
-    setEditCompName(component.name)
-    setEditCompCategory(component.category)
-    setEditCompGenericPN(component.genericPN)
-    setEditCompSolderType(component.solderType)
-    setEditCompFootprint(component.footprint)
-    setEditCompSPQ(component.spq.toString())
-    setActiveModal("edit-component")
-  }
-
-  // Edit component handler
-  const handleUpdateComponent = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!editCompName.trim() || !editCompGenericPN.trim()) {
-      showToast("Name and Generic Part Number are required", "error")
-      return
-    }
-
-    const spqNum = parseInt(editCompSPQ) || 0
-
-    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: editCompName.trim(),
-        genericPN: editCompGenericPN.trim(),
-        category: editCompCategory,
-        solderType: editCompSolderType,
-        footprint: editCompFootprint.trim(),
-        ...(spqNum > 0 ? { spq: spqNum } : {}),
-      }),
-    })
-    const body = await res.json().catch(() => null)
-    if (!res.ok) {
-      showToast(body?.error?.message || "Failed to update component", "error")
-      return
-    }
-
-    const updatedComponent: ComponentDetailData = {
-      ...component,
-      name: editCompName.trim(),
-      category: editCompCategory,
-      genericPN: editCompGenericPN.trim(),
-      solderType: editCompSolderType,
-      footprint: editCompFootprint.trim(),
-      spq: spqNum
-    }
-
-    const updatedData = {
-      ...componentsData,
-      [componentId]: updatedComponent
-    }
-
-    applyComponentsData(updatedData)
-    setActiveModal(null)
-    showToast(`Successfully updated component ${updatedComponent.name}!`)
-  }
 
   // Delete component handler — soft-deletes on the backend (409 if used in a BOM).
   const handleDeleteComponent = async () => {
@@ -612,7 +545,7 @@ function ComponentDetailsContent() {
         <div className="flex items-center gap-2 self-start sm:self-auto">
           <Button 
             variant="outline" 
-            onClick={openEditModal}
+            render={<Link href={`/components/edit?component=${encodeURIComponent(componentId)}`} />}
             className="gap-1.5 border-border bg-background font-bold shadow-xs rounded-lg text-xs"
           >
             <Edit2 className="h-3.5 w-3.5" />
@@ -1056,7 +989,6 @@ function ComponentDetailsContent() {
                 {activeModal === 'edit-price' && "Edit Supplier Agreement Price"}
                 {activeModal === 'set-preferred' && "Set Preferred Supplier"}
                 {activeModal === 'add-variant' && "Add Approved Variant"}
-                {activeModal === 'edit-component' && "Edit Component Details"}
                 {activeModal === 'delete-component' && "Confirm Component Deletion"}
               </h3>
               <Button 
@@ -1068,80 +1000,6 @@ function ComponentDetailsContent() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-
-            {/* Edit Component Form */}
-            {activeModal === 'edit-component' && (
-              <form onSubmit={handleUpdateComponent} className="p-6 space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">Category *</label>
-                  <select
-                    value={editCompCategory}
-                    onChange={(e) => setEditCompCategory(e.target.value)}
-                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
-                  >
-                    <option value="Passive">Passive</option>
-                    <option value="Passive Components">Passive Components</option>
-                    <option value="Optoelectronics">Optoelectronics</option>
-                    <option value="Integrated Circuits (IC)">Integrated Circuits (IC)</option>
-                    <option value="Mechanical Parts">Mechanical Parts</option>
-                    <option value="Connectors font-medium">Connectors</option>
-                    <option value="Peripherals">Peripherals</option>
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">Name *</label>
-                  <Input 
-                    placeholder="e.g. Resistor 10K" 
-                    value={editCompName}
-                    onChange={(e) => setEditCompName(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">Generic Part Number *</label>
-                  <Input 
-                    placeholder="e.g. RES-10K" 
-                    value={editCompGenericPN}
-                    onChange={(e) => setEditCompGenericPN(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">Solder Type</label>
-                    <select
-                      value={editCompSolderType}
-                      onChange={(e) => setEditCompSolderType(e.target.value as "SMD" | "DIP")}
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring font-medium"
-                    >
-                      <option value="SMD">SMD</option>
-                      <option value="DIP">DIP</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">Footprint</label>
-                    <Input 
-                      placeholder="e.g. 0603" 
-                      value={editCompFootprint}
-                      onChange={(e) => setEditCompFootprint(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-bold">SPQ</label>
-                  <Input 
-                    type="number"
-                    placeholder="e.g. 5000" 
-                    value={editCompSPQ}
-                    onChange={(e) => setEditCompSPQ(e.target.value)}
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
-                  <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
-                  <Button type="submit">Save Changes</Button>
-                </div>
-              </form>
-            )}
 
             {/* Delete Component Confirm Modal */}
             {activeModal === 'delete-component' && (

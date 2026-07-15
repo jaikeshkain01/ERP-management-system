@@ -74,13 +74,22 @@ export async function verifySession(token: string): Promise<SessionClaims | null
   }
 }
 
-/** Cookie options for the session cookie (secure only in production). */
+/** Cookie options for the session cookie.
+ * `secure` cookies are only stored/sent by browsers over HTTPS. It defaults to
+ * on in production, but COOKIE_SECURE=false disables it for a plain-HTTP
+ * deployment (e.g. IP:port with no TLS in front) — otherwise the browser drops
+ * the session cookie and login appears to hang. Set COOKIE_SECURE=true once a
+ * reverse proxy terminates HTTPS. */
 export function sessionCookieOptions() {
+  const secure =
+    process.env.COOKIE_SECURE !== undefined
+      ? process.env.COOKIE_SECURE === "true"
+      : process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     sameSite: "lax" as const,
     path: "/",
-    secure: process.env.NODE_ENV === "production",
+    secure,
     maxAge: 60 * 60 * 24 * 7, // 7d, matches SESSION_TTL
   };
 }
