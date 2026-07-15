@@ -11,7 +11,7 @@ export default defineConfig({
   datasource: {
     // Prisma CLI (db pull / migrate / studio) manages schema as the OWNER, so it
     // can create _prisma_migrations, see every object, and bypass RLS. The running
-    // app never uses this — it connects as erp_app via DATABASE_URL (src/lib/prisma.ts).
+    // app never uses this — it connects as stack via DATABASE_URL (src/lib/prisma.ts).
     url: process.env["DIRECT_URL"],
   },
 });

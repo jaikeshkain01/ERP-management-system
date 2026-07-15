@@ -97,7 +97,7 @@ entries stay short.
   which opens a transaction and sets `app.current_company_id` / `app.current_user_id`. A bare
   `prisma.*` call outside it runs with no tenant context and **returns 0 rows** (RLS default) —
   that is the safe failure mode, not a bug.
-- The runtime connects as `erp_app` (NOBYPASSRLS). It **cannot** write `audit_logs` (trigger-only)
+- The runtime connects as `stack` (NOBYPASSRLS). It **cannot** write `audit_logs` (trigger-only)
   or mutate `inventory_transactions` (append-only). Corrections are reversing entries.
 
 ### AuthN — JWT in an httpOnly cookie

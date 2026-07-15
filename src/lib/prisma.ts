@@ -5,7 +5,7 @@ import { Errors } from "@/lib/server/http";
 /**
  * Prisma client for the StackIOT ERP backend.
  *
- * Connects as the least-privileged `erp_app` role (DATABASE_URL) through the
+ * Connects as the least-privileged `stack` role (DATABASE_URL) through the
  * `pg` driver adapter — Prisma 7 has no Rust engine, so a driver adapter is
  * required. Row-Level Security is ENFORCED against this role: a plain query
  * with no tenant context set returns ZERO rows. That is the safe default —

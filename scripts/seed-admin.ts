@@ -3,7 +3,7 @@
  *   npx tsx scripts/seed-admin.ts                 # sets ChangeMe123!
  *   ADMIN_PASSWORD='...' npx tsx scripts/seed-admin.ts
  *
- * `users` is a GLOBAL table (no RLS), so the erp_app connection can update it.
+ * `users` is a GLOBAL table (no RLS), so the stack connection can update it.
  * Idempotent — safe to re-run to reset the password.
  */
 import "dotenv/config";

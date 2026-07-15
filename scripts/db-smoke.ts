@@ -1,7 +1,7 @@
 /**
  * DB smoke test — run: `npx tsx scripts/db-smoke.ts`
  *
- * Proves the Prisma 7 client + pg driver adapter connect as `erp_app` and that
+ * Proves the Prisma 7 client + pg driver adapter connect as `stack` and that
  * Row-Level Security behaves: no tenant context => 0 rows; with context => the
  * seeded STACKIOT tenant is visible. Read-only; safe to run repeatedly.
  */
@@ -22,19 +22,19 @@ async function main() {
   console.log("2) With tenant context (expect STACKIOT rows):");
   const seeded = await prisma.$transaction(async (tx) => {
     // Bootstrap: read companies/users bypassing tenant scope is not possible via
-    // erp_app, so we look them up by joining through membership using a temporary
+    // stack, so we look them up by joining through membership using a temporary
     // context. We know the seed: pick the sole membership visible to its user.
-    // Instead, discover ids using a raw query the owner seeded; erp_app can read
+    // Instead, discover ids using a raw query the owner seeded; stack can read
     // its own memberships (membership_access policy: user_id = current_user_id).
     return tx;
   });
   void seeded;
 
   // We need real ids. Fetch them with a short-lived context using the known seed:
-  // the admin user + STACKIOT company. Query via raw as erp_app WITHOUT context
+  // the admin user + STACKIOT company. Query via raw as stack WITHOUT context
   // won't return them, so use set_config with values discovered from the DB owner
   // path is unavailable here — instead, set context by first finding ids through
-  // an unrestricted lookup table. `users` is GLOBAL (no RLS), so erp_app can read it.
+  // an unrestricted lookup table. `users` is GLOBAL (no RLS), so stack can read it.
   const admin = await prisma.$queryRaw<{ id: string }[]>`
     SELECT id FROM users WHERE lower(email) = 'admin@stackiot.local' LIMIT 1`;
   if (!admin.length) throw new Error("seed user not found");
