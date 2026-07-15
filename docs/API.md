@@ -24,7 +24,9 @@ When you write or change an endpoint/service:
 
 **Status legend:** ⬜ Not implemented · 🟡 In progress · ✅ Done · ⚠️ Needs revisit
 
-_Last updated: 2026-07-09 — catalog **write** endpoints live: `POST /brands`, `PATCH /brands/{id}`, `POST /suppliers`, `PATCH /suppliers/{id}`, `POST /suppliers/{id}/prices` (price-book upsert), `PATCH /components/{id}`, `POST /components/{id}/variants`, `DELETE /components/{id}` (soft-delete, 409 if used in a BOM). The Brands, Supplier-Details and Component-Details pages persist through these instead of localStorage (localStorage fully removed from all three); Component-Details Add-Supplier auto-creates an unknown supplier/brand then prices it. Remaining session-only bits: brands/list brand↔supplier "map" (no schema link — a price needs a component) and "set preferred supplier" (no column)._
+_Last updated: 2026-07-15 — added an **edge session gate** ([src/proxy.ts](../src/proxy.ts), Next 16 Proxy):
+unauthenticated `/api/*` (except login/logout) → 401, unauthenticated pages (except `/login`) → redirect to
+`/login`, as defense-in-depth over the existing DAL guards. Earlier: catalog **write** endpoints live: `POST /brands`, `PATCH /brands/{id}`, `POST /suppliers`, `PATCH /suppliers/{id}`, `POST /suppliers/{id}/prices` (price-book upsert), `PATCH /components/{id}`, `POST /components/{id}/variants`, `DELETE /components/{id}` (soft-delete, 409 if used in a BOM). The Brands, Supplier-Details and Component-Details pages persist through these instead of localStorage (localStorage fully removed from all three); Component-Details Add-Supplier auto-creates an unknown supplier/brand then prices it. Remaining session-only bits: brands/list brand↔supplier "map" (no schema link — a price needs a component) and "set preferred supplier" (no column)._
 
 ## Frontend integration (UI → backend)
 
@@ -109,6 +111,15 @@ entries stay short.
   the single source of the active company. No `companyId` ever comes from the URL/body of data routes.
 - Before an active company exists (login / switch), use **`withUser(userId, fn)`** — sets only
   `app.current_user_id` so RLS lets the user read their own memberships.
+- **Edge session gate (defense in depth):** [src/proxy.ts](../src/proxy.ts) (Next 16 renamed
+  `middleware`→`proxy`) verifies the `erp_session` cookie (signature + expiry via jose, **no DB**)
+  on every request except Next internals/static assets. Unauthenticated → `/api/*` gets a **401**
+  in the standard envelope (except public `/api/auth/login` + `/api/auth/logout`); a **page** gets a
+  **307 redirect to `/login`** (except `/login` itself). This is NOT the primary defense — per-route
+  `requireSession`/`withTenant`(RLS)/`assertPermission` at the DAL still enforce authN, tenant
+  scoping and RBAC. The gate only guarantees no unauthenticated request (incl. to a route that
+  forgot its guard, or a non-existent `/api/*` path) reaches application code, and turns signed-out
+  page visits around at the edge (no protected-shell flash). Tenancy/permissions stay at the DAL.
 
 ### AuthZ — `resource.action` gate
 - Each mutating/reading data route asserts a permission via **`assertPermission(tx, ctx, "component.view")`**
