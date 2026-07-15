@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ import {
 import { StatStrip } from "@/components/stat-strip"
 import { useData } from "@/lib/data-provider"
 import type { PcbStatus } from "@/lib/catalog"
+import { AddPcbModal, type ManualPcbData } from "@/components/pcb/add-pcb-modal"
 
 const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
   Active: {
@@ -36,13 +38,50 @@ const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon:
 }
 
 export default function PCBListPage() {
-  const { PCBS, pcbUsedInLabels } = useData()
+  const d = useData()
+  const { PCBS, pcbUsedInLabels } = d
+  const router = useRouter()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
+  const [isManualOpen, setIsManualOpen] = React.useState(false)
 
   const handleResetFilters = () => {
     setSearchQuery("")
     setStatusFilter("All")
+  }
+
+  const handleApplyManual = async (data: ManualPcbData) => {
+    try {
+      const res = await fetch("/api/pcbs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: data.name,
+          description: data.description || undefined,
+          layers: data.layers,
+          status: data.status,
+          lines: data.lines.map((l) => ({
+            componentId: l.componentId,
+            name: l.name || undefined,
+            partNumber: l.partNumber || undefined,
+            type: l.type || undefined,
+            solderType: l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
+            footprint: l.footprint || undefined,
+            qty: l.qty,
+          })),
+        }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      const createdPcb = body.data as { slug: string }
+      setIsManualOpen(false)
+      await d.reload() // refetch the catalog so the new PCB appears in the list
+      router.push(`/pcb-management/structure?pcb=${createdPcb.slug}`)
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to save PCB")
+    }
   }
 
   const filteredPcbs = PCBS.filter((pcb) => {
@@ -93,7 +132,10 @@ export default function PCBListPage() {
           </p>
         </div>
 
-        <Button className="gap-2 font-semibold self-start md:self-auto">
+        <Button
+          onClick={() => setIsManualOpen(true)}
+          className="gap-2 font-semibold self-start md:self-auto"
+        >
           <Plus className="h-4 w-4" />
           <span>Add PCB</span>
         </Button>
@@ -233,6 +275,14 @@ export default function PCBListPage() {
           </div>
         )}
       </div>
+
+      {/* Add PCB — manual entry */}
+      {isManualOpen && (
+        <AddPcbModal
+          onApply={handleApplyManual}
+          onClose={() => setIsManualOpen(false)}
+        />
+      )}
     </div>
   )
 }

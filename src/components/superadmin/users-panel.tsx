@@ -160,7 +160,7 @@ function CreateUserModal({ data, reload, onClose }: { data: Overview; reload: ()
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Full Name"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Doe" /></Field>
         <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@company.com" /></Field>
-        <Field label="Password" hint="Optional — leave blank for SSO/dev login."><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••" /></Field>
+        <Field label="Password" hint="Set one now, or the user can't sign in until you set it via Manage → Reset password."><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••" /></Field>
         <div className="flex items-center gap-3 pt-6">
           <Switch checked={isSuperadmin} onCheckedChange={setSuper} />
           <span className="text-sm font-medium">Platform superadmin</span>

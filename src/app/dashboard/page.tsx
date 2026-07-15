@@ -531,7 +531,7 @@ export default function Dashboard() {
           Dashboard
         </h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
-          StackIOT Technologies Pvt. Ltd. — real-time BOM readiness auditing, logistics analytics, and supply-chain risk indicators.
+          {d.me?.company?.name ?? "Your organization"} — real-time BOM readiness auditing, logistics analytics, and supply-chain risk indicators.
         </p>
       </div>
 

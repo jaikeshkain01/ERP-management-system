@@ -37,8 +37,12 @@ const ALG = "HS256";
 export interface SessionClaims {
   /** user id (JWT `sub`) */
   userId: string;
-  /** active company id (JWT `company`) */
-  companyId: string;
+  /**
+   * Active company id (JWT `company`). Null for a superadmin sitting in the
+   * cross-tenant console: superadmins belong to no company and only acquire a
+   * company context when they explicitly "Open" a tenant (operator mode).
+   */
+  companyId: string | null;
 }
 
 function secret(): Uint8Array {
@@ -47,9 +51,9 @@ function secret(): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-/** Sign a session token embedding the user + active company. */
+/** Sign a session token embedding the user + active company (company omitted when null). */
 export async function signSession(claims: SessionClaims): Promise<string> {
-  return new SignJWT({ company: claims.companyId })
+  return new SignJWT(claims.companyId ? { company: claims.companyId } : {})
     .setProtectedHeader({ alg: ALG })
     .setSubject(claims.userId)
     .setIssuedAt()
@@ -61,8 +65,10 @@ export async function signSession(claims: SessionClaims): Promise<string> {
 export async function verifySession(token: string): Promise<SessionClaims | null> {
   try {
     const { payload } = await jwtVerify(token, secret(), { algorithms: [ALG] });
-    if (typeof payload.sub !== "string" || typeof payload.company !== "string") return null;
-    return { userId: payload.sub, companyId: payload.company };
+    if (typeof payload.sub !== "string") return null;
+    // A missing/blank company claim = no active company (console superadmin).
+    const companyId = typeof payload.company === "string" && payload.company ? payload.company : null;
+    return { userId: payload.sub, companyId };
   } catch {
     return null;
   }

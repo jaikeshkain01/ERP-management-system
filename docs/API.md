@@ -355,6 +355,11 @@ All routes are superadmin-only (403 otherwise) and run cross-tenant via `withSup
   lines joined to components + preferred brand. Composable SQL via `Prisma.sql`/`Prisma.empty`.
 - **Returns:** `PcbView` (+ `lineCount, totalParts, usedInProducts[]`); BOM lines as
   `{ component:{id,genericPN,name,category,unit}, qty, refDes, preferredBrand:{id,name}|null, remarks }`.
+- **`POST /pcbs`** (`pcb.create`): create a **standalone** PCB from a BOM —
+  body `{ name, description?, layers?, status?, lines:[{ componentId?, name?, partNumber?, type?, solderType?, footprint?, qty }] }`.
+  Creates a `pcbs` row + Active `pcb_revision` (`Rev A`) + a `pcb_line` per component (qty aggregated per
+  component). Each line links an existing component by `generic_pn` or creates one on the fly (shared
+  `resolveOrCreateComponent`/`uniqueSlug` in `data/util.ts`). Returns the created `PcbView`.
 
 ### Products — ✅ (`/products`, `/products/{id}`, `/products/{id}/bom`)
 - **Source:** [route](../src/app/api/products/) · provider [src/lib/server/data/products.ts](../src/lib/server/data/products.ts)

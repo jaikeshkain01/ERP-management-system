@@ -99,11 +99,18 @@ export function UserProductsProvider({ children }: { children: React.ReactNode }
   const [products, setProducts] = React.useState<UserProduct[]>([])
   const [loaded, setLoaded] = React.useState(false)
   // Wait for an authenticated session (me set by DataProvider after login) before
-  // hitting the API, otherwise the fetch races the session and 401s.
+  // hitting the API, otherwise the fetch races the session and 401s. Custom
+  // products are tenant-scoped, so skip entirely when there is no active company
+  // (a superadmin in the console) — the endpoint would 400 with no tenant.
   const { me } = useData()
+  const companyId = me?.company?.id ?? null
 
   React.useEffect(() => {
-    if (!me) return
+    if (!me || !companyId) {
+      setProducts([])
+      setLoaded(true)
+      return
+    }
     let cancelled = false
     ;(async () => {
       try {
@@ -118,7 +125,7 @@ export function UserProductsProvider({ children }: { children: React.ReactNode }
     return () => {
       cancelled = true
     }
-  }, [me])
+  }, [me, companyId])
 
   // Replace a product in state with the server's authoritative copy.
   const upsert = React.useCallback((p: UserProduct) => {

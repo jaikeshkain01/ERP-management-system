@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
+import { Errors } from "@/lib/server/http";
 
 /**
  * Prisma client for the StackIOT ERP backend.
@@ -44,8 +45,12 @@ export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
 export type TxClient = Parameters<Parameters<PrismaClient["$transaction"]>[0]>[0];
 
 export interface TenantContext {
-  /** Active company (tenant) — becomes app.current_company_id for RLS. */
-  companyId: string;
+  /**
+   * Active company (tenant) — becomes app.current_company_id for RLS. May be
+   * null on the session (console superadmin); `withTenant` rejects a null so
+   * every RLS query still runs with a concrete company.
+   */
+  companyId: string | null;
   /** Authenticated user — becomes app.current_user_id (audit actor + RLS). */
   userId: string;
 }
@@ -66,8 +71,12 @@ export function withTenant<T>(
   ctx: TenantContext,
   fn: (tx: TxClient) => Promise<T>,
 ): Promise<T> {
+  const companyId = ctx.companyId;
+  // A null company reaches here only if a console superadmin (no active tenant)
+  // hits a tenant-scoped route — the UI routes them away, but fail loud if not.
+  if (!companyId) throw Errors.badRequest("No active company selected");
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.current_company_id', ${ctx.companyId}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.current_company_id', ${companyId}, true)`;
     await tx.$executeRaw`SELECT set_config('app.current_user_id', ${ctx.userId}, true)`;
     return fn(tx);
   });

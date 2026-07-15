@@ -24,12 +24,19 @@ export async function POST(req: Request) {
     // users is GLOBAL (no RLS) — safe to read without a tenant context.
     const user = await prisma.users.findFirst({
       where: { email: { equals: email, mode: "insensitive" }, deleted_at: null },
-      select: { id: true, name: true, email: true, password_hash: true, is_active: true },
+      select: { id: true, name: true, email: true, password_hash: true, is_active: true, is_superadmin: true },
     });
 
     // Same generic error for unknown user / bad password (no account enumeration).
     if (!user || !user.is_active || !(await verifyPassword(password, user.password_hash))) {
       throw Errors.unauthorized("Invalid email or password");
+    }
+
+    // Superadmins belong to no company — they land in the console with no active
+    // tenant and "Open" a company explicitly (operator mode). No membership needed.
+    if (user.is_superadmin) {
+      await setSessionCookie({ userId: user.id, companyId: null });
+      return ok({ user: { id: user.id, name: user.name, email: user.email }, company: null });
     }
 
     // Resolve active company from the user's memberships (needs user RLS context).

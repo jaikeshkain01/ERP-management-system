@@ -9,7 +9,7 @@ import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
 import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
-import { isUuid } from "@/lib/server/data/util";
+import { isUuid, lineHasContent, resolveOrCreateComponent, slugify, uniqueSlug } from "@/lib/server/data/util";
 
 export interface ProductView {
   id: string;
@@ -152,68 +152,6 @@ export interface CreateCatalogProductInput {
   pcbs?: CreateCatalogProductPcb[];
   /** Legacy flat list — wrapped into a single auto "Main Board" when `pcbs` is absent. */
   lines?: CreateCatalogProductLine[];
-}
-
-const lineHasContent = (l: CreateCatalogProductLine) =>
-  !!(l.componentId?.trim() || l.name?.trim() || l.partNumber?.trim());
-
-const slugify = (s: string) =>
-  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60);
-
-/** Pick a slug free of collisions in `table` for this tenant (base, base-2, base-3, …). */
-async function uniqueSlug(tx: TxClient, table: "products" | "pcbs", base: string): Promise<string> {
-  const root = base || "item";
-  const rows =
-    table === "products"
-      ? await tx.$queryRaw<{ slug: string }[]>`
-          SELECT slug FROM products WHERE deleted_at IS NULL AND (slug = ${root} OR slug LIKE ${root + "-%"})`
-      : await tx.$queryRaw<{ slug: string }[]>`
-          SELECT slug FROM pcbs WHERE deleted_at IS NULL AND (slug = ${root} OR slug LIKE ${root + "-%"})`;
-  const taken = new Set(rows.map((r) => r.slug));
-  let slug = root;
-  let n = 2;
-  while (taken.has(slug)) slug = `${root}-${n++}`;
-  return slug;
-}
-
-/** Resolve a line to a component uuid: link an existing one (by generic_pn) or create it. */
-async function resolveOrCreateComponent(
-  tx: TxClient,
-  ctx: TenantContext,
-  line: CreateCatalogProductLine,
-): Promise<string> {
-  const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
-
-  // Explicit link to an existing catalog component.
-  const explicit = line.componentId?.trim();
-  if (explicit) {
-    const c = await tx.components.findFirst({ where: { generic_pn: explicit, deleted_at: null }, select: { id: true } });
-    if (c) return c.id;
-  }
-
-  // Otherwise derive a stable generic_pn and dedupe by it (re-typing an existing
-  // part links to it instead of creating a duplicate).
-  const genericPN = (line.partNumber?.trim() || explicit || slugify(line.name ?? "").toUpperCase()) || "PART";
-  const dupe = await tx.components.findFirst({ where: { generic_pn: genericPN, deleted_at: null }, select: { id: true } });
-  if (dupe) return dupe.id;
-
-  const created = await tx.components.create({
-    data: {
-      ...audit,
-      generic_pn: genericPN,
-      name: line.name?.trim() || genericPN,
-      category: line.type?.trim() || null,
-      unit: "PCS",
-      solder_type: line.solderType ?? null,
-      footprint: line.footprint?.trim() || null,
-      min_stock: 0,
-      reorder_qty: 0,
-      annual_consumption: 0,
-      specs: [],
-    },
-    select: { id: true },
-  });
-  return created.id;
 }
 
 export async function createCatalogProduct(input: CreateCatalogProductInput): Promise<ProductView> {

@@ -1,8 +1,10 @@
 /**
- * GET /api/me — the authenticated user, the active company, and the caller's
- * effective permissions in that company. The client uses `permissions` to
- * hide/disable actions the role can't perform (stacks with module licensing).
+ * GET /api/me — the authenticated user, the active company (null for a
+ * superadmin sitting in the console), and the caller's effective permissions.
+ * The client uses `permissions` to hide/disable actions the role can't perform
+ * (stacks with module licensing).
  */
+import { ALL_PERMISSIONS } from "@/lib/permissions";
 import { prisma, withTenant } from "@/lib/prisma";
 import { Errors, handle, ok } from "@/lib/server/http";
 import { getEffectivePermissions } from "@/lib/server/rbac";
@@ -22,13 +24,20 @@ export async function GET() {
     });
     if (!user) throw Errors.unauthorized();
 
+    // Superadmin in the console: no active company. Full permissions, no tenant.
+    if (!ctx.companyId) {
+      if (!user.is_superadmin) throw Errors.forbidden("No active company");
+      return ok({ user, company: null, permissions: [...ALL_PERMISSIONS].sort(), roleName: null });
+    }
+
+    const companyId = ctx.companyId;
     const { company, permissions, roleName } = await withTenant(ctx, async (tx) => {
       const company = await tx.companies.findFirst({
-        where: { id: ctx.companyId },
+        where: { id: companyId },
         select: { id: true, code: true, name: true },
       });
       const membership = await tx.company_memberships.findFirst({
-        where: { user_id: ctx.userId, company_id: ctx.companyId, deleted_at: null },
+        where: { user_id: ctx.userId, company_id: companyId, deleted_at: null },
         select: { roles: { select: { name: true } } },
       });
       const perms = await getEffectivePermissions(tx, ctx);

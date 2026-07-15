@@ -13,9 +13,10 @@ const EMPTY: DataSet = { components: [], brands: [], suppliers: [], pcbs: [], pr
 
 export interface Me {
   user: { id: string; name: string; email: string; is_superadmin?: boolean };
-  company: { id: string; code: string; name: string };
+  /** Null for a superadmin in the console (no active tenant / operator mode off). */
+  company: { id: string; code: string; name: string } | null;
   permissions: string[];
-  roleName?: string;
+  roleName?: string | null;
 }
 
 export type AuthState = "loading" | "authenticated" | "unauthenticated";
@@ -59,7 +60,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         setData(EMPTY);
         return;
       }
-      setMe(await dataOrThrow(meRes));
+      const meData: Me = await dataOrThrow(meRes);
+      setMe(meData);
+      // No active company (superadmin in the console) → no tenant data to load.
+      // The app shell routes them to /superadmin; bootstrap would 400 anyway.
+      if (!meData.company) {
+        setData(EMPTY);
+        return;
+      }
       setData(await dataOrThrow(await fetch("/api/bootstrap", { cache: "no-store" })));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
@@ -93,7 +101,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     error,
     me,
     authState,
-    can: (permission: string) => permissionSet.size === 0 || permissionSet.has(permission),
+    can: (permission: string) =>
+      !!me?.user?.is_superadmin || permissionSet.size === 0 || permissionSet.has(permission),
     reload: load,
     logout,
   };

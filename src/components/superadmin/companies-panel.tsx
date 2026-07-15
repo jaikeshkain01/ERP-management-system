@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Building2, Plus, Pencil, Users, Shield, Blocks } from "lucide-react"
+import { Building2, Plus, Pencil, Users, Shield, Blocks, ArrowRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -12,8 +12,21 @@ import {
 export function CompaniesPanel({ data, reload }: { data: Overview; reload: () => Promise<void> }) {
   const [creating, setCreating] = React.useState(false)
   const [editing, setEditing] = React.useState<CompanyRow | null>(null)
+  const [opening, setOpening] = React.useState<string | null>(null)
 
   const totalMembers = data.companies.reduce((n, c) => n + c.memberCount, 0)
+
+  // Enter a tenant in operator mode: switch the active company, then hard-navigate
+  // so the whole app (session, /api/me, bootstrap) reloads scoped to that tenant.
+  const openCompany = async (c: CompanyRow) => {
+    setOpening(c.id)
+    try {
+      await sa.post("/api/session/company", { companyId: c.id })
+      window.location.assign("/dashboard")
+    } catch {
+      setOpening(null)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -54,6 +67,15 @@ export function CompaniesPanel({ data, reload }: { data: Overview; reload: () =>
                 <span className="inline-flex items-center gap-1"><Shield className="h-3.5 w-3.5" /> {c.roleCount}</span>
                 <span className="inline-flex items-center gap-1"><Blocks className="h-3.5 w-3.5" /> {enabled}/{data.moduleIds.length}</span>
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-4 w-full gap-1.5 font-semibold"
+                onClick={() => openCompany(c)}
+                disabled={opening !== null}
+              >
+                {opening === c.id ? "Opening…" : <><ArrowRight className="h-3.5 w-3.5" /> Open</>}
+              </Button>
             </div>
           )
         })}
