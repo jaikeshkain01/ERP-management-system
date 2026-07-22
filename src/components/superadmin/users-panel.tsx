@@ -189,6 +189,7 @@ function CreateUserModal({ data, reload, onClose }: { data: Overview; reload: ()
 }
 
 function ManageUserModal({ user, data, reload, onClose }: { user: UserRow; data: Overview; reload: () => Promise<void>; onClose: () => void }) {
+  const { me } = useData()
   const [name, setName] = React.useState(user.name)
   const [isActive, setActive] = React.useState(user.isActive)
   const [isSuperadmin, setSuper] = React.useState(user.isSuperadmin)
@@ -197,11 +198,27 @@ function ManageUserModal({ user, data, reload, onClose }: { user: UserRow; data:
   const [pw, setPw] = React.useState("")
   const [pwMsg, setPwMsg] = React.useState<string | null>(null)
 
+  // A superadmin can't delete their own account (matches the API self-lockout guard).
+  const isSelf = me?.user.id === user.id
+
   const run = async (fn: () => Promise<unknown>) => {
     setBusy(true); setError(null)
     try { await fn(); await reload() }
     catch (e) { setError(e instanceof Error ? e.message : "Action failed") }
     finally { setBusy(false) }
+  }
+
+  const deleteUser = async () => {
+    if (!window.confirm(`Delete ${user.name} (${user.email})? This removes their account and all company memberships. This cannot be undone.`)) return
+    setBusy(true); setError(null)
+    try {
+      await sa.del(`/api/superadmin/users/${user.id}`)
+      await reload()
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete user")
+      setBusy(false)
+    }
   }
 
   const saveProfile = () => run(() =>
@@ -231,7 +248,16 @@ function ManageUserModal({ user, data, reload, onClose }: { user: UserRow; data:
 
   return (
     <Modal title={`Manage ${user.name}`} description={user.email} icon={Settings2} onClose={onClose} wide
-      footer={<Button size="sm" variant="outline" onClick={onClose}>Done</Button>}>
+      footer={
+        <>
+          {!isSelf && (
+            <Button size="sm" variant="destructive" className="mr-auto gap-1.5" onClick={deleteUser} disabled={busy}>
+              <Trash2 className="h-3.5 w-3.5" /> Delete user
+            </Button>
+          )}
+          <Button size="sm" variant="outline" onClick={onClose}>Done</Button>
+        </>
+      }>
       {/* Profile */}
       <div className="rounded-lg border border-border p-4 space-y-4">
         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">Profile</p>

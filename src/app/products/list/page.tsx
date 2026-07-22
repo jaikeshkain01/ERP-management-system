@@ -154,6 +154,22 @@ export default function ProductListPage() {
     }
   }
 
+  const handleDeleteCatalog = async (product: ProductData) => {
+    if (!window.confirm(`Delete "${product.name}"? This cannot be undone.`)) return
+    try {
+      const res = await fetch(`/api/products/${product.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      await d.reload() // refetch the catalog so the deleted product drops off the list
+    } catch (err) {
+      console.error(err)
+      alert(err instanceof Error ? err.message : "Failed to delete product")
+    }
+  }
+
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
 
@@ -384,22 +400,24 @@ export default function ProductListPage() {
                 <span>View Structure</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
               </Button>
-              {product.imported && (
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Remove product"
-                  onClick={() => {
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Delete product"
+                onClick={() => {
+                  if (product.imported) {
                     removeProduct(product.id).catch((err) => {
                       console.error(err)
                       alert(err instanceof Error ? err.message : "Failed to remove product")
                     })
-                  }}
-                  className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              )}
+                  } else {
+                    handleDeleteCatalog(product)
+                  }
+                }}
+                className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </CardFooter>
           </Card>
         ))}

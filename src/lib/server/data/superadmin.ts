@@ -203,6 +203,25 @@ export function updateUser(id: string, input: UpdateUserInput): Promise<UserRow>
   });
 }
 
+/**
+ * Soft-delete a user and cascade to their company memberships. A superadmin
+ * cannot delete their own account (self-lockout guard, same as `updateUser`).
+ */
+export function deleteUser(id: string): Promise<void> {
+  return withSuperadmin(async (tx, ctx) => {
+    const existing = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM users WHERE id = ${id}::uuid AND deleted_at IS NULL LIMIT 1`;
+    if (!existing.length) throw Errors.notFound("User");
+    if (id === ctx.userId) throw Errors.badRequest("You cannot delete your own account");
+    await tx.$executeRaw`
+      UPDATE company_memberships SET deleted_at = now(), updated_by = ${ctx.userId}::uuid, updated_at = now()
+      WHERE user_id = ${id}::uuid AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE users SET deleted_at = now(), is_active = false, updated_by = ${ctx.userId}::uuid, updated_at = now()
+      WHERE id = ${id}::uuid`;
+  });
+}
+
 // ── Memberships (user ↔ company + role) ───────────────────────────────────────
 
 export interface AddMembershipInput {
