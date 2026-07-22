@@ -197,7 +197,7 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
     //    we create a fresh PCB + revision + lines on the fly.
     let sequence = 1;
     for (const group of groups) {
-      let revisionId: string;
+      let revisionId: string | null = null;
 
       if (group.linkedPcbId?.trim()) {
         // ── Reuse an existing catalog PCB ──────────────────────────────────
@@ -218,7 +218,29 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
         });
         if (!activeRev) throw Errors.badRequest(`Linked PCB "${linkedSlug}" has no active revision`);
         revisionId = activeRev.id;
-      } else {
+      }
+
+      // No explicit link, but a PCB with the same name already exists → reuse it
+      // instead of silently creating a duplicate board. Guards the common case
+      // where the user typed (or picked, then edited) an existing PCB's name so
+      // the typeahead link was dropped. Falls through to create only if there is
+      // no matching PCB or it has no active revision.
+      if (!revisionId && group.name?.trim()) {
+        const byName = await tx.pcbs.findFirst({
+          where: { deleted_at: null, name: { equals: group.name.trim(), mode: "insensitive" } },
+          select: { id: true },
+        });
+        if (byName) {
+          const activeRev = await tx.pcb_revisions.findFirst({
+            where: { pcb_id: byName.id, status: "Active", deleted_at: null },
+            select: { id: true },
+            orderBy: { created_at: "desc" },
+          });
+          if (activeRev) revisionId = activeRev.id;
+        }
+      }
+
+      if (!revisionId) {
         // ── Create a new PCB + revision + lines ──────────────────────────
         const pcbName = group.name?.trim() || `${name} Board ${sequence}`;
         const pcbSlug = await uniqueSlug(tx, "pcbs", slugify(pcbName) || `${slug}-board-${sequence}`);
@@ -267,6 +289,43 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
     const [view] = await productAggregate(tx, product.id);
     if (!view) throw Errors.notFound("Product");
     return view;
+  });
+}
+
+// ── delete (DELETE /products/[id]) ──────────────────────────────────────────
+// Soft-delete a catalog product and its BOM graph (bom_versions + product_pcbs
+// join rows). The PCBs/components themselves are shared entities and are left
+// intact — only the product's ownership of them is removed. Blocked (409) if any
+// live production order still references the product.
+export async function deleteCatalogProduct(idOrSlug: string): Promise<{ id: string; slug: string }> {
+  return guarded("product.delete", async (tx, ctx) => {
+    const product = await tx.products.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { OR: [{ slug: idOrSlug }, { code: idOrSlug }] }) },
+      select: { id: true, slug: true },
+    });
+    if (!product) throw Errors.notFound("Product");
+
+    const inUse = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one FROM production_orders
+      WHERE product_id = ${product.id}::uuid AND deleted_at IS NULL
+      LIMIT 1`;
+    if (inUse.length) throw Errors.conflict("Product has production orders and cannot be deleted");
+
+    const now = new Date();
+    // Join rows first, then the BOM versions, then the product itself.
+    await tx.$executeRaw`
+      UPDATE product_pcbs pp SET deleted_at = ${now}, updated_by = ${ctx.userId}::uuid
+      FROM bom_versions bv
+      WHERE pp.bom_version_id = bv.id AND bv.product_id = ${product.id}::uuid AND pp.deleted_at IS NULL`;
+    await tx.bom_versions.updateMany({
+      where: { product_id: product.id, deleted_at: null },
+      data: { deleted_at: now, updated_by: ctx.userId },
+    });
+    await tx.products.update({
+      where: { id: product.id },
+      data: { deleted_at: now, updated_by: ctx.userId },
+    });
+    return { id: product.id, slug: product.slug };
   });
 }
 

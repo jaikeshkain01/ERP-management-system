@@ -214,6 +214,7 @@ All routes are superadmin-only (403 otherwise) and run cross-tenant via `withSup
 ### Products
 - ✅ `GET  /products` · ✅ `GET /products/{id}` (detail: counts + board list)
 - ✅ `GET  /products/{id}/bom` — flattened BOM (Active version). `?version=` param not yet supported
+- ✅ `DELETE /products/{id}` — soft-delete a catalog product + its BOM graph (`product.delete`); 409 if it has live production orders. PCBs/components stay in the catalog
 - ⬜ `GET  /products/{id}/versions` · `POST /products/{id}/versions`
 
 ### PCBs
@@ -388,6 +389,9 @@ All routes are superadmin-only (403 otherwise) and run cross-tenant via `withSup
   `lines:[…]` body is still accepted and wrapped into a single auto **"<name> Main Board"**. This is the
   "Add Manually" path — it lands in the catalog graph (not `custom_products`), so it feeds the dashboard.
   Returns the created `ProductView`.
+- **`DELETE /products/{id}`** (`product.delete`): soft-deletes the product and its BOM graph
+  (`product_pcbs` join rows + `bom_versions`); the PCBs/components themselves are shared and left intact.
+  Returns 409 if any live `production_orders` row references the product. Returns `{ id, slug }`.
 - **TODO:** `?version=` selector; derived `buildableQty`/`estimatedCost`-from-BOM (needs inventory + best price).
 
 > **Shared pattern for the four above:** each provider exposes plain async functions that branch on

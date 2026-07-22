@@ -13,6 +13,7 @@ import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
 import type { DashboardSummary } from "@/lib/server/data/dashboard"
 import { useData } from "@/lib/data-provider"
+import { useUserProducts } from "@/lib/user-products"
 import { StatStrip } from "@/components/stat-strip"
 import { useModules } from "@/components/module-provider"
 import type { ModuleId } from "@/lib/modules"
@@ -32,6 +33,10 @@ export default function Dashboard() {
   const { isEnabled } = useModules()
 
   const d = useData()
+  // User-added products (imported BOM / manual) live outside the catalog; count
+  // them alongside catalog products so the tile matches the Product list.
+  const { products: userProducts } = useUserProducts()
+  const totalProducts = d.PRODUCTS.length + userProducts.length
 
   // All dashboard aggregates come from /api/dashboard (computed server-side).
   const [ops, setOps] = React.useState<DashboardSummary | null>(null)
@@ -51,7 +56,7 @@ export default function Dashboard() {
   }, [])
 
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
-    { title: "Products", value: d.PRODUCTS.length.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
+    { title: "Products", value: totalProducts.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
     { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
     { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
@@ -74,7 +79,7 @@ export default function Dashboard() {
   const inventoryChartData = [
     { name: "Components", value: d.COMPONENTS.length, color: "#875A7B" },
     { name: "PCBs", value: d.PCBS.length, color: "#28C76F" },
-    { name: "Products", value: d.PRODUCTS.length, color: "#FF9F43" },
+    { name: "Products", value: totalProducts, color: "#FF9F43" },
   ]
 
   const allTabs: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }>; alert?: number; moduleId?: ModuleId }[] = [

@@ -75,7 +75,7 @@ function ProductStructureContent() {
   const {
     PRODUCTS, getProduct, getComponent, getSupplierName, getBrandName, productPcbList, pcbBom,
     componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
-    productTotalParts, formatINR: fmtINR, formatLeadTime,
+    productTotalParts, formatINR: fmtINR, formatLeadTime, reload,
   } = useData()
 
   const [buildQty, setBuildQty] = React.useState(1)
@@ -84,6 +84,8 @@ function ProductStructureContent() {
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
   const [importVersionOpen, setImportVersionOpen] = React.useState(false)
   const [manualVersionOpen, setManualVersionOpen] = React.useState(false)
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [isDeleting, setIsDeleting] = React.useState(false)
   const dragScrollRef = useDragScroll()
 
   const router = useRouter()
@@ -135,6 +137,25 @@ function ProductStructureContent() {
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : "Failed to remove product")
+    }
+  }
+
+  // Catalog products (created via Add Manually / Import BOM) are soft-deleted
+  // server-side; refetch the catalog so the product drops off the list.
+  const handleDeleteCatalog = async () => {
+    setIsDeleting(true)
+    try {
+      const res = await fetch(`/api/products/${encodeURIComponent(productId)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      await reload()
+      router.push("/products/list")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete product")
+      setIsDeleting(false)
     }
   }
 
@@ -459,6 +480,16 @@ function ProductStructureContent() {
             <Download className="h-4 w-4" />
             <span>Export to Excel</span>
           </Button>
+          {!isUserProduct && productEntity && (
+            <Button
+              variant="outline"
+              onClick={() => setDeleteOpen(true)}
+              className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive bg-background cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Delete</span>
+            </Button>
+          )}
           <Button
             variant="outline"
             render={<Link href="/products/list" />}
@@ -1165,6 +1196,54 @@ function ProductStructureContent() {
           onApply={handleManualVersion}
           onClose={() => setManualVersionOpen(false)}
         />
+      )}
+
+      {/* Delete product — confirmation (catalog products) */}
+      {deleteOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !isDeleting && setDeleteOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete Product</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteOpen(false)}
+                disabled={isDeleting}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-xs font-semibold leading-relaxed text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{displayName}</strong> removes it from the product list. Its PCBs and components stay
+                  in the catalog. A product with production orders cannot be deleted.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this product?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={isDeleting}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDeleteCatalog}
+                  disabled={isDeleting}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {isDeleting ? "Deleting..." : "Delete Product"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

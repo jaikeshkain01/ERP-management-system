@@ -7,6 +7,7 @@ import { useModules } from "@/components/module-provider"
 import { WORKSPACES } from "@/lib/modules"
 import { buildWorkspaceStats } from "@/lib/launchpad-data"
 import { useData } from "@/lib/data-provider"
+import { useUserProducts } from "@/lib/user-products"
 
 const toneClass: Record<string, string> = {
   danger: "text-destructive",
@@ -17,7 +18,11 @@ const toneClass: Record<string, string> = {
 export function Launchpad() {
   const { isEnabled } = useModules()
   const d = useData()
-  const WORKSPACE_STATS = React.useMemo(() => buildWorkspaceStats(d), [d])
+  const { products: userProducts } = useUserProducts()
+  const WORKSPACE_STATS = React.useMemo(
+    () => buildWorkspaceStats(d, userProducts.length),
+    [d, userProducts.length],
+  )
 
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

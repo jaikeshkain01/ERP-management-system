@@ -1,15 +1,16 @@
 "use client"
 
 import * as React from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck, Table2, Download } from "lucide-react"
+import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck, Calculator, Star, Check, AlertCircle, Truck, Table2, Download, Pencil, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
+import { EditPcbModal } from "@/components/pcb/edit-pcb-modal"
 
 interface ComponentBrand {
   id: string
@@ -53,12 +54,16 @@ function PCBStructureContent() {
 
   const {
     PCBS, getPcb, getComponent, getSupplierName, getBrandName, pcbBom, componentBrands,
-    componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime,
+    componentStockStatus, bestPrice, productsUsingPcb, formatLeadTime, reload,
   } = useData()
 
+  const router = useRouter()
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<"tree" | "excel">("tree")
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [isDeleting, setIsDeleting] = React.useState(false)
+  const [editOpen, setEditOpen] = React.useState(false)
   const dragScrollRef = useDragScroll()
 
   const formatINR = (n: number) =>
@@ -129,6 +134,23 @@ function PCBStructureContent() {
   const handleComponentClick = (comp: ComponentItem) => {
     if (comp.lookupId && getComponent(comp.lookupId)) {
       setSelectedCompId(comp.lookupId)
+    }
+  }
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      const res = await fetch(`/api/pcbs/${encodeURIComponent(pcbEntity.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      await reload()
+      router.push("/pcb-management/list")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete PCB")
+      setIsDeleting(false)
     }
   }
 
@@ -228,6 +250,22 @@ function PCBStructureContent() {
           >
             <Download className="h-4 w-4" />
             <span>Export to Excel</span>
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setEditOpen(true)}
+            className="gap-2 border-border bg-background cursor-pointer"
+          >
+            <Pencil className="h-4 w-4" />
+            <span>Edit</span>
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setDeleteOpen(true)}
+            className="gap-2 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive bg-background cursor-pointer"
+          >
+            <Trash2 className="h-4 w-4" />
+            <span>Delete</span>
           </Button>
           <Button
             variant="outline"
@@ -817,6 +855,59 @@ function PCBStructureContent() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Delete PCB — confirmation */}
+      {deleteOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !isDeleting && setDeleteOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete PCB</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteOpen(false)}
+                disabled={isDeleting}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-xs font-semibold leading-relaxed text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{pcb.name}</strong> removes it from the PCB list. A PCB used by any product cannot be
+                  deleted.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this PCB?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={isDeleting}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {isDeleting ? "Deleting..." : "Delete PCB"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit PCB — modal dialog */}
+      {editOpen && (
+        <EditPcbModal pcbId={pcbEntity.id} onClose={() => setEditOpen(false)} />
       )}
     </div>
   )

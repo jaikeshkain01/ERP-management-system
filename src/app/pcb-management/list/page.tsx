@@ -9,12 +9,13 @@ import { Input } from "@/components/ui/input"
 import {
   Cpu, Nut, Plus, Search, Layers, ArrowRight,
   CircuitBoard, Boxes, CheckCircle2, FlaskConical,
-  Archive, RefreshCw
+  Archive, RefreshCw, Pencil, Trash2, AlertCircle, X
 } from "lucide-react"
 import { StatStrip } from "@/components/stat-strip"
 import { useData } from "@/lib/data-provider"
 import type { PcbStatus } from "@/lib/catalog"
 import { AddPcbModal, type ManualPcbData } from "@/components/pcb/add-pcb-modal"
+import { EditPcbModal } from "@/components/pcb/edit-pcb-modal"
 
 const STATUS_STYLES: Record<PcbStatus, { label: string; className: string; icon: React.ElementType }> = {
   Active: {
@@ -44,10 +45,34 @@ export default function PCBListPage() {
   const [searchQuery, setSearchQuery] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<string>("All")
   const [isManualOpen, setIsManualOpen] = React.useState(false)
+  /** PCB id being edited (opens the edit modal), or null. */
+  const [editTarget, setEditTarget] = React.useState<string | null>(null)
+  /** PCB pending soft-delete (confirmation modal), or null. */
+  const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null)
+  const [isDeleting, setIsDeleting] = React.useState(false)
 
   const handleResetFilters = () => {
     setSearchQuery("")
     setStatusFilter("All")
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setIsDeleting(true)
+    try {
+      const res = await fetch(`/api/pcbs/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      setDeleteTarget(null)
+      await d.reload() // drop the deleted PCB from the list
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete PCB")
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   const handleApplyManual = async (data: ManualPcbData) => {
@@ -256,14 +281,32 @@ export default function PCBListPage() {
               </div>
             </CardContent>
 
-            <CardFooter className="pt-4">
+            <CardFooter className="pt-4 gap-2">
               <Button
                 render={<Link href={`/pcb-management/structure?pcb=${pcb.id}`} />}
-                className="w-full font-semibold group/btn"
+                className="flex-1 font-semibold group/btn"
                 variant="secondary"
               >
                 <span>View Components</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setEditTarget(pcb.id)}
+                className="shrink-0 border-border"
+                aria-label={`Edit ${pcb.name}`}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setDeleteTarget({ id: pcb.id, name: pcb.name })}
+                className="shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive"
+                aria-label={`Delete ${pcb.name}`}
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
             </CardFooter>
           </Card>
@@ -282,6 +325,59 @@ export default function PCBListPage() {
           onApply={handleApplyManual}
           onClose={() => setIsManualOpen(false)}
         />
+      )}
+
+      {/* Edit PCB — modal dialog */}
+      {editTarget && (
+        <EditPcbModal pcbId={editTarget} onClose={() => setEditTarget(null)} />
+      )}
+
+      {/* Delete PCB — confirmation */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => !isDeleting && setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete PCB</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeleting}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-xs font-semibold leading-relaxed text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{deleteTarget.name}</strong> removes it from the PCB list. A PCB used by any product
+                  cannot be deleted.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this PCB?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {isDeleting ? "Deleting..." : "Delete PCB"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

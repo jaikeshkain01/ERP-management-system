@@ -51,7 +51,7 @@ function buildProductsData(d: ReturnType<typeof useData>): ProductData[] {
 export default function ProductListPage() {
   const d = useData()
   const router = useRouter()
-  const { products: userProducts, addProduct, removeProduct } = useUserProducts()
+  const { products: userProducts, removeProduct } = useUserProducts()
   const [isImportOpen, setIsImportOpen] = React.useState(false)
   const [isManualOpen, setIsManualOpen] = React.useState(false)
 
@@ -81,13 +81,32 @@ export default function ProductListPage() {
 
   const handleApplyImport = async (result: BomImportResult, productName: string, fileName: string) => {
     try {
-      const created = await addProduct({
-        name: productName,
-        source: "import",
-        version: { label: "v1", source: "import", fileName, lines: result.lines },
+      // Imported BOMs now create a REAL catalog product (Box 1): each row is matched
+      // to an existing component by part number (else created on the fly) and placed
+      // on one auto "Main Board" PCB, so the product feeds the dashboard.
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          name: productName,
+          description: `Imported from ${fileName}`,
+          lines: result.lines.map((l) => ({
+            name: l.name || undefined,
+            partNumber: l.partNumber || undefined,
+            type: l.type || undefined,
+            solderType: l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
+            footprint: l.footprint || undefined,
+            qty: l.qty,
+          })),
+        }),
       })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+      const created = body.data as { slug: string }
       setIsImportOpen(false)
-      router.push(`/products/structure?product=${created.id}`)
+      await d.reload() // refetch the catalog so the imported product appears in the list/structure
+      router.push(`/products/structure?product=${created.slug}`)
     } catch (err) {
       console.error(err)
       alert(err instanceof Error ? err.message : "Failed to save product")
