@@ -15,7 +15,7 @@ import { AddProductModal, type ManualProductData } from "@/components/products/a
 import { ImportedBomView } from "@/components/products/imported-bom-view"
 import type { BomImportResult, ImportedBomLine } from "@/lib/bom-import"
 import { useUserProducts, activeVersionOf, isUserProductId } from "@/lib/user-products"
-import { useDragScroll } from "@/hooks/use-drag-scroll"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 interface ComponentItem {
   name: string
@@ -86,7 +86,6 @@ function ProductStructureContent() {
   const [manualVersionOpen, setManualVersionOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
-  const dragScrollRef = useDragScroll()
 
   const router = useRouter()
   const { getProduct: getUserProduct, addVersion, setActiveVersion, removeProduct, loaded: userProductsLoaded } = useUserProducts()
@@ -648,7 +647,8 @@ function ProductStructureContent() {
 
           {/* ===== TREE VIEW ===== */}
           {!isUserProduct && viewMode === "tree" && (
-          <CardContent className="p-6 md:p-8 overflow-x-auto">
+          <CardContent className="p-0">
+          <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
             {/* Root Product Node */}
             <div className="space-y-6">
               <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
@@ -765,13 +765,14 @@ function ProductStructureContent() {
                 ))}
               </div>
             </div>
+          </DragScrollArea>
           </CardContent>
           )}
 
           {/* ===== EXCEL / BOM VIEW ===== */}
           {!isUserProduct && viewMode === "excel" && (
           <CardContent className="p-0">
-            <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
+            <DragScrollArea className="overflow-x-auto">
               <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
                 <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
                   <tr>
@@ -898,7 +899,7 @@ function ProductStructureContent() {
                   </tr>
                 </tbody>
               </table>
-            </div>
+            </DragScrollArea>
 
             {/* Excel view footer actions */}
             <div className="flex items-center justify-between border-t border-border bg-muted/10 px-6 py-3">

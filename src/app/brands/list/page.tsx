@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AlertCircle, CheckCircle2, Award, Filter, Plus, Search, Layers, ShieldCheck, Landmark, Star, X, Check, ArrowRight, MapPin, Calendar, Clock, Sparkles } from "lucide-react"
@@ -567,7 +568,7 @@ function BrandDashboardContent() {
               </Button>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <DragScrollArea className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-foreground">
                   <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                     <tr>
@@ -614,7 +615,7 @@ function BrandDashboardContent() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </DragScrollArea>
             </CardContent>
           </Card>
 
@@ -643,7 +644,7 @@ function BrandDashboardContent() {
               </Button>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <DragScrollArea className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-foreground">
                   <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                     <tr>
@@ -692,7 +693,7 @@ function BrandDashboardContent() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </DragScrollArea>
             </CardContent>
           </Card>
           </>

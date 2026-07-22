@@ -11,6 +11,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { useData } from "@/lib/data-provider"
 
 interface Specification {
@@ -470,7 +471,7 @@ function ComponentListContent() {
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <DragScrollArea className="overflow-x-auto">
             <table className="w-full text-sm text-left text-foreground">
               <thead className="text-[10px] uppercase bg-muted/30 text-muted-foreground border-b border-border">
                 <tr>
@@ -548,7 +549,7 @@ function ComponentListContent() {
                 )}
               </tbody>
             </table>
-          </div>
+          </DragScrollArea>
         </CardContent>
       </Card>
 

@@ -1,6 +1,7 @@
 "use client"
 
 import { ArrowDownToLine, ArrowUpFromLine, History } from "lucide-react"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { useData } from "@/lib/data-provider"
 import type { StockTransaction } from "@/lib/catalog"
 import { componentTxns } from "@/lib/stock-ledger"
@@ -27,7 +28,7 @@ export function TransactionHistoryTable({
         <History className="h-3.5 w-3.5" /> Transaction History
       </h4>
       <div className="rounded-lg border border-border overflow-hidden bg-background">
-        <div className="overflow-x-auto">
+        <DragScrollArea className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-muted/40 text-muted-foreground">
               <tr>
@@ -77,7 +78,7 @@ export function TransactionHistoryTable({
               )}
             </tbody>
           </table>
-        </div>
+        </DragScrollArea>
       </div>
     </div>
   )

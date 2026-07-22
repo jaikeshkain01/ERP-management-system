@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -764,7 +765,7 @@ function ComponentDetailsContent() {
               </div>
             </CardHeader>
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <DragScrollArea className="overflow-x-auto">
                 <table className="w-full text-sm text-left text-foreground">
                   <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border font-bold tracking-wide">
                     <tr>
@@ -818,7 +819,7 @@ function ComponentDetailsContent() {
                     )}
                   </tbody>
                 </table>
-              </div>
+              </DragScrollArea>
 
               {/* Procurement insights footer */}
               {component.suppliers.length > 0 && (

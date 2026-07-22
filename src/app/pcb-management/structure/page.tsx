@@ -9,7 +9,7 @@ import { Cpu, ListTree, Nut, ArrowLeft, Layers, Landmark, Award, X, ShieldCheck,
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
-import { useDragScroll } from "@/hooks/use-drag-scroll"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { EditPcbModal } from "@/components/pcb/edit-pcb-modal"
 
 interface ComponentBrand {
@@ -64,7 +64,6 @@ function PCBStructureContent() {
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [isDeleting, setIsDeleting] = React.useState(false)
   const [editOpen, setEditOpen] = React.useState(false)
-  const dragScrollRef = useDragScroll()
 
   const formatINR = (n: number) =>
     "₹" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -331,7 +330,8 @@ function PCBStructureContent() {
 
           {/* ===== TREE VIEW ===== */}
           {viewMode === "tree" && (
-          <CardContent className="p-6 md:p-8 overflow-x-auto">
+          <CardContent className="p-0">
+          <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
             {/* Root Node */}
             <div className="space-y-6">
               <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
@@ -411,13 +411,14 @@ function PCBStructureContent() {
                 })}
               </div>
             </div>
+          </DragScrollArea>
           </CardContent>
           )}
 
           {/* ===== EXCEL / BOM VIEW ===== */}
           {viewMode === "excel" && (
           <CardContent className="p-0">
-            <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
+            <DragScrollArea className="overflow-x-auto">
               <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
                 <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
                   <tr>
@@ -529,7 +530,7 @@ function PCBStructureContent() {
                   </tr>
                 </tbody>
               </table>
-            </div>
+            </DragScrollArea>
 
             {/* Excel view footer actions */}
             <div className="flex items-center justify-between border-t border-border bg-muted/10 px-6 py-3">

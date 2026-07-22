@@ -319,7 +319,7 @@ export default function InventoryPage() {
         </CardHeader>
 
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
+          <DragScrollArea className="overflow-x-auto">
             <table className="w-full text-sm text-left text-foreground">
               <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border tracking-wide">
                 <tr>
@@ -552,7 +552,7 @@ export default function InventoryPage() {
                 )}
               </tbody>
             </table>
-          </div>
+          </DragScrollArea>
 
           {/* Footer summary */}
           {rows.length > 0 && (

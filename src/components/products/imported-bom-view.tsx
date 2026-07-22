@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Package, Cpu, Nut } from "lucide-react"
 import type { ImportedBomLine } from "@/lib/bom-import"
-import { useDragScroll } from "@/hooks/use-drag-scroll"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 type Props = {
   productName: string
@@ -18,7 +18,6 @@ type Props = {
 export function ImportedBomView({ productName, lines, viewMode, buildQty }: Props) {
   const totalParts = lines.reduce((s, l) => s + l.qty, 0)
   const scaled = buildQty > 1
-  const dragScrollRef = useDragScroll()
 
   // Group by Type for the tree view (the imported sheet has no PCB dimension).
   const groups = React.useMemo(() => {
@@ -34,7 +33,7 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
 
   if (viewMode === "tree") {
     return (
-      <div className="p-6 md:p-8 overflow-x-auto">
+      <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
         <div className="space-y-6">
           {/* Root product node */}
           <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
@@ -128,13 +127,13 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
             ))}
           </div>
         </div>
-      </div>
+      </DragScrollArea>
     )
   }
 
   // ===== Excel / flat table view =====
   return (
-    <div ref={dragScrollRef} className="overflow-x-auto cursor-grab">
+    <DragScrollArea className="overflow-x-auto">
       <table className="w-full text-left text-xs text-foreground whitespace-nowrap">
         <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold sticky top-0">
           <tr>
@@ -214,6 +213,6 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
           </tr>
         </tbody>
       </table>
-    </div>
+    </DragScrollArea>
   )
 }
