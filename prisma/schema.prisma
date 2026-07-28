@@ -898,6 +898,7 @@ enum bom_status {
 enum brand_status {
   Approved
   Pending
+  Inactive
 }
 
 enum inventory_txn_type {

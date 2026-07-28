@@ -1,10 +1,11 @@
 /**
- * GET   /api/suppliers/[id] — supplier detail by uuid or slug.
- * PATCH /api/suppliers/[id] — edit a supplier's own fields (`supplier.edit`). slug is immutable.
+ * GET    /api/suppliers/[id] — supplier detail by uuid or slug.
+ * PATCH  /api/suppliers/[id] — edit a supplier's own fields (`supplier.edit`). slug is immutable.
+ * DELETE /api/suppliers/[id] — soft-delete a supplier (`supplier.delete`; 409 if in use).
  */
 import { z } from "zod";
 import { handle, ok, parseJson } from "@/lib/server/http";
-import { getSupplierDetail, updateSupplier } from "@/lib/server/data/suppliers";
+import { deleteSupplier, getSupplierDetail, updateSupplier } from "@/lib/server/data/suppliers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,5 +33,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   return handle(async () => {
     const { id } = await params;
     return ok(await updateSupplier(id, await parseJson(req, PatchBody)));
+  });
+}
+
+export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  return handle(async () => {
+    const { id } = await params;
+    return ok(await deleteSupplier(id));
   });
 }

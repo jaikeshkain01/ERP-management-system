@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { AlertCircle, CheckCircle2, Award, Filter, Plus, Search, Layers, ShieldCheck, Landmark, Star, X, Check, ArrowRight, MapPin, Calendar, Clock, Sparkles } from "lucide-react"
+import { AlertCircle, Award, Plus, Search, Layers, Landmark, Star, X, Check, ArrowRight, MapPin, Calendar, Clock, Trash2, Power, PowerOff } from "lucide-react"
 import Link from "next/link"
 import { useData } from "@/lib/data-provider"
 
@@ -34,7 +34,7 @@ interface BrandData {
   description: string
   headquarter: string
   founded: string
-  status: "Approved" | "Pending"
+  status: "Approved" | "Pending" | "Inactive"
   components: AssociatedComponent[]
   suppliers: AssociatedSupplier[]
 }
@@ -95,10 +95,27 @@ function BrandDashboardContent() {
   const DEFAULT_BRANDS = React.useMemo(() => buildDefaultBrands(d), [d])
 
   const [brands, setBrands] = React.useState<Record<string, BrandData>>(DEFAULT_BRANDS)
+  // Re-sync the local view model to the backend data when it changes (e.g. after
+  // d.reload()). Done during render — the React-recommended alternative to a
+  // setState-in-effect — so a reload re-derives the list without a cascading render.
+  const [prevDefaults, setPrevDefaults] = React.useState(DEFAULT_BRANDS)
+  if (prevDefaults !== DEFAULT_BRANDS) {
+    setPrevDefaults(DEFAULT_BRANDS)
+    setBrands(DEFAULT_BRANDS)
+  }
   const [mounted, setMounted] = React.useState(false)
   const [searchQuery, setSearchQuery] = React.useState("")
   const [activeModal, setActiveModal] = React.useState<'add-brand' | 'add-component' | 'add-supplier' | null>(null)
   const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  /** Brand pending delete (confirmation modal), or null. */
+  const [deleteBrandTarget, setDeleteBrandTarget] = React.useState<BrandData | null>(null)
+  const [deletingBrand, setDeletingBrand] = React.useState(false)
+  /** Brand ids removed this session so they drop from the list immediately. */
+  const [removedBrands, setRemovedBrands] = React.useState<Set<string>>(new Set())
+  /** Status filter — default "Active" so retired (Inactive) brands drop out. */
+  const [statusFilter, setStatusFilter] = React.useState<"Active" | "Inactive" | "All">("Active")
+  /** Brand id whose status toggle is in flight. */
+  const [togglingBrandId, setTogglingBrandId] = React.useState<string | null>(null)
 
   // Add Brand Form State
   const [newBrandName, setNewBrandName] = React.useState("")
@@ -128,18 +145,74 @@ function BrandDashboardContent() {
     category: c.category,
   }))
 
+  // Client-mount gate to avoid an SSR/CSR hydration mismatch on client-only data;
+  // a one-shot mount flag genuinely requires an effect.
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
   }, [])
-
-  // Keep the local view model in sync with the backend data (re-derives after d.reload()).
-  React.useEffect(() => {
-    setBrands(DEFAULT_BRANDS)
-  }, [DEFAULT_BRANDS])
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
+  }
+
+  const handleDeleteBrand = async () => {
+    if (!deleteBrandTarget) return
+    setDeletingBrand(true)
+    try {
+      const res = await fetch(`/api/brands/${encodeURIComponent(deleteBrandTarget.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message || "Failed to delete brand", "error")
+        return
+      }
+      const deletedId = deleteBrandTarget.id
+      setRemovedBrands((prev) => new Set(prev).add(deletedId))
+      setBrands((prev) => {
+        const next = { ...prev }
+        delete next[deletedId]
+        return next
+      })
+      showToast(`Brand "${deleteBrandTarget.name}" deleted`)
+      setDeleteBrandTarget(null)
+      if (selectedId === deletedId) router.push("/brands/list")
+      d.reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to delete brand", "error")
+    } finally {
+      setDeletingBrand(false)
+    }
+  }
+
+  // Deactivate (→Inactive) or reactivate (→Approved) a brand. Lets a brand that
+  // can't be deleted (locked by components/BOM lines/purchase docs) be retired.
+  const handleToggleBrandStatus = async (brand: BrandData) => {
+    const next = brand.status === "Inactive" ? "Approved" : "Inactive"
+    setTogglingBrandId(brand.id)
+    try {
+      const res = await fetch(`/api/brands/${encodeURIComponent(brand.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ status: next }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message || "Failed to update brand status", "error")
+        return
+      }
+      setBrands((prev) => (prev[brand.id] ? { ...prev, [brand.id]: { ...prev[brand.id], status: next } } : prev))
+      showToast(`Brand "${brand.name}" ${next === "Inactive" ? "deactivated" : "reactivated"}`)
+      d.reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to update brand status", "error")
+    } finally {
+      setTogglingBrandId(null)
+    }
   }
 
   const selectedId = searchParams.get("brand") || "yageo"
@@ -340,10 +413,16 @@ function BrandDashboardContent() {
     showToast(`Supplier "${newSup.name}" mapped to ${targetBrand.name}`)
   }
 
-  const filteredBrands = Object.values(brands).filter(brand =>
-    brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    brand.headquarter.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredBrands = Object.values(brands).filter(brand => {
+    if (removedBrands.has(brand.id)) return false
+    // "Active" = any brand that isn't retired (Approved or Pending).
+    if (statusFilter === "Active" && brand.status === "Inactive") return false
+    if (statusFilter === "Inactive" && brand.status !== "Inactive") return false
+    return (
+      brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      brand.headquarter.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  })
 
   // Prevent SSR hydration mismatch
   if (!mounted) {
@@ -365,6 +444,54 @@ function BrandDashboardContent() {
         }`}>
           {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4" />}
           <span className="text-sm font-semibold">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Delete Brand — confirmation */}
+      {deleteBrandTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !deletingBrand && setDeleteBrandTarget(null)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete Brand</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteBrandTarget(null)}
+                disabled={deletingBrand}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{deleteBrandTarget.name}</strong> removes it from the manufacturer catalog and clears its
+                  price book. A brand used by components, BOM lines or purchase documents cannot be deleted.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this brand?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteBrandTarget(null)} disabled={deletingBrand}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDeleteBrand}
+                  disabled={deletingBrand}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {deletingBrand ? "Deleting…" : "Delete Brand"}
+                </Button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -394,11 +521,22 @@ function BrandDashboardContent() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" className="gap-2 border-border cursor-pointer">
-            <Filter className="h-4 w-4" />
-            <span>Filter</span>
-          </Button>
-          <Button 
+          {/* Status filter — Active hides retired (Inactive) brands by default */}
+          <div className="inline-flex rounded-lg border border-border bg-background p-0.5 text-xs font-semibold">
+            {(["Active", "Inactive", "All"] as const).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setStatusFilter(opt)}
+                className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  statusFilter === opt ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+          <Button
             id="add-brand-btn"
             className="gap-2 font-semibold cursor-pointer"
             onClick={() => setActiveModal('add-brand')}
@@ -426,14 +564,19 @@ function BrandDashboardContent() {
                   onClick={() => handleRowClick(b.id)}
                   className={`flex items-center justify-between p-4 cursor-pointer hover:bg-muted/30 transition-colors ${
                     isSelected ? "bg-muted/60 border-l-4 border-primary font-medium" : ""
-                  }`}
+                  } ${b.status === "Inactive" ? "opacity-60" : ""}`}
                 >
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary font-extrabold text-sm uppercase">
                       {b.name.charAt(0)}
                     </div>
                     <div className="flex flex-col">
-                      <span className="text-sm font-bold text-foreground">{b.name}</span>
+                      <span className="flex items-center gap-1.5 text-sm font-bold text-foreground">
+                        {b.name}
+                        {b.status === "Inactive" && (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">Inactive</span>
+                        )}
+                      </span>
                       <span className="text-xs text-muted-foreground line-clamp-1">{b.headquarter}</span>
                     </div>
                   </div>
@@ -443,6 +586,30 @@ function BrandDashboardContent() {
                       <span>{b.components.length} components</span>
                       <span>{b.suppliers.length} suppliers</span>
                     </span>
+                    <button
+                      type="button"
+                      aria-label={b.status === "Inactive" ? `Reactivate ${b.name}` : `Deactivate ${b.name}`}
+                      title={b.status === "Inactive" ? "Reactivate brand" : "Deactivate (retire) brand"}
+                      disabled={togglingBrandId === b.id}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleToggleBrandStatus(b)
+                      }}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                    >
+                      {b.status === "Inactive" ? <Power className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${b.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteBrandTarget(b)
+                      }}
+                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
                     <ArrowRight className={`h-4 w-4 text-muted-foreground/60 transition-transform ${
                       isSelected ? "translate-x-1 text-primary" : ""
                     }`} />
@@ -488,9 +655,11 @@ function BrandDashboardContent() {
                     <div className="flex items-center gap-2">
                       <h2 className="text-2xl font-extrabold text-foreground">{selectedBrand.name}</h2>
                       <span className={`inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-bold ${
-                        selectedBrand.status === "Approved" 
+                        selectedBrand.status === "Approved"
                           ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                          : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                          : selectedBrand.status === "Pending"
+                          ? "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                          : "bg-muted border-border text-muted-foreground"
                       }`}>
                         {selectedBrand.status}
                       </span>

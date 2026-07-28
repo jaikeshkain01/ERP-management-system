@@ -76,7 +76,7 @@ export interface CreateBrandInput {
   description?: string;
   headquarter?: string;
   founded?: string;
-  status?: "Approved" | "Pending";
+  status?: "Approved" | "Pending" | "Inactive";
 }
 
 /** Create a brand (Add Brand form). slug is derived from the name and is the id-space key. */
@@ -106,7 +106,7 @@ export interface UpdateBrandInput {
   description?: string | null;
   headquarter?: string | null;
   founded?: string | null;
-  status?: "Approved" | "Pending";
+  status?: "Approved" | "Pending" | "Inactive";
   rating?: number | null;
 }
 
@@ -132,6 +132,63 @@ export async function updateBrand(idOrSlug: string, patch: UpdateBrandInput): Pr
       },
     });
     return fromDb(row);
+  });
+}
+
+/**
+ * Soft-delete a brand (by uuid or slug). Blocked if it is still referenced by a
+ * component variant, a BOM line's preferred brand, a price book entry, or any
+ * purchase document; its supplier links (config only) are soft-deleted alongside.
+ */
+export async function deleteBrand(idOrSlug: string): Promise<{ id: string; slug: string }> {
+  return guarded("brand.delete", async (tx, ctx) => {
+    const brand = await tx.brands.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
+      select: { id: true, slug: true },
+    });
+    if (!brand) throw Errors.notFound("Brand");
+
+    // Genuine catalog/design usage blocks the delete: a component brand-variant, a
+    // BOM line's preferred brand, or a purchase document. Each subquery only counts
+    // references whose own parent record is still live (a deleted PCB / purchase
+    // document leaves its child rows behind). The price book is config, not usage —
+    // it cascades below rather than blocking.
+    const inUse = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one WHERE EXISTS (
+        SELECT 1 FROM component_brand_variants cbv
+          JOIN components c ON c.id = cbv.component_id AND c.deleted_at IS NULL
+          WHERE cbv.brand_id = ${brand.id}::uuid AND cbv.deleted_at IS NULL
+        UNION ALL
+        SELECT 1 FROM pcb_lines pl
+          JOIN pcb_revisions pr ON pr.id = pl.pcb_revision_id AND pr.deleted_at IS NULL
+          JOIN pcbs p ON p.id = pr.pcb_id AND p.deleted_at IS NULL
+          WHERE pl.preferred_brand_id = ${brand.id}::uuid AND pl.deleted_at IS NULL
+        UNION ALL
+        SELECT 1 FROM purchase_order_items poi
+          JOIN purchase_orders po ON po.id = poi.purchase_order_id AND po.deleted_at IS NULL
+          WHERE poi.brand_id = ${brand.id}::uuid AND poi.deleted_at IS NULL
+        UNION ALL
+        SELECT 1 FROM purchase_request_items pri
+          JOIN purchase_requests preq ON preq.id = pri.purchase_request_id AND preq.deleted_at IS NULL
+          WHERE pri.brand_id = ${brand.id}::uuid AND pri.deleted_at IS NULL
+      ) LIMIT 1`;
+    if (inUse.length) {
+      throw Errors.conflict("Brand is in use by components, BOM lines or purchase documents and cannot be deleted");
+    }
+
+    // The price book and supplier links are config owned by the brand — soft-delete
+    // them alongside so the delete is not blocked by them.
+    await tx.$executeRaw`
+      UPDATE supplier_component_prices SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE brand_id = ${brand.id}::uuid AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE brand_suppliers SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE brand_id = ${brand.id}::uuid AND deleted_at IS NULL`;
+    await tx.brands.update({
+      where: { id: brand.id },
+      data: { deleted_at: new Date(), updated_by: ctx.userId },
+    });
+    return { id: brand.id, slug: brand.slug };
   });
 }
 

@@ -74,7 +74,7 @@ export interface Brand {
   description: string
   headquarter: string
   founded: string
-  status: "Approved" | "Pending"
+  status: "Approved" | "Pending" | "Inactive"
   rating: number
 }
 

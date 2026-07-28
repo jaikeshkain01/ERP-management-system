@@ -23,6 +23,14 @@ const Line = z.object({
   solderType: z.enum(["SMD", "DIP"]).optional(),
   footprint: z.string().trim().optional(),
   qty: z.number().int().positive().default(1),
+  /** Reference designator(s) → pcb_lines.ref_des. */
+  refDes: z.string().trim().optional(),
+  /** Manufacturer name → resolved to a brand (pcb_lines.preferred_brand_id). */
+  manufacturer: z.string().trim().optional(),
+  /** Supplier name → resolved to a supplier record (price link only when priced). */
+  supplier: z.string().trim().optional(),
+  /** Unit price for the supplier link; a link row is created only when > 0. */
+  unitPrice: z.number().nonnegative().optional(),
 });
 
 const Pcb = z.object({

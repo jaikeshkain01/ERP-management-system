@@ -381,12 +381,26 @@ export async function deleteComponent(idOrSlug: string): Promise<{ id: string; g
     });
     if (!comp) throw Errors.notFound("Component");
 
-    const inUse = await tx.pcb_lines.findFirst({
-      where: { component_id: comp.id, deleted_at: null },
-      select: { id: true },
-    });
-    if (inUse) throw Errors.conflict("Component is used in one or more PCB BOMs and cannot be deleted");
+    // Only count lines that belong to a still-live PCB revision (a deleted PCB
+    // leaves its lines behind, so checking the line's own deleted_at is not enough).
+    const inUse = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one
+      FROM pcb_lines pl
+      JOIN pcb_revisions pr ON pr.id = pl.pcb_revision_id AND pr.deleted_at IS NULL
+      JOIN pcbs p ON p.id = pr.pcb_id AND p.deleted_at IS NULL
+      WHERE pl.component_id = ${comp.id}::uuid AND pl.deleted_at IS NULL
+      LIMIT 1`;
+    if (inUse.length) throw Errors.conflict("Component is used in one or more PCB BOMs and cannot be deleted");
 
+    // The component's brand variants and price book are config owned by the
+    // component — soft-delete them alongside so they do not linger and keep the
+    // referenced brands/suppliers looking "in use" after the component is gone.
+    await tx.$executeRaw`
+      UPDATE component_brand_variants SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE component_id = ${comp.id}::uuid AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE supplier_component_prices SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE component_id = ${comp.id}::uuid AND deleted_at IS NULL`;
     await tx.components.update({
       where: { id: comp.id },
       data: { deleted_at: new Date(), updated_by: ctx.userId },

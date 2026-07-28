@@ -9,7 +9,15 @@ import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
 import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
-import { isUuid, lineHasContent, resolveOrCreateComponent, slugify, uniqueSlug } from "@/lib/server/data/util";
+import {
+  isUuid,
+  lineHasContent,
+  resolveOrCreateBrand,
+  resolveOrCreateComponent,
+  resolveOrCreateSupplier,
+  slugify,
+  uniqueSlug,
+} from "@/lib/server/data/util";
 
 export interface ProductView {
   id: string;
@@ -130,6 +138,14 @@ export interface CreateCatalogProductLine {
   solderType?: "SMD" | "DIP";
   footprint?: string;
   qty: number;
+  /** Reference designator(s) → pcb_lines.ref_des. */
+  refDes?: string;
+  /** Manufacturer name → resolved to a brand, set as pcb_lines.preferred_brand_id. */
+  manufacturer?: string;
+  /** Supplier name → resolved to a supplier record (price link only when priced). */
+  supplier?: string;
+  /** Unit price for the supplier link; the link row is only created when this is > 0. */
+  unitPrice?: number;
 }
 
 /** A board on the product: its own component lines + how many per product unit. */
@@ -220,55 +236,156 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
         revisionId = activeRev.id;
       }
 
-      // No explicit link, but a PCB with the same name already exists → reuse it
-      // instead of silently creating a duplicate board. Guards the common case
-      // where the user typed (or picked, then edited) an existing PCB's name so
-      // the typeahead link was dropped. Falls through to create only if there is
-      // no matching PCB or it has no active revision.
-      if (!revisionId && group.name?.trim()) {
-        const byName = await tx.pcbs.findFirst({
-          where: { deleted_at: null, name: { equals: group.name.trim(), mode: "insensitive" } },
-          select: { id: true },
-        });
-        if (byName) {
-          const activeRev = await tx.pcb_revisions.findFirst({
-            where: { pcb_id: byName.id, status: "Active", deleted_at: null },
-            select: { id: true },
-            orderBy: { created_at: "desc" },
-          });
-          if (activeRev) revisionId = activeRev.id;
-        }
-      }
-
       if (!revisionId) {
-        // ── Create a new PCB + revision + lines ──────────────────────────
+        // ── Build the board from the IMPORTED lines ──────────────────────
+        // The provided BOM is authoritative. If a PCB with this name already
+        // exists (e.g. a previous import of the same product — its boards
+        // outlive the product on delete, since PCBs are shared entities), we
+        // reuse that PCB ENTITY but create a FRESH Active revision from the new
+        // lines rather than silently reusing the old revision (which discarded
+        // the import and left stale, merged BOM data). Only one Active revision
+        // is allowed per PCB (uq_pcb_rev_active), so the previous one is retired
+        // to Superseded; any other product still points at its own revision id.
         const pcbName = group.name?.trim() || `${name} Board ${sequence}`;
-        const pcbSlug = await uniqueSlug(tx, "pcbs", slugify(pcbName) || `${slug}-board-${sequence}`);
-        const pcb = await tx.pcbs.create({
-          data: {
-            ...audit,
-            slug: pcbSlug,
-            name: pcbName,
-            description: `Board for ${name}`,
-            status: "Active",
-          },
-          select: { id: true },
-        });
+        let pcbId: string;
+        const byName = group.name?.trim()
+          ? await tx.pcbs.findFirst({
+              where: { deleted_at: null, name: { equals: pcbName, mode: "insensitive" } },
+              select: { id: true },
+            })
+          : null;
+        if (byName) {
+          pcbId = byName.id;
+          await tx.pcb_revisions.updateMany({
+            where: { pcb_id: pcbId, status: "Active", deleted_at: null },
+            data: { status: "Superseded", updated_by: ctx.userId },
+          });
+        } else {
+          const pcbSlug = await uniqueSlug(tx, "pcbs", slugify(pcbName) || `${slug}-board-${sequence}`);
+          const pcb = await tx.pcbs.create({
+            data: { ...audit, slug: pcbSlug, name: pcbName, description: `Board for ${name}`, status: "Active" },
+            select: { id: true },
+          });
+          pcbId = pcb.id;
+        }
+        // Unique rev label per PCB (uq_pcb_rev): step past any existing labels.
+        let revNo = (await tx.pcb_revisions.count({ where: { pcb_id: pcbId, deleted_at: null } })) + 1;
+        while (
+          await tx.pcb_revisions.findFirst({
+            where: { pcb_id: pcbId, rev: `Rev ${revNo}`, deleted_at: null },
+            select: { id: true },
+          })
+        ) {
+          revNo++;
+        }
         const rev = await tx.pcb_revisions.create({
-          data: { ...audit, pcb_id: pcb.id, rev: "Rev A", status: "Active" },
+          data: { ...audit, pcb_id: pcbId, rev: `Rev ${revNo}`, status: "Active" },
           select: { id: true },
         });
 
-        // Resolve/create components, aggregating qty by component so each board's
-        // BOM stays one line per component.
-        const qtyByComponent = new Map<string, number>();
+        // Resolve/create components, aggregating by component so each board's BOM
+        // stays one line per component (pcb_lines is unique per revision+component).
+        // Designators from merged rows are concatenated; the first named
+        // manufacturer wins as the line's preferred brand.
+        const byComponent = new Map<
+          string,
+          { qty: number; refDes: string[]; brandId?: string; partNo?: string; supplierId?: string; supplierPrices: Map<string, number> }
+        >();
         for (const line of group.lines) {
           const componentId = await resolveOrCreateComponent(tx, ctx, line);
           const qty = Math.max(1, Math.round(Number(line.qty) || 1));
-          qtyByComponent.set(componentId, (qtyByComponent.get(componentId) ?? 0) + qty);
+          const entry = byComponent.get(componentId) ?? { qty: 0, refDes: [], supplierPrices: new Map<string, number>() };
+          entry.qty += qty;
+          const ref = line.refDes?.trim();
+          if (ref && !entry.refDes.includes(ref)) entry.refDes.push(ref);
+          // Keep the first non-empty part number so it can be recorded as the
+          // component's manufacturer brand variant (what the BOM views read).
+          if (!entry.partNo && line.partNumber?.trim()) entry.partNo = line.partNumber.trim();
+          if (!entry.brandId && line.manufacturer?.trim()) {
+            entry.brandId = await resolveOrCreateBrand(tx, ctx, line.manufacturer.trim());
+          }
+          if (line.supplier?.trim()) {
+            // The supplier directory record is created regardless of price; the
+            // price map keeps the best (>0) price seen for this component+supplier.
+            const supplierId = await resolveOrCreateSupplier(tx, ctx, line.supplier.trim());
+            // First named supplier becomes the component's supplier (shown in the
+            // BOM Supplier column) — independent of whether a price was provided.
+            if (!entry.supplierId) entry.supplierId = supplierId;
+            const price = Number(line.unitPrice) || 0;
+            entry.supplierPrices.set(supplierId, Math.max(entry.supplierPrices.get(supplierId) ?? 0, price));
+          }
+          byComponent.set(componentId, entry);
         }
-        for (const [componentId, qty] of qtyByComponent) {
-          await tx.pcb_lines.create({ data: { ...audit, pcb_revision_id: rev.id, component_id: componentId, qty } });
+        for (const [componentId, entry] of byComponent) {
+          await tx.pcb_lines.create({
+            data: {
+              ...audit,
+              pcb_revision_id: rev.id,
+              component_id: componentId,
+              qty: entry.qty,
+              ref_des: entry.refDes.length ? entry.refDes.join(", ") : null,
+              preferred_brand_id: entry.brandId ?? null,
+            },
+          });
+
+          // Record the manufacturer part number as a brand variant so the BOM
+          // views (which read component_brand_variants.part_no) show it. Needs a
+          // brand; variants are unique per (component, brand), so skip when one
+          // already exists for this pair (e.g. the same part reused elsewhere).
+          if (entry.brandId && entry.partNo) {
+            const existingVariant = await tx.component_brand_variants.findFirst({
+              where: { component_id: componentId, brand_id: entry.brandId, deleted_at: null },
+              select: { id: true },
+            });
+            if (!existingVariant) {
+              await tx.component_brand_variants.create({
+                data: { ...audit, component_id: componentId, brand_id: entry.brandId, part_no: entry.partNo },
+              });
+            }
+          }
+
+          // Record the sheet's supplier as the component's preferred supplier so
+          // the BOM Supplier column can show it. preferred_supplier_id lives
+          // outside the generated Prisma client (added by a later migration), so
+          // it is set via raw SQL. Only fill it when unset — never clobber a
+          // supplier a user has already chosen for an existing component.
+          if (entry.supplierId) {
+            await tx.$executeRaw`
+              UPDATE components SET preferred_supplier_id = ${entry.supplierId}::uuid, updated_by = ${ctx.userId}::uuid
+              WHERE id = ${componentId}::uuid AND preferred_supplier_id IS NULL`;
+          }
+
+          // A supplier_component_prices link needs a brand + a NON-NULL price. We
+          // only seed one when a real price (> 0) was supplied — board-sheet imports
+          // carry no price, so they populate the supplier directory but never create
+          // placeholder ₹0 rows. Existing open rows for the (component, supplier,
+          // brand) triple are skipped to respect the no-overlap exclusion constraint.
+          if (entry.brandId) {
+            for (const [supplierId, price] of entry.supplierPrices) {
+              if (price <= 0) continue;
+              const dupe = await tx.supplier_component_prices.findFirst({
+                where: {
+                  deleted_at: null,
+                  component_id: componentId,
+                  supplier_id: supplierId,
+                  brand_id: entry.brandId,
+                  valid_to: null,
+                },
+                select: { id: true },
+              });
+              if (dupe) continue;
+              await tx.supplier_component_prices.create({
+                data: {
+                  ...audit,
+                  component_id: componentId,
+                  supplier_id: supplierId,
+                  brand_id: entry.brandId,
+                  price,
+                  currency: "INR",
+                },
+              });
+            }
+          }
         }
         revisionId = rev.id;
       }

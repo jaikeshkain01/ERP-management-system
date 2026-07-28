@@ -31,6 +31,7 @@ interface ComponentItem {
   partNumber?: string
   solderType?: "SMD" | "DIP"
   footprint?: string
+  supplier?: string
   spq?: number
   unitPrice?: number
   availableQty?: number
@@ -66,6 +67,31 @@ interface DrawerComponentDetail {
   description: string
   brands: { id: string; name: string; status: string }[]
   suppliers: { id: string; name: string; price: string; leadTime: string }[]
+}
+
+// Mirror of the server slug used when a BOM is imported (see
+// resolveOrCreateComponent in lib/server/data/util.ts).
+const valueKey = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).toUpperCase()
+
+/**
+ * The BOM "Part Number" to display for a component. Imports record a line's
+ * manufacturer part number on a brand variant when a manufacturer was given;
+ * otherwise the sheet's Part Number is encoded into generic_pn — verbatim when
+ * unique, or suffixed with the value slug when several values shared one part
+ * number (e.g. "Res2_0603" reused for 0E/1K/4.7K). Reconstruct the sheet value:
+ * prefer a real brand-variant part number, then recover it from generic_pn, and
+ * show nothing when generic_pn is merely the value slug (the row had no PN).
+ */
+const sheetPartNumber = (c: MComponent): string | undefined => {
+  const variantPn = c.brandVariants[0]?.partNo
+  if (variantPn) return variantPn
+  const gp = c.genericPN
+  if (!gp) return undefined
+  const vslug = valueKey(c.name)
+  if (gp === vslug) return undefined
+  const suffix = `-${vslug}`
+  return gp.endsWith(suffix) ? gp.slice(0, -suffix.length) : gp
 }
 
 function ProductStructureContent() {
@@ -288,9 +314,14 @@ function ProductStructureContent() {
             refDes,
             preferredBrand: preferredBrandId ? getBrandName(preferredBrandId) : undefined,
             remarks,
-            partNumber: component.brandVariants[0]?.partNo,
+            partNumber: sheetPartNumber(component),
             solderType: component.solderType,
             footprint: component.footprint,
+            supplier: component.preferredSupplierId
+              ? getSupplierName(component.preferredSupplierId)
+              : component.offers[0]
+                ? getSupplierName(component.offers[0].supplierId)
+                : undefined,
             spq: component.spq,
             unitPrice: bestPrice(component),
             availableQty: component.stock,
@@ -405,6 +436,7 @@ function ProductStructureContent() {
           : []),
         { header: "SPQ", value: (r) => r.comp.spq ?? "", type: "Number", width: 8 },
         { header: "Manufacturer", value: (r) => detailOf(r.comp)?.brands.map((b) => b.name).join(", ") ?? "", width: 22 },
+        { header: "Supplier", value: (r) => r.comp.supplier ?? "", width: 20 },
         { header: "Unit Price (INR)", value: (r) => unitPriceOf(r.comp) || "", type: "Number", width: 14 },
         { header: "Total Price (INR)", value: (r) => Number(lineTotal(r.comp).toFixed(2)), type: "Number", width: 15 },
         { header: "Available Qty", value: (r) => r.comp.availableQty ?? "", type: "Number", width: 12 },
@@ -423,6 +455,7 @@ function ProductStructureContent() {
         ...(scaled ? [totalParts * buildQty] : []), // Qty Needed
         "",                                 // SPQ
         "",                                 // Manufacturer
+        "",                                 // Supplier
         "",                                 // Unit Price
         Number(bomTotalValue.toFixed(2)),   // Total Price
         "",                                 // Available Qty
@@ -790,6 +823,7 @@ function ProductStructureContent() {
                     )}
                     <th scope="col" className="px-3 py-3 text-center">SPQ</th>
                     <th scope="col" className="px-3 py-3">Manufacturer</th>
+                    <th scope="col" className="px-3 py-3">Supplier</th>
                     <th scope="col" className="px-3 py-3 text-right">Unit Price</th>
                     <th scope="col" className="px-3 py-3 text-right">Total Price</th>
                     <th scope="col" className="px-3 py-3 text-right">Available Qty</th>
@@ -823,18 +857,20 @@ function ProductStructureContent() {
                             <span className="text-muted-foreground/40 pl-5">↳</span>
                           )}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-[11px] font-bold text-primary">
-                          {c.refDes ?? "—"}
+                        <td className="px-3 py-2.5 align-top">
+                          <div className="max-w-[200px] whitespace-normal break-words font-mono text-[11px] font-bold text-primary">
+                            {c.refDes ?? "—"}
+                          </div>
                         </td>
                         <td className="px-3 py-2.5">
                           <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
                             {c.type}
                           </span>
                         </td>
-                        <td className="px-3 py-2.5 font-semibold text-foreground">
-                          <div className="flex items-center gap-2">
-                            <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span>{c.name}</span>
+                        <td className="px-3 py-2.5 font-semibold text-foreground align-top">
+                          <div className="flex items-start gap-2 max-w-[240px]">
+                            <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                            <span className="whitespace-normal break-words">{c.name}</span>
                           </div>
                         </td>
                         <td className="px-3 py-2.5 font-mono text-muted-foreground">{c.partNumber ?? "—"}</td>
@@ -861,6 +897,11 @@ function ProductStructureContent() {
                                 <span className="text-muted-foreground font-mono"> +{detail.brands.length - 1}</span>
                               )}
                             </span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2.5 text-muted-foreground">
+                          {c.supplier ? (
+                            <span className="font-semibold text-foreground">{c.supplier}</span>
                           ) : "—"}
                         </td>
                         <td className="px-3 py-2.5 text-right font-mono text-foreground">
@@ -891,6 +932,7 @@ function ProductStructureContent() {
                         {(totalParts * buildQty).toLocaleString()}
                       </td>
                     )}
+                    <td className="px-3 py-3" />
                     <td className="px-3 py-3" />
                     <td className="px-3 py-3" />
                     <td className="px-3 py-3" />

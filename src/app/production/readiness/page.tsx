@@ -174,8 +174,8 @@ export default function ProductionReadinessPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {readinessItems.map((item) => (
-                    <tr key={item.component} className="hover:bg-muted/10 transition-colors">
+                  {readinessItems.map((item, idx) => (
+                    <tr key={`${item.genericPN || item.component}-${idx}`} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-4 font-semibold">{item.component}</td>
                       <td className="px-6 py-4 font-mono">{item.required.toLocaleString()}</td>
                       {inventoryOn && <td className="px-6 py-4 font-mono text-muted-foreground">{item.available.toLocaleString()}</td>}

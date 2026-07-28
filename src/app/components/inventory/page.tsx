@@ -15,7 +15,7 @@ import { useData } from "@/lib/data-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import type { StockDirection } from "@/lib/catalog"
 import { useStockLedger } from "@/lib/use-stock-ledger"
-import { effectiveComponentStock, effectiveBrandStocks, type NewTransactionInput } from "@/lib/stock-ledger"
+import type { BrandStock, NewTransactionInput } from "@/lib/stock-ledger"
 import { StockMoveModal } from "@/components/inventory/stock-move-modal"
 import { TransactionHistoryTable } from "@/components/inventory/transaction-history-table"
 
@@ -55,19 +55,34 @@ interface InventoryItem {
 }
 
 // --- Inventory view model derived from the centralized component store ---
-// Stock/brand quantities come from the live transaction ledger (perpetual
-// inventory), so recording a stock-in/out updates every derived figure.
-import type { StockTransaction } from "@/lib/catalog"
+// Stock/brand quantities come from the authoritative `inventory_balances`
+// projection (via useStockLedger), keyed by genericPN and genericPN|brandSlug,
+// so recording a stock-in/out reflects the DB's true on-hand — not a truncated
+// client-side replay of the ledger.
 
-// Ledger keys on genericPN (stable across mock/DB modes), so brand stocks are
-// computed against a genericPN-keyed component view.
-function buildInventory(d: ReturnType<typeof useData>, txns: StockTransaction[]): InventoryItem[] {
+/** Authoritative per-brand on-hand for a component, from the balances maps. */
+function brandStocksFor(
+  c: ReturnType<typeof useData>["COMPONENTS"][number],
+  onHandByVariant: Map<string, number>,
+): BrandStock[] {
+  return c.brandVariants.map((v) => ({
+    brandId: v.brandId,
+    partNo: v.partNo,
+    stock: onHandByVariant.get(`${c.genericPN}|${v.brandId}`) ?? 0,
+  }))
+}
+
+function buildInventory(
+  d: ReturnType<typeof useData>,
+  onHandByComponent: Map<string, number>,
+  onHandByVariant: Map<string, number>,
+): InventoryItem[] {
   return d.COMPONENTS.map((c) => ({
     id: c.id,
     name: c.name,
     genericPN: c.genericPN,
     category: c.category,
-    stock: effectiveComponentStock(c.genericPN, txns),
+    stock: onHandByComponent.get(c.genericPN) ?? 0,
     minStock: c.minStock,
     reorderQty: c.reorderQty,
     unit: c.unit,
@@ -76,7 +91,7 @@ function buildInventory(d: ReturnType<typeof useData>, txns: StockTransaction[])
     solderType: c.solderType,
     footprint: c.footprint,
     lastCount: c.lastCount,
-    brands: effectiveBrandStocks({ ...c, id: c.genericPN }, txns).map((b) => ({
+    brands: brandStocksFor(c, onHandByVariant).map((b) => ({
       brand: d.getBrandName(b.brandId),
       partNo: b.partNo ?? "—",
       stock: b.stock,
@@ -129,11 +144,14 @@ export default function InventoryPage() {
   const [expanded, setExpanded] = React.useState<string | null>(null)
 
   const d = useData()
-  const { transactions, addTransaction } = useStockLedger()
+  const { transactions, onHandByComponent, onHandByVariant, addTransaction } = useStockLedger()
   const [move, setMove] = React.useState<{ componentId: string; mode: StockDirection } | null>(null)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  const INVENTORY = React.useMemo(() => buildInventory(d, transactions), [d, transactions])
+  const INVENTORY = React.useMemo(
+    () => buildInventory(d, onHandByComponent, onHandByVariant),
+    [d, onHandByComponent, onHandByVariant],
+  )
   const CATEGORIES = React.useMemo(
     () => ["All", ...Array.from(new Set(d.COMPONENTS.map((c) => c.category)))],
     [d],
@@ -148,6 +166,7 @@ export default function InventoryPage() {
   const handleMoveSubmit = async (input: NewTransactionInput) => {
     const result = await addTransaction(input)
     if (result.ok) {
+      d.reload()
       const verb = input.direction === "in" ? "Stocked in" : "Stocked out"
       setToast(`${verb} ${input.qty.toLocaleString()} × ${d.getBrandName(input.brandId)}`)
     } else {
@@ -582,7 +601,7 @@ export default function InventoryPage() {
             mode={move.mode}
             componentId={comp.genericPN}
             componentName={comp.name}
-            brandStocks={effectiveBrandStocks({ ...comp, id: comp.genericPN }, transactions)}
+            brandStocks={brandStocksFor(comp, onHandByVariant)}
             onSubmit={handleMoveSubmit}
             onClose={() => setMove(null)}
           />

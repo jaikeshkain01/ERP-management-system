@@ -87,7 +87,11 @@ const NEGATIVE_TYPES = new Set(["OUT", "CONSUMPTION"]);
 export const InventoryTxnBody = z
   .object({
     type: z.enum(["IN", "OUT", "TRANSFER", "ADJUSTMENT", "RETURN", "CONSUMPTION", "PRODUCTION"]),
-    variantId: z.string().uuid(),
+    // Identify the variant by UUID, or by business keys (generic P/N + brand slug)
+    // so a never-stocked variant can be moved without a pre-existing balance row.
+    variantId: z.string().uuid().optional(),
+    genericPN: z.string().min(1).optional(),
+    brandSlug: z.string().min(1).optional(),
     locationId: z.string().uuid().optional(),
     fromLocationId: z.string().uuid().optional(),
     toLocationId: z.string().uuid().optional(),
@@ -100,15 +104,17 @@ export const InventoryTxnBody = z
     grnNo: z.string().max(100).optional(),
   })
   .superRefine((b, ctx) => {
+    if (!b.variantId && !(b.genericPN && b.brandSlug)) {
+      ctx.addIssue({ code: "custom", message: "Provide variantId, or genericPN and brandSlug" });
+    }
     if (b.type === "TRANSFER") {
       if (!b.fromLocationId || !b.toLocationId) ctx.addIssue({ code: "custom", message: "TRANSFER needs fromLocationId and toLocationId" });
       if (b.fromLocationId && b.fromLocationId === b.toLocationId) ctx.addIssue({ code: "custom", message: "TRANSFER source and destination must differ" });
       if (b.qty == null) ctx.addIssue({ code: "custom", message: "TRANSFER needs a positive qty" });
     } else if (b.type === "ADJUSTMENT") {
-      if (!b.locationId) ctx.addIssue({ code: "custom", message: "ADJUSTMENT needs locationId" });
       if (b.qtyDelta == null || b.qtyDelta === 0) ctx.addIssue({ code: "custom", message: "ADJUSTMENT needs a non-zero qtyDelta" });
     } else {
-      if (!b.locationId) ctx.addIssue({ code: "custom", message: `${b.type} needs locationId` });
+      // locationId is optional here — a default storage location is used when omitted.
       if (b.qty == null) ctx.addIssue({ code: "custom", message: `${b.type} needs a positive qty` });
     }
   });
@@ -141,6 +147,69 @@ function balanceSelect(where: Prisma.Sql) {
     JOIN storage_locations sl ON sl.id = ib.location_id
     WHERE ib.deleted_at IS NULL ${where}
     ORDER BY c.name, b.slug`;
+}
+
+/** Resolve a variant UUID from its business keys (generic P/N + brand slug/id/name), creating variant if missing. */
+async function resolveVariantByKeys(tx: TxClient, genericPN: string, brandSlug: string): Promise<string> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT v.id FROM component_brand_variants v
+    JOIN components c ON c.id = v.component_id
+    JOIN brands b ON b.id = v.brand_id
+    WHERE (c.generic_pn = ${genericPN} OR c.id::text = ${genericPN})
+      AND (b.slug = ${brandSlug} OR b.id::text = ${brandSlug} OR b.name ILIKE ${brandSlug})
+      AND v.deleted_at IS NULL AND c.deleted_at IS NULL AND b.deleted_at IS NULL
+    LIMIT 1`;
+  if (rows[0]) return rows[0].id;
+
+  const comp = await tx.components.findFirst({
+    where: { deleted_at: null, OR: [{ generic_pn: genericPN }, ...(isUuid(genericPN) ? [{ id: genericPN }] : [])] },
+    select: { id: true, generic_pn: true, company_id: true, created_by: true },
+  });
+  if (!comp) throw Errors.badRequest("Unknown component", { genericPN });
+
+  const brand = await tx.brands.findFirst({
+    where: {
+      deleted_at: null,
+      OR: [
+        { slug: brandSlug },
+        ...(isUuid(brandSlug) ? [{ id: brandSlug }] : []),
+        { name: { equals: brandSlug, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true, slug: true },
+  });
+  if (!brand) throw Errors.badRequest("Unknown brand", { brandSlug });
+
+  const existingVariant = await tx.component_brand_variants.findFirst({
+    where: { component_id: comp.id, brand_id: brand.id, deleted_at: null },
+    select: { id: true },
+  });
+  if (existingVariant) return existingVariant.id;
+
+  const newVariant = await tx.component_brand_variants.create({
+    data: {
+      company_id: comp.company_id,
+      component_id: comp.id,
+      brand_id: brand.id,
+      part_no: comp.generic_pn,
+      created_by: comp.created_by,
+      updated_by: comp.created_by,
+    },
+    select: { id: true },
+  });
+  return newVariant.id;
+}
+
+/** A default storage location to stock into when the caller doesn't name one
+ *  (prefers the default bin, then the oldest location). Tenant-scoped by RLS. */
+async function defaultLocation(tx: TxClient): Promise<string> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM storage_locations
+    WHERE deleted_at IS NULL
+    ORDER BY (is_default AND kind = 'bin') DESC, created_at ASC
+    LIMIT 1`;
+  if (!rows[0]) throw Errors.badRequest("No storage location configured — create a warehouse and location first.");
+  return rows[0].id;
 }
 
 async function warehouseForLocation(tx: TxClient, locationId: string): Promise<string> {
@@ -234,53 +303,56 @@ export async function getComponentStock(idOrPn: string): Promise<ComponentStockV
 // ── write path ───────────────────────────────────────────────────────────────
 export async function createInventoryTransaction(input: InventoryTxnInput) {
   return guarded("inventory.create", async (tx, ctx) => {
-    const variant = await tx.component_brand_variants.findFirst({ where: { id: input.variantId, deleted_at: null }, select: { id: true } });
-    if (!variant) throw Errors.badRequest("Unknown variant", { variantId: input.variantId });
+    const variantId = input.variantId ?? (await resolveVariantByKeys(tx, input.genericPN!, input.brandSlug!));
+    const variant = await tx.component_brand_variants.findFirst({ where: { id: variantId, deleted_at: null }, select: { id: true } });
+    if (!variant) throw Errors.badRequest("Unknown variant", { variantId });
 
-    const base = { company_id: ctx.companyId!, component_brand_variant_id: input.variantId, created_by: ctx.userId };
+    const base = { company_id: ctx.companyId!, component_brand_variant_id: variantId, created_by: ctx.userId };
     const touched: { locationId: string }[] = [];
 
     if (input.type === "TRANSFER") {
       const fromWh = await warehouseForLocation(tx, input.fromLocationId!);
       const toWh = await warehouseForLocation(tx, input.toLocationId!);
       const qty = input.qty!;
-      const avail = await availableAt(tx, input.variantId, input.fromLocationId!);
+      const avail = await availableAt(tx, variantId, input.fromLocationId!);
       if (avail < qty) throw Errors.conflict("Insufficient available stock at source", { available: avail, requested: qty });
       const group = randomUUID();
       await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: fromWh, location_id: input.fromLocationId!, qty_delta: -qty, transfer_group_id: group, note: input.note ?? null } });
       await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: toWh, location_id: input.toLocationId!, qty_delta: qty, transfer_group_id: group, note: input.note ?? null } });
       touched.push({ locationId: input.fromLocationId! }, { locationId: input.toLocationId! });
     } else if (input.type === "ADJUSTMENT") {
-      const wh = await warehouseForLocation(tx, input.locationId!);
+      const locationId = input.locationId ?? (await defaultLocation(tx));
+      const wh = await warehouseForLocation(tx, locationId);
       const delta = input.qtyDelta!;
       if (delta < 0) {
-        const avail = await availableAt(tx, input.variantId, input.locationId!);
+        const avail = await availableAt(tx, variantId, locationId);
         if (avail < -delta) throw Errors.conflict("Insufficient available stock", { available: avail, requested: -delta });
       }
-      await tx.inventory_transactions.create({ data: { ...base, type: "ADJUSTMENT", warehouse_id: wh, location_id: input.locationId!, qty_delta: delta, reason: input.reason ?? null, note: input.note ?? null } });
-      touched.push({ locationId: input.locationId! });
+      await tx.inventory_transactions.create({ data: { ...base, type: "ADJUSTMENT", warehouse_id: wh, location_id: locationId, qty_delta: delta, reason: input.reason ?? null, note: input.note ?? null } });
+      touched.push({ locationId });
     } else {
-      const wh = await warehouseForLocation(tx, input.locationId!);
+      const locationId = input.locationId ?? (await defaultLocation(tx));
+      const wh = await warehouseForLocation(tx, locationId);
       const qty = input.qty!;
       const delta = POSITIVE_TYPES.has(input.type) ? qty : NEGATIVE_TYPES.has(input.type) ? -qty : qty;
       if (delta < 0) {
-        const avail = await availableAt(tx, input.variantId, input.locationId!);
+        const avail = await availableAt(tx, variantId, locationId);
         if (avail < -delta) throw Errors.conflict("Insufficient available stock", { available: avail, requested: -delta });
       }
       await tx.inventory_transactions.create({
         data: {
-          ...base, type: input.type, warehouse_id: wh, location_id: input.locationId!, qty_delta: delta,
+          ...base, type: input.type, warehouse_id: wh, location_id: locationId, qty_delta: delta,
           ref_type: input.refType ?? null, ref_id: input.refId ?? null, grn_no: input.grnNo ?? null,
           reason: input.reason ?? null, note: input.note ?? null,
         },
       });
-      touched.push({ locationId: input.locationId! });
+      touched.push({ locationId });
     }
 
     // return the affected balance rows (post-trigger projection)
     const locIds = [...new Set(touched.map((t) => t.locationId))];
     const balances = await tx.$queryRaw<BalanceView[]>(
-      balanceSelect(Prisma.sql`AND ib.component_brand_variant_id = ${input.variantId}::uuid AND ib.location_id IN (${Prisma.join(locIds.map((id) => Prisma.sql`${id}::uuid`))})`),
+      balanceSelect(Prisma.sql`AND ib.component_brand_variant_id = ${variantId}::uuid AND ib.location_id IN (${Prisma.join(locIds.map((id) => Prisma.sql`${id}::uuid`))})`),
     );
     return { ok: true, type: input.type, balances };
   });

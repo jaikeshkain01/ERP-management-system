@@ -4,7 +4,7 @@
 // "Quantity" vs "Qty Needed", "Part Number" vs "MPN", …). This module owns the
 // fuzzy header→field matching so the UI just receives clean ImportedBomLine[].
 
-import { parseSpreadsheetFile, type ParsedSheet } from "@/lib/import-spreadsheet"
+import { parseAllSheets, parseSpreadsheetFile, type ParsedSheet } from "@/lib/import-spreadsheet"
 
 export interface ImportedBomLine {
   type: string
@@ -162,6 +162,101 @@ export async function parseBomFile(file: File): Promise<BomImportResult> {
     throw new Error("No component rows were found in the file.")
   }
   return result
+}
+
+// ---------------------------------------------------------------------------
+//  Multi-sheet workbooks — one PCB per tab
+// ---------------------------------------------------------------------------
+
+/** One workbook tab mapped to a would-be PCB and its component lines. */
+export interface ImportedPcb {
+  /** The Excel tab name — used as the PCB name. */
+  sheetName: string
+  /** Editable/display PCB name (defaults to sheetName). */
+  name: string
+  lines: ImportedBomLine[]
+  mapping: Partial<Record<BomField, string>>
+  headers: string[]
+  totalRows: number
+  skippedRows: number
+  /**
+   * True when the tab parsed as a usable board BOM: it has a Name or Part
+   * Number column AND at least one component row. Empty tabs (e.g. a "draft"
+   * placeholder) come back false so the UI can pre-exclude them.
+   */
+  isBom: boolean
+  /**
+   * A usable BOM that nonetheless looks like a cross-board roll-up rather than
+   * a single physical PCB — either its name says so ("Combined", "Summary", …)
+   * or it lacks a per-part Designator/Reference column while sibling board tabs
+   * have one. Still importable, but the UI leaves it unticked by default.
+   */
+  isRollup: boolean
+}
+
+/** Sheet names that signal a consolidated/summary tab rather than one board. */
+const ROLLUP_NAME = /combined|consolidat|summary|overview|master|roll[\s_-]?up|\btotals?\b|\ball\b/i
+
+export interface WorkbookBomResult {
+  pcbs: ImportedPcb[]
+}
+
+/**
+ * Parse a whole workbook into per-tab PCBs. Every tab is returned (so the UI
+ * can list them and let the user toggle which become PCBs); `isBom` flags the
+ * ones that actually look like a board BOM.
+ */
+export async function parseBomWorkbook(file: File): Promise<WorkbookBomResult> {
+  const sheets = await parseAllSheets(file)
+  if (sheets.length === 0) throw new Error("The file appears to be empty.")
+
+  const pcbs: ImportedPcb[] = sheets.map((sheet) => {
+    if (sheet.headers.length === 0) {
+      return {
+        sheetName: sheet.sheetName,
+        name: sheet.sheetName,
+        lines: [],
+        mapping: {},
+        headers: [],
+        totalRows: 0,
+        skippedRows: 0,
+        isBom: false,
+        isRollup: false,
+      }
+    }
+    const mapped = mapSheetToBom(sheet)
+    const isBom =
+      (mapped.mapping.name !== undefined || mapped.mapping.partNumber !== undefined) &&
+      mapped.lines.length > 0
+    return {
+      sheetName: sheet.sheetName,
+      name: sheet.sheetName,
+      lines: mapped.lines,
+      mapping: mapped.mapping,
+      headers: mapped.headers,
+      totalRows: mapped.totalRows,
+      skippedRows: mapped.skippedRows,
+      isBom,
+      isRollup: false, // resolved below, once every sheet is known
+    }
+  })
+
+  // Roll-up detection needs the whole workbook: only treat a missing Designator
+  // as a roll-up signal when other board tabs actually have one.
+  const anyHasDesignator = pcbs.some((p) => p.isBom && p.mapping.reference !== undefined)
+  for (const p of pcbs) {
+    if (!p.isBom) continue
+    const nameSaysRollup = ROLLUP_NAME.test(p.sheetName)
+    const lacksDesignator = anyHasDesignator && p.mapping.reference === undefined
+    p.isRollup = nameSaysRollup || lacksDesignator
+  }
+
+  if (!pcbs.some((p) => p.isBom)) {
+    throw new Error(
+      "No sheet looked like a BOM. Each PCB sheet needs a Name or Part Number column and at least one component row.",
+    )
+  }
+  return { pcbs }
 }
 
 /** Human-readable field labels for the mapping preview. */

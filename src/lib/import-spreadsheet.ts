@@ -188,6 +188,74 @@ async function parseXlsx(buf: ArrayBuffer): Promise<{ grid: string[][]; sheetNam
   return { grid: parseWorksheet(sheetXml, parseSharedStrings(sharedXml)), sheetName }
 }
 
+/** Resolve a workbook.xml.rels Target (e.g. "worksheets/sheet1.xml") to a ZIP path. */
+function resolveXlPath(target: string): string {
+  if (target.startsWith("/")) return target.slice(1)
+  return "xl/" + target.replace(/^\.\//, "")
+}
+
+/**
+ * Parse EVERY worksheet in a .xlsx workbook, in tab order.
+ *
+ * Unlike parseXlsx (first sheet only), this walks xl/workbook.xml for the tab
+ * order + names and follows each sheet's r:id through workbook.xml.rels to its
+ * worksheet part — so a workbook where tab 1 isn't sheet1.xml still resolves
+ * correctly. Multi-sheet BOMs (one PCB per tab) rely on this.
+ */
+async function parseXlsxAll(buf: ArrayBuffer): Promise<{ grid: string[][]; sheetName: string }[]> {
+  const index = readZipIndex(buf)
+  const [sharedXml, workbookXml, relsXml] = await Promise.all([
+    readZipEntry(buf, index.get("xl/sharedStrings.xml")),
+    readZipEntry(buf, index.get("xl/workbook.xml")),
+    readZipEntry(buf, index.get("xl/_rels/workbook.xml.rels")),
+  ])
+  const shared = parseSharedStrings(sharedXml)
+
+  // rId → worksheet target path
+  const relMap = new Map<string, string>()
+  if (relsXml) {
+    const relDoc = new DOMParser().parseFromString(relsXml, "application/xml")
+    const rels = relDoc.getElementsByTagName("Relationship")
+    for (let i = 0; i < rels.length; i++) {
+      const id = rels[i].getAttribute("Id")
+      const target = rels[i].getAttribute("Target")
+      if (id && target) relMap.set(id, target)
+    }
+  }
+
+  const out: { grid: string[][]; sheetName: string }[] = []
+
+  if (workbookXml) {
+    const doc = new DOMParser().parseFromString(workbookXml, "application/xml")
+    const sheetEls = doc.getElementsByTagName("sheet")
+    const REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    for (let i = 0; i < sheetEls.length; i++) {
+      const el = sheetEls[i]
+      const name = el.getAttribute("name") ?? `Sheet${i + 1}`
+      const rid = el.getAttributeNS(REL_NS, "id") || el.getAttribute("r:id") || ""
+      const target = rid ? relMap.get(rid) : undefined
+      const path = target ? resolveXlPath(target) : `xl/worksheets/sheet${i + 1}.xml`
+      const xml = await readZipEntry(buf, index.get(path))
+      if (xml) out.push({ grid: parseWorksheet(xml, shared), sheetName: name })
+    }
+  }
+
+  // Fallback: no workbook metadata — take every worksheet part in numeric order.
+  if (out.length === 0) {
+    const num = (s: string) => Number(s.match(/(\d+)\.xml$/)?.[1] ?? 0)
+    const paths = [...index.keys()]
+      .filter((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n))
+      .sort((a, b) => num(a) - num(b))
+    for (const p of paths) {
+      const xml = await readZipEntry(buf, index.get(p))
+      if (xml) out.push({ grid: parseWorksheet(xml, shared), sheetName: p.replace(/^.*\//, "").replace(/\.xml$/, "") })
+    }
+  }
+
+  if (out.length === 0) throw new Error("Could not read any worksheet from this .xlsx file.")
+  return out
+}
+
 // ---------------------------------------------------------------------------
 //  SpreadsheetML 2003 (.xls) — the format export-excel.ts writes
 // ---------------------------------------------------------------------------
@@ -216,6 +284,37 @@ function parseSpreadsheetML(xml: string): { grid: string[][]; sheetName: string 
     grid.push(row)
   }
   return { grid, sheetName }
+}
+
+/** Parse every <Worksheet> in a SpreadsheetML 2003 document, in order. */
+function parseSpreadsheetMLAll(xml: string): { grid: string[][]; sheetName: string }[] {
+  const doc = new DOMParser().parseFromString(xml, "application/xml")
+  const worksheets = doc.getElementsByTagName("Worksheet")
+  const out: { grid: string[][]; sheetName: string }[] = []
+  for (let w = 0; w < worksheets.length; w++) {
+    const worksheet = worksheets[w]
+    const sheetName =
+      worksheet.getAttribute("ss:Name") ?? worksheet.getAttribute("Name") ?? `Sheet${w + 1}`
+    const rowEls = worksheet.getElementsByTagName("Row")
+    const grid: string[][] = []
+    for (let r = 0; r < rowEls.length; r++) {
+      const cellEls = rowEls[r].getElementsByTagName("Cell")
+      const row: string[] = []
+      let col = 0
+      for (let c = 0; c < cellEls.length; c++) {
+        const cell = cellEls[c]
+        const idxAttr = cell.getAttribute("ss:Index") ?? cell.getAttribute("Index")
+        if (idxAttr) col = Number(idxAttr) - 1
+        const data = cell.getElementsByTagName("Data")[0]
+        row[col] = data?.textContent ?? ""
+        col++
+      }
+      for (let i = 0; i < row.length; i++) if (row[i] === undefined) row[i] = ""
+      grid.push(row)
+    }
+    out.push({ grid, sheetName })
+  }
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -312,4 +411,35 @@ export async function parseSpreadsheetFile(file: File): Promise<ParsedSheet> {
 
   // Fallback: treat as CSV
   return gridToSheet(parseCsv(text), file.name.replace(/\.[^.]+$/, ""))
+}
+
+/**
+ * Read EVERY sheet in a workbook (the multi-sheet counterpart to
+ * parseSpreadsheetFile). A multi-sheet BOM — one PCB per tab — comes back as
+ * one ParsedSheet per tab, in tab order. CSV files yield a single sheet.
+ */
+export async function parseAllSheets(file: File): Promise<ParsedSheet[]> {
+  const buf = await file.arrayBuffer()
+  const head = new Uint8Array(buf.slice(0, 8))
+
+  // .xlsx (ZIP local-file signature "PK\x03\x04")
+  if (head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04) {
+    const sheets = await parseXlsxAll(buf)
+    return sheets.map((s) => gridToSheet(s.grid, s.sheetName))
+  }
+
+  const text = new TextDecoder().decode(buf).replace(/^﻿/, "")
+  const trimmed = text.trimStart()
+
+  // SpreadsheetML 2003 XML (.xls)
+  if (
+    trimmed.startsWith("<?xml") ||
+    trimmed.startsWith("<Workbook") ||
+    trimmed.includes("urn:schemas-microsoft-com:office:spreadsheet")
+  ) {
+    return parseSpreadsheetMLAll(text).map((s) => gridToSheet(s.grid, s.sheetName))
+  }
+
+  // CSV — a single sheet.
+  return [gridToSheet(parseCsv(text), file.name.replace(/\.[^.]+$/, ""))]
 }

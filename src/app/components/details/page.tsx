@@ -238,6 +238,10 @@ function ComponentDetailsContent() {
     delete updatedData[componentId]
     setComponentsData(updatedData)
 
+    // Refresh the shared data provider so the catalog list reflects the deletion
+    // immediately (otherwise the list keeps the stale row until a manual refresh).
+    d.reload()
+
     setActiveModal(null)
     showToast(`Successfully deleted component ${component.name}!`)
     setTimeout(() => {

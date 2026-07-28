@@ -55,32 +55,106 @@ export default function Dashboard() {
       })()
   }, [])
 
+  const realValuation = React.useMemo(() => {
+    if (ops?.inventoryValue != null) return ops.inventoryValue
+    return d.COMPONENTS.reduce((sum, c) => sum + c.stock * d.bestPrice(c), 0)
+  }, [ops, d])
+
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
     { title: "Products", value: totalProducts.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
     { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
     { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
     { title: "Brands", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
-    { title: "Inventory Value", value: compactINR(ops?.inventoryValue ?? 0), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
+    { title: "Inventory Value", value: compactINR(realValuation), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
-  // Every panel is served by /api/dashboard; the distribution chart is a simple
-  // count of the live catalog entities already loaded via useData().
-  const productStatus = ops?.productStatus ?? []
-  const productionBlockers = ops?.productionBlockers ?? []
-  const lowStock = ops?.lowStock ?? []
-  const purchaseSummary = ops?.purchaseSummary ?? []
-  const productionOrders = ops?.recentProductionOrders ?? []
-  const singleSupplierComponents = ops?.singleSupplier ?? []
-  const topConsumed = ops?.topConsumed ?? []
-  const usageImpact = ops?.usageImpact ?? []
-  const recentActivities = ops?.recentActivities ?? []
-  const inventoryChartData = [
-    { name: "Components", value: d.COMPONENTS.length, color: "#875A7B" },
-    { name: "PCBs", value: d.PCBS.length, color: "#28C76F" },
-    { name: "Products", value: totalProducts, color: "#FF9F43" },
-  ]
+  // Panels derived from /api/dashboard with live fallback to useData()
+  const productStatus = React.useMemo(() => {
+    if (ops?.productStatus != null) return ops.productStatus
+    return d.PRODUCTS.map((p) => {
+      const bom = d.productBom(p)
+      const buildableQty = bom.length === 0 ? 0 : Math.min(...bom.map((l) => (l.qty > 0 ? Math.floor(l.component.stock / l.qty) : 0)))
+      const status = buildableQty === 0 ? "Blocked" : buildableQty < 10 ? "Low Stock" : "Ready"
+      return {
+        product: p.name,
+        status,
+        buildableQty,
+      }
+    })
+  }, [ops, d])
+
+  const lowStock = React.useMemo(() => {
+    if (ops?.lowStock != null) return ops.lowStock
+    return d.COMPONENTS.filter((c) => c.stock < c.minStock || c.stock === 0).map((c) => ({
+      component: c.name,
+      current: c.stock,
+      minimum: c.minStock,
+      status: (c.stock === 0 || c.stock <= c.minStock * 0.5 ? "Critical" : "Low") as "Critical" | "Low",
+    }))
+  }, [ops, d])
+
+  const singleSupplierComponents = React.useMemo(() => {
+    if (ops?.singleSupplier != null) return ops.singleSupplier
+    return d.COMPONENTS.filter((c) => d.isSingleSupplier(c)).map((c) => ({
+      component: c.name,
+      supplier: c.offers[0] ? d.getSupplierName(c.offers[0].supplierId) : "—",
+    }))
+  }, [ops, d])
+
+  const topConsumed = React.useMemo(() => {
+    if (ops?.topConsumed != null) return ops.topConsumed
+    return d.COMPONENTS.slice(0, 5).map((c) => ({
+      component: c.name,
+      monthlyUsage: (Math.round(c.annualConsumption / 12) || c.stock).toLocaleString(),
+    }))
+  }, [ops, d])
+
+  const usageImpact = React.useMemo(() => {
+    if (ops?.usageImpact != null) return ops.usageImpact
+    return d.COMPONENTS.map((c) => ({
+      component: c.name,
+      usedInProducts: d.productsUsingComponent(c.id).length,
+    })).sort((a, b) => b.usedInProducts - a.usedInProducts).slice(0, 5)
+  }, [ops, d])
+
+  const productionBlockers = React.useMemo(() => {
+    if (ops?.productionBlockers != null) return ops.productionBlockers
+    const items: { product: string; missingComp: string; qty: number }[] = []
+    for (const p of d.PRODUCTS) {
+      const bom = d.productBom(p)
+      for (const b of bom) {
+        if (b.component.stock < b.qty) {
+          items.push({
+            product: p.name,
+            missingComp: b.component.name,
+            qty: Math.max(1, b.qty - b.component.stock),
+          })
+        }
+      }
+    }
+    return items.slice(0, 5)
+  }, [ops, d])
+
+  const purchaseSummary = React.useMemo(() => {
+    if (ops?.purchaseSummary != null) return ops.purchaseSummary
+    return [
+      { title: "Pending PRs", value: 0, desc: "Awaiting manager approval" },
+      { title: "Open POs", value: 0, desc: "Shipment agreements in transit" },
+      { title: "Expected Deliveries", value: 0, desc: "Dispatched, awaiting goods-in" },
+    ]
+  }, [ops])
+
+  const productionOrders = React.useMemo(() => {
+    if (ops?.recentProductionOrders != null) return ops.recentProductionOrders
+    return []
+  }, [ops])
+
+  const recentActivities = React.useMemo(() => {
+    if (ops?.recentActivities != null) return ops.recentActivities
+    return []
+  }, [ops])
 
   const allTabs: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }>; alert?: number; moduleId?: ModuleId }[] = [
     { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -119,73 +193,90 @@ export default function Dashboard() {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm text-left text-foreground">
-          <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
-            <tr>
-              <th scope="col" className="px-6 py-3">Product</th>
-              <th scope="col" className="px-6 py-3 text-center">Status</th>
-              <th scope="col" className="px-6 py-3 text-right">Buildable Qty</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {productStatus.map((item, idx) => (
-              <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                <td className="px-6 py-3.5 font-bold">{item.product}</td>
-                <td className="px-6 py-3.5 text-center">
-                  <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold border ${item.status === "Ready"
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                      : item.status === "Blocked"
-                        ? "bg-destructive/10 border-destructive/20 text-destructive"
-                        : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
-                    }`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${item.status === "Ready" ? "bg-emerald-500" : item.status === "Blocked" ? "bg-destructive" : "bg-amber-500"
-                      }`} />
-                    {item.status}
-                  </span>
-                </td>
-                <td className="px-6 py-3.5 text-right font-mono font-bold text-foreground">
-                  {item.buildableQty.toLocaleString()} units
-                </td>
+        {productStatus.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No products configured in catalog.
+          </div>
+        ) : (
+          <table className="w-full text-sm text-left text-foreground">
+            <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
+              <tr>
+                <th scope="col" className="px-6 py-3">Product</th>
+                <th scope="col" className="px-6 py-3 text-center">Status</th>
+                <th scope="col" className="px-6 py-3 text-right">Buildable Qty</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {productStatus.map((item, idx) => (
+                <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                  <td className="px-6 py-3.5 font-bold">{item.product}</td>
+                  <td className="px-6 py-3.5 text-center">
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold border ${item.status === "Ready"
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                        : item.status === "Blocked"
+                          ? "bg-destructive/10 border-destructive/20 text-destructive"
+                          : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                      }`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${item.status === "Ready" ? "bg-emerald-500" : item.status === "Blocked" ? "bg-destructive" : "bg-amber-500"
+                        }`} />
+                      {item.status}
+                    </span>
+                  </td>
+                  <td className="px-6 py-3.5 text-right font-mono font-bold text-foreground">
+                    {item.buildableQty.toLocaleString()} units
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </CardContent>
     </Card>
   )
 
   const blockersCard = (
-    <Card className="border border-destructive/30 bg-destructive/5 dark:bg-red-950/10 shadow-sm overflow-hidden">
-      <CardHeader className="border-b border-destructive/10 bg-destructive/10 px-6 py-4 flex flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-destructive">
-          <ShieldAlert className="h-5 w-5" />
+    <Card className="border border-border shadow-sm overflow-hidden">
+      <CardHeader className="border-b border-border bg-muted/20 px-6 py-4 flex flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-2 text-foreground">
+          <ShieldAlert className={`h-5 w-5 ${productionBlockers.length > 0 ? "text-destructive" : "text-emerald-500"}`} />
           <div>
             <CardTitle className="text-lg font-bold">Production Blockers</CardTitle>
-            <CardDescription className="text-destructive/80 mt-0.5">Critical material shortages blocking scheduled builds</CardDescription>
+            <CardDescription className="mt-0.5">Critical material shortages blocking scheduled builds</CardDescription>
           </div>
         </div>
-        <Button
-          variant="destructive"
-          size="sm"
-          className="font-bold cursor-pointer text-xs shrink-0"
-          render={<Link href="/purchases/requests" />}
-        >
-          <span>View Purchase Options</span>
-          <ArrowRight className="h-3.5 w-3.5 ml-1" />
-        </Button>
+        {productionBlockers.length > 0 && (
+          <Button
+            variant="destructive"
+            size="sm"
+            className="font-bold cursor-pointer text-xs shrink-0"
+            render={<Link href="/purchases/requests" />}
+          >
+            <span>View Purchase Options</span>
+            <ArrowRight className="h-3.5 w-3.5 ml-1" />
+          </Button>
+        )}
       </CardHeader>
-      <CardContent className="p-0 divide-y divide-destructive/20 text-sm">
-        {productionBlockers.map((item, idx) => (
-          <div key={idx} className="flex justify-between items-center px-6 py-3.5 hover:bg-destructive/10 transition-colors">
-            <div className="flex flex-col">
-              <span className="font-bold text-foreground">{item.product}</span>
-              <span className="text-xs text-muted-foreground">Missing Component: <strong className="text-foreground">{item.missingComp}</strong></span>
-            </div>
-            <span className="font-mono font-extrabold text-destructive">
-              -{item.qty} units
-            </span>
+      <CardContent className="p-0 text-sm">
+        {productionBlockers.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
+            <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ No production blockers detected</span>
+            <span className="text-xs">All required component materials are available in sufficient quantities.</span>
           </div>
-        ))}
+        ) : (
+          <div className="divide-y divide-border">
+            {productionBlockers.map((item, idx) => (
+              <div key={idx} className="flex justify-between items-center px-6 py-3.5 hover:bg-destructive/10 transition-colors">
+                <div className="flex flex-col">
+                  <span className="font-bold text-foreground">{item.product}</span>
+                  <span className="text-xs text-muted-foreground">Missing Component: <strong className="text-foreground">{item.missingComp}</strong></span>
+                </div>
+                <span className="font-mono font-extrabold text-destructive">
+                  -{item.qty} units
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -202,35 +293,42 @@ export default function Dashboard() {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm text-left text-foreground">
-          <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
-            <tr>
-              <th scope="col" className="px-6 py-3">Component</th>
-              <th scope="col" className="px-6 py-3">Current</th>
-              <th scope="col" className="px-6 py-3">Minimum</th>
-              <th scope="col" className="px-6 py-3 text-right">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {lowStock.map((item, idx) => (
-              <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                <td className="px-6 py-3.5 font-bold">
-                  <Link href="/components/list" className="text-primary hover:underline">{item.component}</Link>
-                </td>
-                <td className="px-6 py-3.5 font-mono text-destructive font-bold">{item.current.toLocaleString()}</td>
-                <td className="px-6 py-3.5 font-mono text-muted-foreground">{item.minimum.toLocaleString()}</td>
-                <td className="px-6 py-3.5 text-right">
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase ${item.status === "Critical"
-                      ? "bg-destructive/10 border-destructive/20 text-destructive"
-                      : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
-                    }`}>
-                    {item.status}
-                  </span>
-                </td>
+        {lowStock.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground flex flex-col items-center gap-1">
+            <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ Stock levels optimal</span>
+            <span className="text-xs">No catalog components are currently below minimum safety stock levels.</span>
+          </div>
+        ) : (
+          <table className="w-full text-sm text-left text-foreground">
+            <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
+              <tr>
+                <th scope="col" className="px-6 py-3">Component</th>
+                <th scope="col" className="px-6 py-3">Current</th>
+                <th scope="col" className="px-6 py-3">Minimum</th>
+                <th scope="col" className="px-6 py-3 text-right">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {lowStock.map((item, idx) => (
+                <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                  <td className="px-6 py-3.5 font-bold">
+                    <Link href="/components/list" className="text-primary hover:underline">{item.component}</Link>
+                  </td>
+                  <td className="px-6 py-3.5 font-mono text-destructive font-bold">{item.current.toLocaleString()}</td>
+                  <td className="px-6 py-3.5 font-mono text-muted-foreground">{item.minimum.toLocaleString()}</td>
+                  <td className="px-6 py-3.5 text-right">
+                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[10px] font-black uppercase ${item.status === "Critical"
+                        ? "bg-destructive/10 border-destructive/20 text-destructive"
+                        : "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400"
+                      }`}>
+                      {item.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </CardContent>
     </Card>
   )
@@ -263,33 +361,39 @@ export default function Dashboard() {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <table className="w-full text-sm text-left text-foreground">
-          <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
-            <tr>
-              <th scope="col" className="px-6 py-3">Order</th>
-              <th scope="col" className="px-6 py-3">Product</th>
-              <th scope="col" className="px-6 py-3">Qty</th>
-              <th scope="col" className="px-6 py-3 text-right">Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {productionOrders.map((order, idx) => (
-              <tr key={idx} className="hover:bg-muted/10 transition-colors">
-                <td className="px-6 py-3.5 font-mono font-bold text-primary">{order.orderId}</td>
-                <td className="px-6 py-3.5 font-bold">{order.product}</td>
-                <td className="px-6 py-3.5 font-mono">{order.qty}</td>
-                <td className="px-6 py-3.5 text-right">
-                  <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${order.status === "Completed"
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-                      : "bg-primary/10 border-primary/20 text-primary"
-                    }`}>
-                    {order.status}
-                  </span>
-                </td>
+        {productionOrders.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No production orders logged yet.
+          </div>
+        ) : (
+          <table className="w-full text-sm text-left text-foreground">
+            <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
+              <tr>
+                <th scope="col" className="px-6 py-3">Order</th>
+                <th scope="col" className="px-6 py-3">Product</th>
+                <th scope="col" className="px-6 py-3">Qty</th>
+                <th scope="col" className="px-6 py-3 text-right">Status</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {productionOrders.map((order, idx) => (
+                <tr key={idx} className="hover:bg-muted/10 transition-colors">
+                  <td className="px-6 py-3.5 font-mono font-bold text-primary">{order.orderId}</td>
+                  <td className="px-6 py-3.5 font-bold">{order.product}</td>
+                  <td className="px-6 py-3.5 font-mono">{order.qty}</td>
+                  <td className="px-6 py-3.5 text-right">
+                    <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-bold ${order.status === "Completed"
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                        : "bg-primary/10 border-primary/20 text-primary"
+                      }`}>
+                      {order.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </CardContent>
     </Card>
   )
@@ -312,24 +416,30 @@ export default function Dashboard() {
             Single Supplier Components
           </span>
           <div className="border border-border rounded-lg overflow-hidden bg-background">
-            <table className="w-full text-xs text-left text-foreground">
-              <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                <tr>
-                  <th className="px-4 py-2">Component</th>
-                  <th className="px-4 py-2 text-right">Sole Supplier</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {singleSupplierComponents.map((s, idx) => (
-                  <tr key={idx} className="hover:bg-muted/5">
-                    <td className="px-4 py-2.5 font-bold">
-                      <Link href="/components/list" className="text-primary hover:underline">{s.component}</Link>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-semibold text-muted-foreground">{s.supplier}</td>
+            {singleSupplierComponents.length === 0 ? (
+              <div className="p-4 text-center text-xs text-muted-foreground">
+                No components with single-supplier risk.
+              </div>
+            ) : (
+              <table className="w-full text-xs text-left text-foreground">
+                <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                  <tr>
+                    <th className="px-4 py-2">Component</th>
+                    <th className="px-4 py-2 text-right">Sole Supplier</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {singleSupplierComponents.map((s, idx) => (
+                    <tr key={idx} className="hover:bg-muted/5">
+                      <td className="px-4 py-2.5 font-bold">
+                        <Link href="/components/list" className="text-primary hover:underline">{s.component}</Link>
+                      </td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-muted-foreground">{s.supplier}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
 
@@ -339,7 +449,17 @@ export default function Dashboard() {
           <div className="space-y-1">
             <span className="font-extrabold text-amber-800 dark:text-amber-400 uppercase tracking-wider block">Production Risk Warning</span>
             <p className="text-muted-foreground">
-              Sole supplier vulnerabilities identified. If the account managers for ABC Electronics or XYZ Components disappear, production of the Audio Codec and GSM modules will immediately block. Register qualified back-up manufacturing brands.
+              {singleSupplierComponents.length > 0 ? (
+                <>
+                  Sole supplier vulnerabilities identified for:{" "}
+                  <strong className="text-foreground">
+                    {singleSupplierComponents.slice(0, 3).map((s) => s.component).join(", ")}
+                  </strong>
+                  . If their sole distributor channels experience delays, production of dependent products will block.
+                </>
+              ) : (
+                "No critical sole-supplier dependencies detected across catalog components."
+              )}
             </p>
           </div>
         </div>
@@ -347,14 +467,35 @@ export default function Dashboard() {
     </Card>
   )
 
+  const inventoryChartData = React.useMemo(() => {
+    if (ops?.categoryDistribution?.length) {
+      const colors = ["#875A7B", "#28C76F", "#FF9F43", "#7367F0", "#EA5455", "#00CFDD"]
+      return ops.categoryDistribution.map((item, idx) => ({
+        ...item,
+        color: colors[idx % colors.length],
+      }))
+    }
+    const categoriesMap = new Map<string, number>()
+    for (const c of d.COMPONENTS) {
+      const cat = c.category || "General"
+      categoriesMap.set(cat, (categoriesMap.get(cat) ?? 0) + 1)
+    }
+    const colors = ["#875A7B", "#28C76F", "#FF9F43", "#7367F0", "#EA5455", "#00CFDD"]
+    return Array.from(categoriesMap.entries()).slice(0, 5).map(([name, value], idx) => ({
+      name,
+      value,
+      color: colors[idx % colors.length],
+    }))
+  }, [ops, d])
+
   const inventoryChartCard = (
     <Card className="border border-border shadow-sm flex flex-col justify-between">
       <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
         <div className="flex items-center gap-2">
           <BarChart2 className="h-5 w-5 text-primary" />
           <div>
-            <CardTitle className="text-lg font-bold">Inventory Distribution</CardTitle>
-            <CardDescription>BOM asset ratio by category</CardDescription>
+            <CardTitle className="text-lg font-bold">Inventory Category Ratio</CardTitle>
+            <CardDescription>Catalog component count by category</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -390,7 +531,7 @@ export default function Dashboard() {
         )}
 
         {/* Chart Legend */}
-        <div className="flex gap-4 text-xs font-bold uppercase tracking-wider text-muted-foreground/80 mt-4">
+        <div className="flex flex-wrap justify-center gap-4 text-xs font-bold uppercase tracking-wider text-muted-foreground/80 mt-4">
           {inventoryChartData.map((item, idx) => (
             <div key={idx} className="flex items-center gap-1.5">
               <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: item.color }} />
@@ -411,22 +552,28 @@ export default function Dashboard() {
           <h3 className="text-base font-bold text-foreground">Top Consumed Components</h3>
         </div>
         <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-          <table className="w-full text-left text-foreground">
-            <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-              <tr>
-                <th className="px-4 py-2">Component</th>
-                <th className="px-4 py-2 text-right">Monthly Usage</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {topConsumed.map((item, idx) => (
-                <tr key={idx} className="hover:bg-muted/5">
-                  <td className="px-4 py-2 font-bold">{item.component}</td>
-                  <td className="px-4 py-2 text-right font-mono font-bold text-primary">{item.monthlyUsage} units</td>
+          {topConsumed.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              No component usage recorded.
+            </div>
+          ) : (
+            <table className="w-full text-left text-foreground">
+              <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                <tr>
+                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2 text-right">Monthly Usage</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {topConsumed.map((item, idx) => (
+                  <tr key={idx} className="hover:bg-muted/5">
+                    <td className="px-4 py-2 font-bold">{item.component}</td>
+                    <td className="px-4 py-2 text-right font-mono font-bold text-primary">{item.monthlyUsage} units</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
@@ -437,25 +584,35 @@ export default function Dashboard() {
           <h3 className="text-base font-bold text-foreground">Component Usage Impact</h3>
         </div>
         <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-          <table className="w-full text-left text-foreground">
-            <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-              <tr>
-                <th className="px-4 py-2">Component</th>
-                <th className="px-4 py-2 text-right">Used In Products</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border font-medium">
-              {usageImpact.map((item, idx) => (
-                <tr key={idx} className="hover:bg-muted/5">
-                  <td className="px-4 py-2 font-bold">{item.component}</td>
-                  <td className="px-4 py-2 text-right font-mono text-primary font-bold">{item.usedInProducts} products</td>
+          {usageImpact.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              No active BOM component mappings.
+            </div>
+          ) : (
+            <table className="w-full text-left text-foreground">
+              <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                <tr>
+                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2 text-right">Used In Products</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border font-medium">
+                {usageImpact.map((item, idx) => (
+                  <tr key={idx} className="hover:bg-muted/5">
+                    <td className="px-4 py-2 font-bold">{item.component}</td>
+                    <td className="px-4 py-2 text-right font-mono text-primary font-bold">{item.usedInProducts} products</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
         <div className="text-[10px] leading-relaxed text-muted-foreground bg-muted/40 p-2 rounded border border-border/40 font-semibold uppercase tracking-wider text-center">
-          ⚠️ If Audio Codec is unavailable, 6 products are affected.
+          {usageImpact.length > 0 ? (
+            `⚠️ If ${usageImpact[0].component} is unavailable, ${usageImpact[0].usedInProducts} product line${usageImpact[0].usedInProducts === 1 ? "" : "s"} will be affected.`
+          ) : (
+            "All components mapped across product BOM structures."
+          )}
         </div>
       </div>
     </Card>
@@ -510,17 +667,23 @@ export default function Dashboard() {
         </div>
       </CardHeader>
       <CardContent className="p-6 flex-1 flex flex-col justify-between">
-        <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-1.5 before:bottom-1.5 before:w-[1.5px] before:bg-border/60">
-          {recentActivities.map((act, idx) => (
-            <div key={idx} className="relative group text-xs">
-              <span className="absolute -left-6.5 top-1 h-2.5 w-2.5 rounded-full border border-primary bg-background group-hover:bg-primary transition-colors" />
-              <div className="flex flex-col gap-0.5">
-                <span className="font-semibold text-foreground leading-normal">{act.text}</span>
-                <span className="text-[10px] text-muted-foreground font-mono">{act.time}</span>
+        {recentActivities.length === 0 ? (
+          <div className="p-8 text-center text-xs text-muted-foreground">
+            No recent activity recorded.
+          </div>
+        ) : (
+          <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-1.5 before:bottom-1.5 before:w-[1.5px] before:bg-border/60">
+            {recentActivities.map((act, idx) => (
+              <div key={idx} className="relative group text-xs">
+                <span className="absolute -left-6.5 top-1 h-2.5 w-2.5 rounded-full border border-primary bg-background group-hover:bg-primary transition-colors" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-semibold text-foreground leading-normal">{act.text}</span>
+                  <span className="text-[10px] text-muted-foreground font-mono">{act.time}</span>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   )

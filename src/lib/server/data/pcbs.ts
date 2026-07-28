@@ -245,6 +245,16 @@ export async function deletePcb(idOrSlug: string): Promise<{ id: string; slug: s
       LIMIT 1`;
     if (inUse.length) throw Errors.conflict("PCB is used in one or more products and cannot be deleted");
 
+    // Cascade the soft-delete to the PCB's revisions and BOM lines, otherwise those
+    // rows stay live and keep components/brands looking "in use" after the PCB is gone.
+    await tx.$executeRaw`
+      UPDATE pcb_lines SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE deleted_at IS NULL AND pcb_revision_id IN (
+        SELECT id FROM pcb_revisions WHERE pcb_id = ${pcb.id}::uuid
+      )`;
+    await tx.$executeRaw`
+      UPDATE pcb_revisions SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE deleted_at IS NULL AND pcb_id = ${pcb.id}::uuid`;
     await tx.pcbs.update({
       where: { id: pcb.id },
       data: { deleted_at: new Date(), updated_by: ctx.userId },

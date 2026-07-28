@@ -154,18 +154,20 @@ export function ImportedBomView({ productName, lines, viewMode, buildQty }: Prop
           {lines.map((l, idx) => (
             <tr key={idx} className="transition-colors hover:bg-muted/20">
               <td className="px-3 py-2.5 text-center font-mono text-muted-foreground">{idx + 1}</td>
-              <td className="px-3 py-2.5 font-mono text-[11px] font-bold text-primary">
-                {l.reference || "—"}
+              <td className="px-3 py-2.5 align-top">
+                <div className="max-w-[200px] whitespace-normal break-words font-mono text-[11px] font-bold text-primary">
+                  {l.reference || "—"}
+                </div>
               </td>
               <td className="px-3 py-2.5">
                 <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
                   {l.type || "—"}
                 </span>
               </td>
-              <td className="px-3 py-2.5 font-semibold text-foreground">
-                <div className="flex items-center gap-2">
-                  <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="whitespace-normal">{l.name || "—"}</span>
+              <td className="px-3 py-2.5 font-semibold text-foreground align-top">
+                <div className="flex items-start gap-2 max-w-[240px]">
+                  <Nut className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="whitespace-normal break-words">{l.name || "—"}</span>
                 </div>
               </td>
               <td className="px-3 py-2.5 font-mono text-muted-foreground">{l.partNumber || "—"}</td>

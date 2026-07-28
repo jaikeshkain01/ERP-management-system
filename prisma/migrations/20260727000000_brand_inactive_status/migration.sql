@@ -1,0 +1,12 @@
+-- ============================================================================
+--  BRAND INACTIVE STATUS
+-- ============================================================================
+-- Adds an `Inactive` lifecycle value to brand_status so a brand that cannot be
+-- deleted (e.g. locked by historical purchase documents) can be retired — it
+-- then drops out of the active brand lists while its records stay intact.
+-- Mirrors supplier_status, which already has Active/Inactive.
+--
+-- NOTE: `ADD VALUE` is idempotent via IF NOT EXISTS and safe to re-run. On
+-- PostgreSQL 12+ this runs fine inside the migration transaction because the
+-- new label is not referenced within the same transaction.
+ALTER TYPE brand_status ADD VALUE IF NOT EXISTS 'Inactive';

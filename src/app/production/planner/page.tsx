@@ -11,29 +11,15 @@ import {
 } from "lucide-react"
 import type { ReadinessView } from "@/lib/server/data/production"
 import { useData } from "@/lib/data-provider"
+import { useModules } from "@/components/module-provider"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
+// Types
 interface PlannerShortage {
   item: string
   genericPN: string
   brand: string
   missing: number
-}
-import { useModules } from "@/components/module-provider"
-import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-
-// Types
-interface PurchaseRequest {
-  prId: string
-  componentId: string
-  componentName: string
-  brandId: string
-  brandName: string
-  supplierId: string
-  supplierName: string
-  qty: number
-  totalCost: string
-  status: "Draft" | "Pending Approval" | "Sent" | "Approved"
-  date: string
 }
 
 export default function ProductionPlannerPage() {
@@ -55,13 +41,10 @@ export default function ProductionPlannerPage() {
   const [toast, setToast] = React.useState<{ message: string; type: "success" | "warning" } | null>(null)
 
   // Expandable PCBs state for the PCB Breakdown step
-  const [expandedPcb, setExpandedPcb] = React.useState<Record<string, boolean>>({
-    audio: true,
-    gsm: false,
-  })
+  const [expandedPcb, setExpandedPcb] = React.useState<Record<string, boolean>>({})
 
   const togglePcbExpand = (pcbKey: string) => {
-    setExpandedPcb((prev) => ({ ...prev, [pcbKey]: !prev[pcbKey] }))
+    setExpandedPcb((prev) => ({ ...prev, [pcbKey]: prev[pcbKey] === undefined ? false : !prev[pcbKey] }))
   }
 
   const showToast = (message: string, type: "success" | "warning" = "success") => {
@@ -73,7 +56,12 @@ export default function ProductionPlannerPage() {
 
   const handleCalculate = async (e: React.FormEvent) => {
     e.preventDefault()
+    const selProduct = d.getProduct(product)
+    if (!selProduct) return
+
     let list: PlannerShortage[] = []
+    
+    // First try the backend readiness API if inventory module is enabled
     if (inventoryOn) {
       try {
         const params = new URLSearchParams({ product, qty: String(quantity || 1) })
@@ -89,9 +77,34 @@ export default function ProductionPlannerPage() {
             })
         }
       } catch {
-        /* leave list empty on failure */
+        /* fallback to client calculation below */
       }
     }
+
+    // Fallback or local calculation based on catalog stock
+    if (list.length === 0 && selProduct) {
+      const bom = d.productBom(selProduct)
+      const compReqMap = new Map<string, { comp: ReturnType<typeof d.getComponent>; required: number }>()
+      for (const line of bom) {
+        const existing = compReqMap.get(line.component.genericPN)
+        const req = line.qty * (quantity || 1)
+        if (existing) {
+          existing.required += req
+        } else {
+          compReqMap.set(line.component.genericPN, { comp: line.component, required: req })
+        }
+      }
+
+      for (const [genericPN, item] of compReqMap.entries()) {
+        const available = item.comp?.stock ?? 0
+        if (available < item.required) {
+          const missing = item.required - available
+          const brand = item.comp && item.comp.brandVariants[0] ? d.getBrandName(item.comp.brandVariants[0].brandId) : "—"
+          list.push({ item: item.comp?.name ?? genericPN, genericPN, brand, missing })
+        }
+      }
+    }
+
     setShortages(list)
     setCalculated(true)
     setCurrentStep(0)
@@ -106,7 +119,7 @@ export default function ProductionPlannerPage() {
   const handleCreatePR = async () => {
     const created: string[] = []
     for (const shortage of SHORTAGES) {
-      const comp = d.COMPONENTS.find((c) => c.name === shortage.item)
+      const comp = d.COMPONENTS.find((c) => c.genericPN === shortage.genericPN || c.name === shortage.item)
       if (!comp) continue
       const offer = d.cheapestOffer(comp)
       if (!offer) continue
@@ -127,11 +140,15 @@ export default function ProductionPlannerPage() {
     if (created.length) {
       showToast(`Purchase Request${created.length > 1 ? "s" : ""} ${created.join(" and ")} created for shortage components!`)
     } else {
-      showToast("Could not create purchase requests (writes are disabled in mock mode).", "warning")
+      showToast("Could not create purchase requests.", "warning")
     }
   }
 
-  const productName = d.getProduct(product)?.name ?? "—"
+  const selProduct = d.getProduct(product)
+  const productName = selProduct?.name ?? "—"
+  const productPcbList = selProduct ? d.productPcbList(selProduct) : []
+  const productBom = selProduct ? d.productBom(selProduct) : []
+  const uniqueComps = selProduct ? d.productUniqueComponents(selProduct) : []
 
   // ─── Wizard step definitions ─────────────────────────────────────────────
   const steps: { key: string; label: string; title: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -144,14 +161,12 @@ export default function ProductionPlannerPage() {
     { key: "purchase", label: "Purchase", title: "Purchase Recommendations", desc: "Sourcing suggestions for the missing parts", icon: ShoppingBag },
     { key: "impact", label: "Impact", title: "Inventory Impact", desc: "Estimated stock levels before and after the run", icon: Nut },
   ].filter((s) => {
-    // Shortage audit and stock impact are Inventory-module features;
-    // purchase recommendations belong to the Purchasing module
     if ((s.key === "shortage" || s.key === "impact") && !inventoryOn) return false
     if (s.key === "purchase" && !purchasingOn) return false
     return true
   })
+
   const totalSteps = steps.length
-  // Clamp so a live module toggle mid-wizard can't index past the shrunken step list
   const stepIndex = Math.min(currentStep, totalSteps - 1)
   const step = steps[stepIndex]
   const StepIcon = step.icon
@@ -160,7 +175,7 @@ export default function ProductionPlannerPage() {
   const hasShortage = inventoryOn && SHORTAGES.length > 0
   const shortageStepIndex = steps.findIndex((s) => s.key === "shortage")
 
-  // ─── Step body renderer ──────────────────────────────────────────────────
+  // ─── Step body renderer using REAL derived data ──────────────────────────
   const renderStepBody = () => {
     switch (step.key) {
       case "structure":
@@ -175,18 +190,27 @@ export default function ProductionPlannerPage() {
                 <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                   <tr>
                     <th className="px-4 py-2.5">PCB Sub-Assembly</th>
+                    <th className="px-4 py-2.5">Code / Rev</th>
                     <th className="px-4 py-2.5 text-center">Qty / Product</th>
                     <th className="px-4 py-2.5 text-right">Required Batch Qty</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {["Audio PCB", "GSM PCB", "Display PCB", "Power PCB"].map((pcb) => (
-                    <tr key={pcb} className="hover:bg-muted/5 font-medium">
-                      <td className="px-4 py-3">{pcb}</td>
-                      <td className="px-4 py-3 text-center font-mono">1</td>
-                      <td className="px-4 py-3 text-right font-mono text-primary font-bold">{quantity}</td>
+                  {productPcbList.map((entry) => (
+                    <tr key={entry.pcb.id} className="hover:bg-muted/5 font-medium">
+                      <td className="px-4 py-3 font-semibold">{entry.pcb.name}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{entry.pcb.id}</td>
+                      <td className="px-4 py-3 text-center font-mono">{entry.qty}</td>
+                      <td className="px-4 py-3 text-right font-mono text-primary font-bold">{(entry.qty * quantity).toLocaleString()}</td>
                     </tr>
                   ))}
+                  {productPcbList.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-6 text-center text-muted-foreground text-xs">
+                        No PCB sub-assemblies associated with this product.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -196,141 +220,163 @@ export default function ProductionPlannerPage() {
       case "pcb":
         return (
           <div className="space-y-4">
-            {/* Audio PCB */}
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div onClick={() => togglePcbExpand("audio")} className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none">
-                <div className="flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-primary" />
-                  <span className="font-extrabold text-sm">Audio PCB Breakdown</span>
-                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: {quantity}</span>
+            {productPcbList.map((entry) => {
+              const pcbKey = entry.pcb.id
+              const isExpanded = expandedPcb[pcbKey] ?? true
+              const bomLines = d.pcbBom(entry.pcb)
+              return (
+                <div key={pcbKey} className="border border-border rounded-xl overflow-hidden">
+                  <div
+                    onClick={() => togglePcbExpand(pcbKey)}
+                    className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Cpu className="h-4 w-4 text-primary" />
+                      <span className="font-extrabold text-sm">{entry.pcb.name} Breakdown</span>
+                      <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">
+                        Required Board Qty: {(entry.qty * quantity).toLocaleString()}
+                      </span>
+                    </div>
+                    {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  </div>
+                  {isExpanded && (
+                    <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
+                      <table className="w-full text-xs text-left text-foreground">
+                        <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                          <tr>
+                            <th className="px-3 py-2">Component</th>
+                            <th className="px-3 py-2 text-center">Qty / PCB</th>
+                            <th className="px-3 py-2 text-right">Required Batch Qty</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {bomLines.map((line) => (
+                            <tr key={line.component.id} className="hover:bg-muted/5 font-medium">
+                              <td className="px-3 py-2.5">
+                                <span className="font-semibold block">{line.component.name}</span>
+                                <span className="text-muted-foreground font-mono text-[10px]">{line.component.genericPN}</span>
+                              </td>
+                              <td className="px-3 py-2.5 text-center font-mono">{line.qty}</td>
+                              <td className="px-3 py-2.5 text-right font-mono font-bold">
+                                {(line.qty * entry.qty * quantity).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                          {bomLines.length === 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-3 py-4 text-center text-muted-foreground text-xs">
+                                No components defined in PCB BOM.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-                {expandedPcb["audio"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </div>
-              {expandedPcb["audio"] && (
-                <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
-                  <table className="w-full text-xs text-left text-foreground">
-                    <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                      <tr>
-                        <th className="px-3 py-2">Component</th>
-                        <th className="px-3 py-2 text-center">Qty / PCB</th>
-                        <th className="px-3 py-2 text-right">Required Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {[["Resistor 10K", 20], ["Capacitor 100uF", 10], ["Audio Codec", 1]].map(([c, q]) => (
-                        <tr key={c as string} className="hover:bg-muted/5 font-medium">
-                          <td className="px-3 py-2.5">{c}</td>
-                          <td className="px-3 py-2.5 text-center font-mono">{q}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-bold">{((q as number) * quantity).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* GSM PCB */}
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div onClick={() => togglePcbExpand("gsm")} className="bg-muted/30 px-4 py-3 flex items-center justify-between cursor-pointer select-none">
-                <div className="flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-primary" />
-                  <span className="font-extrabold text-sm">GSM PCB Breakdown</span>
-                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">Required Qty: {quantity}</span>
-                </div>
-                {expandedPcb["gsm"] ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </div>
-              {expandedPcb["gsm"] && (
-                <div className="p-4 border-t border-border bg-background animate-in slide-in-from-top-2 duration-200">
-                  <table className="w-full text-xs text-left text-foreground">
-                    <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                      <tr>
-                        <th className="px-3 py-2">Component</th>
-                        <th className="px-3 py-2 text-center">Qty / PCB</th>
-                        <th className="px-3 py-2 text-right">Required Qty</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {[["GSM Chip", 1], ["SIM Holder", 1], ["Capacitor 10uF", 15]].map(([c, q]) => (
-                        <tr key={c as string} className="hover:bg-muted/5 font-medium">
-                          <td className="px-3 py-2.5">{c}</td>
-                          <td className="px-3 py-2.5 text-center font-mono">{q}</td>
-                          <td className="px-3 py-2.5 text-right font-mono font-bold">{((q as number) * quantity).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+              )
+            })}
           </div>
         )
 
       case "brand":
         return (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Allocation Target Item</span>
-                <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
-              </div>
-              <div className="text-right sm:text-left">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Total Batch Required</span>
-                <span className="font-mono font-black text-primary text-base mt-0.5 block">2,000 Units</span>
-              </div>
-            </div>
-            <div className="border border-border rounded-lg overflow-hidden bg-background">
-              <table className="w-full text-sm text-left text-foreground">
-                <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                  <tr>
-                    <th className="px-4 py-2">Brand</th>
-                    <th className="px-4 py-2">Available</th>
-                    <th className="px-4 py-2 text-right">Allocated</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  <tr className="hover:bg-muted/5 font-semibold">
-                    <td className="px-4 py-2.5">Yageo</td>
-                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">1,200</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5 font-semibold">
-                    <td className="px-4 py-2.5">Vishay</td>
-                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">800</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5 text-muted-foreground/60">
-                    <td className="px-4 py-2.5 font-semibold">Panasonic</td>
-                    <td className="px-4 py-2.5 font-mono">500</td>
-                    <td className="px-4 py-2.5 text-right font-mono font-bold">0</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div className="space-y-6">
+            {uniqueComps.map((comp) => {
+              const compReq = productBom
+                .filter((l) => l.component.id === comp.id)
+                .reduce((s, l) => s + l.qty * quantity, 0)
+              let remainingAlloc = compReq
+
+              return (
+                <div key={comp.id} className="space-y-3 border border-border/80 rounded-xl p-4 bg-card shadow-2xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Component Item</span>
+                      <span className="font-extrabold text-foreground text-sm">{comp.name} ({comp.genericPN})</span>
+                    </div>
+                    <div className="text-right sm:text-left">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Batch Requirement</span>
+                      <span className="font-mono font-black text-primary text-sm">{compReq.toLocaleString()} {comp.unit}</span>
+                    </div>
+                  </div>
+                  <div className="border border-border rounded-lg overflow-hidden bg-background">
+                    <table className="w-full text-xs text-left text-foreground">
+                      <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                        <tr>
+                          <th className="px-4 py-2">Brand / Manufacturer</th>
+                          <th className="px-4 py-2">Part No.</th>
+                          <th className="px-4 py-2 text-right">Available Stock</th>
+                          <th className="px-4 py-2 text-right">Allocated Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {comp.brandVariants.map((v) => {
+                          const brandName = d.getBrandName(v.brandId)
+                          const alloc = Math.min(v.stock, remainingAlloc)
+                          remainingAlloc = Math.max(0, remainingAlloc - alloc)
+                          return (
+                            <tr key={v.brandId + v.partNo} className="hover:bg-muted/5 font-semibold">
+                              <td className="px-4 py-2.5">{brandName}</td>
+                              <td className="px-4 py-2.5 font-mono text-muted-foreground">{v.partNo}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{v.stock.toLocaleString()}</td>
+                              <td className={`px-4 py-2.5 text-right font-mono font-black ${alloc > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}>
+                                {alloc.toLocaleString()}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {comp.brandVariants.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground">No brand variants registered.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )
 
       case "supplier":
         return (
-          <div className="border border-border rounded-lg overflow-hidden bg-background">
-            <table className="w-full text-sm text-left text-foreground">
-              <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                <tr>
-                  <th className="px-4 py-2">Supplier</th>
-                  <th className="px-4 py-2">Brand</th>
-                  <th className="px-4 py-2 text-right">Price</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {[["ABC", "Yageo", "₹0.80"], ["XYZ", "Yageo", "₹0.82"], ["Mouser", "Vishay", "₹0.95"]].map(([s, b, p]) => (
-                  <tr key={s} className="hover:bg-muted/5 font-medium">
-                    <td className="px-4 py-2.5 font-semibold">{s}</td>
-                    <td className="px-4 py-2.5">{b}</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">{p}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-6">
+            {uniqueComps.map((comp) => (
+              <div key={comp.id} className="space-y-2 border border-border/80 rounded-xl p-4 bg-card">
+                <div className="text-xs font-bold text-foreground bg-muted/50 px-3 py-1.5 rounded-lg w-fit">
+                  {comp.name} <span className="font-mono text-muted-foreground">({comp.genericPN})</span>
+                </div>
+                <div className="border border-border rounded-lg overflow-hidden bg-background">
+                  <table className="w-full text-xs text-left text-foreground">
+                    <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                      <tr>
+                        <th className="px-4 py-2">Supplier</th>
+                        <th className="px-4 py-2">Brand</th>
+                        <th className="px-4 py-2">Lead Time</th>
+                        <th className="px-4 py-2 text-right">Unit Price</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {comp.offers.map((o) => (
+                        <tr key={o.supplierId + o.brandId} className="hover:bg-muted/5 font-medium">
+                          <td className="px-4 py-2.5 font-semibold">{d.getSupplierName(o.supplierId)}</td>
+                          <td className="px-4 py-2.5">{d.getBrandName(o.brandId)}</td>
+                          <td className="px-4 py-2.5 font-mono text-muted-foreground">{d.formatLeadTime(o.leadTimeDays)}</td>
+                          <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">{d.formatINR(o.price)}</td>
+                        </tr>
+                      ))}
+                      {comp.offers.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground">No active supplier offers.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
           </div>
         )
 
@@ -340,31 +386,38 @@ export default function ProductionPlannerPage() {
             <table className="w-full text-xs text-left text-foreground">
               <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                 <tr>
-                  <th className="px-4 py-2">PCB</th>
+                  <th className="px-4 py-2">PCB Sub-Assembly</th>
                   <th className="px-4 py-2">Component</th>
                   <th className="px-4 py-2">Generic PN</th>
-                  <th className="px-4 py-2 text-right">Required</th>
+                  <th className="px-4 py-2 text-right">Required Batch Qty</th>
+                  <th className="px-4 py-2 text-right">Stock On Hand</th>
+                  <th className="px-4 py-2 text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border font-medium">
-                <tr className="hover:bg-muted/5">
-                  <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
-                  <td className="px-4 py-2.5 font-bold">Resistor</td>
-                  <td className="px-4 py-2.5 font-mono text-primary font-bold">RES-10K</td>
-                  <td className="px-4 py-2.5 text-right font-mono">2000</td>
-                </tr>
-                <tr className="hover:bg-muted/5">
-                  <td className="px-4 py-2.5 font-semibold text-muted-foreground">Audio PCB</td>
-                  <td className="px-4 py-2.5 font-bold">Capacitor</td>
-                  <td className="px-4 py-2.5 font-mono text-primary font-bold">CAP-100UF</td>
-                  <td className="px-4 py-2.5 text-right font-mono">1000</td>
-                </tr>
-                <tr className="hover:bg-muted/5 text-destructive bg-destructive/5">
-                  <td className="px-4 py-2.5 font-semibold text-muted-foreground/60">Audio PCB</td>
-                  <td className="px-4 py-2.5 font-bold">Audio Codec</td>
-                  <td className="px-4 py-2.5 font-mono font-bold">AUD-CDC</td>
-                  <td className="px-4 py-2.5 text-right font-mono">100</td>
-                </tr>
+                {productBom.map((line, idx) => {
+                  const req = line.qty * quantity
+                  const avail = line.component.stock
+                  const isOk = avail >= req
+                  return (
+                    <tr key={line.pcb.id + line.component.id + idx} className={`hover:bg-muted/5 ${!isOk ? "bg-destructive/5 text-destructive" : ""}`}>
+                      <td className="px-4 py-2.5 font-semibold text-muted-foreground">{line.pcb.name}</td>
+                      <td className="px-4 py-2.5 font-bold">{line.component.name}</td>
+                      <td className="px-4 py-2.5 font-mono font-bold">{line.component.genericPN}</td>
+                      <td className="px-4 py-2.5 text-right font-mono font-bold">{req.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-right font-mono">{avail.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          isOk
+                            ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                            : "bg-destructive/10 text-destructive border border-destructive/20"
+                        }`}>
+                          {isOk ? "Fully Stocked" : `Shortage (-${(req - avail).toLocaleString()})`}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </DragScrollArea>
@@ -376,7 +429,7 @@ export default function ProductionPlannerPage() {
             <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
               <ShieldAlert className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="text-sm">
-                <p className="font-bold text-destructive">{SHORTAGES.length} component shortages will block this batch</p>
+                <p className="font-bold text-destructive">{SHORTAGES.length} component shortage{SHORTAGES.length > 1 ? "s" : ""} will block this batch</p>
                 <p className="text-destructive/80 text-xs mt-0.5">
                   Production cannot proceed until the missing quantities below are procured. Continue to the Purchase step to raise requests.
                 </p>
@@ -387,19 +440,21 @@ export default function ProductionPlannerPage() {
                 <thead className="bg-destructive/10 uppercase text-xs text-destructive/80 border-b border-destructive/20 font-semibold">
                   <tr>
                     <th className="px-6 py-2.5">Component Item</th>
+                    <th className="px-6 py-2.5">Generic P/N</th>
                     <th className="px-6 py-2.5">Shortage Brand</th>
                     <th className="px-6 py-2.5 text-right">Missing Quantity</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-destructive/10 text-destructive font-semibold">
-                  {SHORTAGES.map((s) => (
-                    <tr key={s.item} className="hover:bg-destructive/5 transition-colors">
+                  {SHORTAGES.map((s, idx) => (
+                    <tr key={`${s.genericPN || s.item}-${idx}`} className="hover:bg-destructive/5 transition-colors">
                       <td className="px-6 py-3 flex items-center gap-2">
                         <span className="h-2 w-2 rounded-full bg-destructive animate-pulse" />
                         {s.item}
                       </td>
+                      <td className="px-6 py-3 font-mono text-xs">{s.genericPN}</td>
                       <td className="px-6 py-3 font-mono">{s.brand}</td>
-                      <td className="px-6 py-3 text-right font-mono font-black">-{s.missing} PCS</td>
+                      <td className="px-6 py-3 text-right font-mono font-black">-{s.missing.toLocaleString()} PCS</td>
                     </tr>
                   ))}
                 </tbody>
@@ -415,90 +470,118 @@ export default function ProductionPlannerPage() {
 
       case "purchase":
         return (
-          <div className="space-y-5">
-            <div className="flex justify-end">
-              <Button size="sm" className="font-bold gap-1 cursor-pointer text-xs" onClick={handleCreatePR}>
+          <div className="space-y-6">
+            <div className="flex justify-between items-center bg-muted/20 p-3 rounded-lg border border-border">
+              <span className="text-xs font-semibold text-muted-foreground">
+                Recommended Purchase Requests for Shortages ({SHORTAGES.length})
+              </span>
+              <Button size="sm" className="font-bold gap-1 cursor-pointer text-xs" onClick={handleCreatePR} disabled={!SHORTAGES.length}>
                 <Plus className="h-3.5 w-3.5" />
                 <span>Create Purchase Request</span>
               </Button>
             </div>
-            {/* Audio Codec */}
-            <div className="space-y-2">
-              <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
-                Item Shortage: Audio Codec (Brand: TI)
+            {SHORTAGES.map((s, idx) => {
+              const comp = d.COMPONENTS.find((c) => c.genericPN === s.genericPN || c.name === s.item)
+              const offers = comp?.offers ?? []
+              return (
+                <div key={`${s.genericPN || s.item}-${idx}`} className="space-y-2 border border-border/80 rounded-xl p-4 bg-card">
+                  <div className="text-xs font-bold text-foreground bg-destructive/10 text-destructive border border-destructive/20 px-2.5 py-1 rounded-md w-fit uppercase tracking-wide">
+                    Item Shortage: {s.item} ({s.genericPN}) — Missing: {s.missing.toLocaleString()} PCS
+                  </div>
+                  <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
+                    <table className="w-full text-left text-foreground">
+                      <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                        <tr>
+                          <th className="px-4 py-2">Supplier</th>
+                          <th className="px-4 py-2">Brand</th>
+                          <th className="px-4 py-2">Lead Time</th>
+                          <th className="px-4 py-2 text-right">Unit Price</th>
+                          <th className="px-4 py-2 text-right">Total Est. Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border font-medium">
+                        {offers.map((o) => (
+                          <tr key={o.supplierId + o.brandId} className="hover:bg-muted/5">
+                            <td className="px-4 py-2.5 font-semibold">{d.getSupplierName(o.supplierId)}</td>
+                            <td className="px-4 py-2.5">{d.getBrandName(o.brandId)}</td>
+                            <td className="px-4 py-2.5 font-mono text-muted-foreground">{d.formatLeadTime(o.leadTimeDays)}</td>
+                            <td className="px-4 py-2.5 text-right font-mono text-primary font-bold">{d.formatINR(o.price)}</td>
+                            <td className="px-4 py-2.5 text-right font-mono font-bold">{d.formatINR(o.price * s.missing)}</td>
+                          </tr>
+                        ))}
+                        {offers.length === 0 && (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-3 text-center text-muted-foreground">No active supplier offers for this component.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })}
+            {SHORTAGES.length === 0 && (
+              <div className="text-center py-8 text-xs text-muted-foreground">
+                No component shortages — no purchase requests required.
               </div>
-              <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-                <table className="w-full text-left text-foreground">
-                  <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                    <tr>
-                      <th className="px-4 py-2">Supplier</th>
-                      <th className="px-4 py-2">Lead Time</th>
-                      <th className="px-4 py-2 text-right">Price</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border font-medium">
-                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">Mouser</td><td className="px-4 py-2.5 font-mono text-muted-foreground">7 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹85</td></tr>
-                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">Arrow</td><td className="px-4 py-2.5 font-mono text-muted-foreground">5 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹88</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            {/* LED Green */}
-            <div className="space-y-2 border-t border-border/50 pt-4">
-              <div className="text-xs font-bold text-foreground bg-muted/50 px-2 py-1 rounded w-fit uppercase tracking-wide">
-                Item Shortage: LED Green (Brand: Panasonic)
-              </div>
-              <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
-                <table className="w-full text-left text-foreground">
-                  <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
-                    <tr>
-                      <th className="px-4 py-2">Supplier</th>
-                      <th className="px-4 py-2">Lead Time</th>
-                      <th className="px-4 py-2 text-right">Price</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border font-medium">
-                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">ABC Electronics</td><td className="px-4 py-2.5 font-mono text-muted-foreground">3 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.10</td></tr>
-                    <tr className="hover:bg-muted/5"><td className="px-4 py-2.5">XYZ Components</td><td className="px-4 py-2.5 font-mono text-muted-foreground">2 Days</td><td className="px-4 py-2.5 text-right font-mono text-primary font-bold">₹2.20</td></tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            )}
           </div>
         )
 
       case "impact":
         return (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-secondary/50 border border-border/80 p-3 rounded-lg text-sm gap-2">
-              <div>
-                <span className="text-[10px] uppercase font-bold text-muted-foreground block">Impact Item</span>
-                <span className="font-extrabold text-foreground mt-0.5 block">Resistor</span>
-              </div>
-            </div>
-            <div className="border border-border rounded-lg overflow-hidden bg-background">
-              <table className="w-full text-sm text-left text-foreground">
-                <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
-                  <tr>
-                    <th className="px-4 py-2">Brand</th>
-                    <th className="px-4 py-2">Before</th>
-                    <th className="px-4 py-2 text-right">After</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border font-semibold">
-                  <tr className="hover:bg-muted/5">
-                    <td className="px-4 py-2.5">Yageo</td>
-                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,200</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-destructive font-black">0</td>
-                  </tr>
-                  <tr className="hover:bg-muted/5">
-                    <td className="px-4 py-2.5">Vishay</td>
-                    <td className="px-4 py-2.5 font-mono text-muted-foreground">1,000</td>
-                    <td className="px-4 py-2.5 text-right font-mono text-emerald-600 font-black">200</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div className="space-y-6">
+            {uniqueComps.map((comp) => {
+              const req = productBom
+                .filter((l) => l.component.id === comp.id)
+                .reduce((s, l) => s + l.qty * quantity, 0)
+              const stockBefore = comp.stock
+              const stockAfter = Math.max(0, stockBefore - req)
+              return (
+                <div key={comp.id} className="space-y-3 border border-border/80 rounded-xl p-4 bg-card">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Impact Item</span>
+                      <span className="font-extrabold text-foreground text-sm">{comp.name} ({comp.genericPN})</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs font-mono">
+                      <div><span className="text-muted-foreground block text-[9px] uppercase">Before</span><span className="font-bold">{stockBefore.toLocaleString()}</span></div>
+                      <div><span className="text-muted-foreground block text-[9px] uppercase">Batch Need</span><span className="font-bold text-amber-500">−{req.toLocaleString()}</span></div>
+                      <div><span className="text-muted-foreground block text-[9px] uppercase">Est. After</span><span className={`font-bold ${stockAfter === 0 ? "text-destructive font-black" : "text-emerald-600"}`}>{stockAfter.toLocaleString()}</span></div>
+                    </div>
+                  </div>
+                  <div className="border border-border rounded-lg overflow-hidden bg-background">
+                    <table className="w-full text-xs text-left text-foreground">
+                      <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
+                        <tr>
+                          <th className="px-4 py-2">Brand / Manufacturer</th>
+                          <th className="px-4 py-2">Part No.</th>
+                          <th className="px-4 py-2 text-right">Stock Before</th>
+                          <th className="px-4 py-2 text-right">Est. Stock After</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border font-semibold">
+                        {comp.brandVariants.map((v) => {
+                          const brandName = d.getBrandName(v.brandId)
+                          const vBefore = v.stock
+                          const vAfter = Math.max(0, vBefore - req)
+                          return (
+                            <tr key={v.brandId + v.partNo} className="hover:bg-muted/5">
+                              <td className="px-4 py-2.5">{brandName}</td>
+                              <td className="px-4 py-2.5 font-mono text-muted-foreground">{v.partNo}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-muted-foreground">{vBefore.toLocaleString()}</td>
+                              <td className={`px-4 py-2.5 text-right font-mono ${vAfter === 0 ? "text-destructive font-black" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                {vAfter.toLocaleString()}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         )
     }
@@ -596,7 +679,7 @@ export default function ProductionPlannerPage() {
                     Material shortage detected — production will be blocked
                   </p>
                   <p className="text-xs text-destructive/80 mt-0.5">
-                    {SHORTAGES.map((s) => `${s.item} (−${s.missing})`).join(", ")} short for this batch run.
+                    {SHORTAGES.map((s) => `${s.item} (−${s.missing.toLocaleString()})`).join(", ")} short for this batch run.
                   </p>
                 </div>
               </div>

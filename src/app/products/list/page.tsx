@@ -7,15 +7,16 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Cpu, Filter, Nut, Package, Plus, Search,
+  Cpu, Nut, Package, Search,
   CheckCircle2, ArrowRight, Award, Layers,
-  XCircle, AlertTriangle, RefreshCw, Upload, FileSpreadsheet, Trash2, PencilRuler, GitBranch
+  XCircle, AlertTriangle, RefreshCw, Upload, FileSpreadsheet, Trash2, PencilRuler, GitBranch,
+  Check, AlertCircle, X
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { useUserProducts, activeVersionOf } from "@/lib/user-products"
-import { ImportBomModal } from "@/components/products/import-bom-modal"
+import { ImportProductBomModal } from "@/components/products/import-product-bom-modal"
 import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
-import type { BomImportResult } from "@/lib/bom-import"
+import type { ImportedPcb } from "@/lib/bom-import"
 
 interface ProductData {
   id: string
@@ -54,6 +55,15 @@ export default function ProductListPage() {
   const { products: userProducts, removeProduct } = useUserProducts()
   const [isImportOpen, setIsImportOpen] = React.useState(false)
   const [isManualOpen, setIsManualOpen] = React.useState(false)
+  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  /** Product pending delete (confirmation modal), or null. */
+  const [deleteTarget, setDeleteTarget] = React.useState<ProductData | null>(null)
+  const [isDeleting, setIsDeleting] = React.useState(false)
+
+  const showToast = (message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
 
   const PRODUCTS_DATA = React.useMemo(() => {
     const catalog = buildProductsData(d)
@@ -79,11 +89,12 @@ export default function ProductListPage() {
     return [...custom, ...catalog]
   }, [d, userProducts])
 
-  const handleApplyImport = async (result: BomImportResult, productName: string, fileName: string) => {
+  const handleApplyImport = async (pcbs: ImportedPcb[], productName: string, fileName: string) => {
     try {
-      // Imported BOMs now create a REAL catalog product (Box 1): each row is matched
-      // to an existing component by part number (else created on the fly) and placed
-      // on one auto "Main Board" PCB, so the product feeds the dashboard.
+      // A multi-sheet BOM creates a REAL catalog product where each selected tab
+      // becomes its own PCB (product → PCB → components), matching the manual
+      // "Add Product" shape. Each line links an existing component by part number
+      // or is created on the fly, so the product feeds the dashboard.
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -91,13 +102,21 @@ export default function ProductListPage() {
         body: JSON.stringify({
           name: productName,
           description: `Imported from ${fileName}`,
-          lines: result.lines.map((l) => ({
-            name: l.name || undefined,
-            partNumber: l.partNumber || undefined,
-            type: l.type || undefined,
-            solderType: l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
-            footprint: l.footprint || undefined,
-            qty: l.qty,
+          pcbs: pcbs.map((pcb) => ({
+            name: pcb.name || pcb.sheetName,
+            qty: 1,
+            lines: pcb.lines.map((l) => ({
+              name: l.name || undefined,
+              partNumber: l.partNumber || undefined,
+              type: l.type || undefined,
+              solderType:
+                l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
+              footprint: l.footprint || undefined,
+              qty: l.qty,
+              refDes: l.reference || undefined,
+              manufacturer: l.manufacturer || undefined,
+              supplier: l.supplier || undefined,
+            })),
           })),
         }),
       })
@@ -109,7 +128,7 @@ export default function ProductListPage() {
       router.push(`/products/structure?product=${created.slug}`)
     } catch (err) {
       console.error(err)
-      alert(err instanceof Error ? err.message : "Failed to save product")
+      showToast(err instanceof Error ? err.message : "Failed to save product", "error")
     }
   }
 
@@ -150,23 +169,34 @@ export default function ProductListPage() {
       router.push(`/products/structure?product=${created.slug}`)
     } catch (err) {
       console.error(err)
-      alert(err instanceof Error ? err.message : "Failed to save product")
+      showToast(err instanceof Error ? err.message : "Failed to save product", "error")
     }
   }
 
-  const handleDeleteCatalog = async (product: ProductData) => {
-    if (!window.confirm(`Delete "${product.name}"? This cannot be undone.`)) return
+  // Delete confirmed from the modal — handles both imported (user-products) and
+  // catalog products, with toast feedback (replaces the old window.confirm/alert).
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setIsDeleting(true)
     try {
-      const res = await fetch(`/api/products/${product.id}`, {
-        method: "DELETE",
-        credentials: "same-origin",
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
-      await d.reload() // refetch the catalog so the deleted product drops off the list
+      if (deleteTarget.imported) {
+        await removeProduct(deleteTarget.id)
+      } else {
+        const res = await fetch(`/api/products/${deleteTarget.id}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        })
+        const body = await res.json().catch(() => ({}))
+        if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+        await d.reload() // refetch the catalog so the deleted product drops off the list
+      }
+      showToast(`Product "${deleteTarget.name}" deleted`)
+      setDeleteTarget(null)
     } catch (err) {
       console.error(err)
-      alert(err instanceof Error ? err.message : "Failed to delete product")
+      showToast(err instanceof Error ? err.message : "Failed to delete product", "error")
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -223,6 +253,18 @@ export default function ProductListPage() {
 
   return (
     <div className="space-y-6 pb-12">
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+          toast.type === "success"
+            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+            : "bg-destructive/10 border-destructive/20 text-destructive"
+        }`}>
+          {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4" />}
+          <span className="text-sm font-semibold">{toast.message}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-col gap-1.5">
@@ -404,16 +446,7 @@ export default function ProductListPage() {
                 variant="outline"
                 size="icon"
                 aria-label="Delete product"
-                onClick={() => {
-                  if (product.imported) {
-                    removeProduct(product.id).catch((err) => {
-                      console.error(err)
-                      alert(err instanceof Error ? err.message : "Failed to remove product")
-                    })
-                  } else {
-                    handleDeleteCatalog(product)
-                  }
-                }}
+                onClick={() => setDeleteTarget(product)}
                 className="border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
               >
                 <Trash2 className="h-4 w-4" />
@@ -431,7 +464,7 @@ export default function ProductListPage() {
 
       {/* Add product — import a BOM */}
       {isImportOpen && (
-        <ImportBomModal
+        <ImportProductBomModal
           onApply={handleApplyImport}
           onClose={() => setIsImportOpen(false)}
         />
@@ -444,6 +477,54 @@ export default function ProductListPage() {
           onApply={handleApplyManual}
           onClose={() => setIsManualOpen(false)}
         />
+      )}
+
+      {/* Delete product — confirmation */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !isDeleting && setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete Product</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteTarget(null)}
+                disabled={isDeleting}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{deleteTarget.name}</strong> removes it and its BOM from the product list. This cannot
+                  be undone.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this product?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={isDeleting}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={confirmDelete}
+                  disabled={isDeleting}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {isDeleting ? "Deleting…" : "Delete Product"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

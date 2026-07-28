@@ -157,6 +157,50 @@ export async function updateSupplier(idOrSlug: string, patch: UpdateSupplierInpu
   });
 }
 
+/**
+ * Soft-delete a supplier (by uuid or slug). Blocked if it is still referenced by
+ * a price book entry or any purchase document; its brand↔supplier links (config
+ * only) are soft-deleted alongside.
+ */
+export async function deleteSupplier(idOrSlug: string): Promise<{ id: string; slug: string }> {
+  return guarded("supplier.delete", async (tx, ctx) => {
+    const supplier = await tx.suppliers.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
+      select: { id: true, slug: true },
+    });
+    if (!supplier) throw Errors.notFound("Supplier");
+
+    // Only actual purchase documents block the delete. Each subquery counts
+    // references whose own parent record is still live (an item on a deleted
+    // purchase request is dead history and must not block).
+    const inUse = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one WHERE EXISTS (
+        SELECT 1 FROM purchase_orders WHERE supplier_id = ${supplier.id}::uuid AND deleted_at IS NULL
+        UNION ALL
+        SELECT 1 FROM purchase_request_items pri
+          JOIN purchase_requests preq ON preq.id = pri.purchase_request_id AND preq.deleted_at IS NULL
+          WHERE pri.supplier_id = ${supplier.id}::uuid AND pri.deleted_at IS NULL
+      ) LIMIT 1`;
+    if (inUse.length) {
+      throw Errors.conflict("Supplier is referenced by one or more purchase documents and cannot be deleted");
+    }
+
+    // The supplier's price book and brand↔supplier links are config owned by the
+    // supplier — soft-delete them alongside so the delete is not blocked by them.
+    await tx.$executeRaw`
+      UPDATE supplier_component_prices SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE supplier_id = ${supplier.id}::uuid AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE brand_suppliers SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE supplier_id = ${supplier.id}::uuid AND deleted_at IS NULL`;
+    await tx.suppliers.update({
+      where: { id: supplier.id },
+      data: { deleted_at: new Date(), updated_by: ctx.userId },
+    });
+    return { id: supplier.id, slug: supplier.slug };
+  });
+}
+
 export interface UpsertSupplierPriceInput {
   component: string; // uuid or generic_pn
   brand: string; // uuid or slug

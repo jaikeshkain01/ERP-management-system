@@ -5,7 +5,7 @@ import Link from "next/link"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Truck, Plus, Search, Star, CheckCircle2, ArrowRight, X, Check, AlertCircle, RefreshCw } from "lucide-react"
+import { Truck, Plus, Search, Star, CheckCircle2, ArrowRight, X, Check, AlertCircle, RefreshCw, Trash2, Power, PowerOff } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 
 // A supplier card row — the shape both bootstrap suppliers and freshly-created
@@ -20,7 +20,7 @@ interface SupplierCard {
 }
 
 export default function SupplierListPage() {
-  const { SUPPLIERS } = useData()
+  const { SUPPLIERS, reload } = useData()
 
   // Suppliers created this session (persisted via POST /api/suppliers) are shown
   // ahead of the bootstrap list until the next full reload re-derives from the DB.
@@ -29,6 +29,17 @@ export default function SupplierListPage() {
   const [isOpen, setIsOpen] = React.useState(false)
   const [saving, setSaving] = React.useState(false)
   const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  /** Supplier pending delete (confirmation modal), or null. */
+  const [deleteTarget, setDeleteTarget] = React.useState<SupplierCard | null>(null)
+  const [deleting, setDeleting] = React.useState(false)
+  /** Ids removed this session so they drop from the list immediately. */
+  const [removed, setRemoved] = React.useState<Set<string>>(new Set())
+  /** Status filter — default "Active" so retired (Inactive) suppliers drop out. */
+  const [statusFilter, setStatusFilter] = React.useState<"Active" | "Inactive" | "All">("Active")
+  /** Local status overrides so a deactivate/reactivate reflects instantly. */
+  const [statusOverrides, setStatusOverrides] = React.useState<Record<string, string>>({})
+  /** Supplier id whose status toggle is in flight. */
+  const [togglingId, setTogglingId] = React.useState<string | null>(null)
 
   // Form state
   const [name, setName] = React.useState("")
@@ -52,9 +63,12 @@ export default function SupplierListPage() {
       id: s.id, name: s.name, description: s.description, contact: s.contact, status: s.status, rating: s.rating,
     }))
     return [...created, ...base]
-  }, [SUPPLIERS, created])
+      .filter((s) => !removed.has(s.id))
+      .map((s) => (statusOverrides[s.id] ? { ...s, status: statusOverrides[s.id] } : s))
+  }, [SUPPLIERS, created, removed, statusOverrides])
 
   const filtered = suppliers.filter((s) => {
+    if (statusFilter !== "All" && s.status !== statusFilter) return false
     const q = searchQuery.trim().toLowerCase()
     if (!q) return true
     return s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q)
@@ -107,6 +121,58 @@ export default function SupplierListPage() {
     }
   }
 
+  const handleDeleteSupplier = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/suppliers/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message || "Failed to delete supplier", "error")
+        return
+      }
+      setRemoved((prev) => new Set(prev).add(deleteTarget.id))
+      setCreated((prev) => prev.filter((s) => s.id !== deleteTarget.id))
+      showToast(`Supplier "${deleteTarget.name}" deleted`)
+      setDeleteTarget(null)
+      reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to delete supplier", "error")
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // Deactivate (Active→Inactive) or reactivate (Inactive→Active) a supplier. Used
+  // to retire a supplier that can't be deleted (locked by purchase documents).
+  const handleToggleStatus = async (supplier: SupplierCard) => {
+    const next = supplier.status === "Active" ? "Inactive" : "Active"
+    setTogglingId(supplier.id)
+    try {
+      const res = await fetch(`/api/suppliers/${encodeURIComponent(supplier.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ status: next }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message || "Failed to update supplier status", "error")
+        return
+      }
+      setStatusOverrides((prev) => ({ ...prev, [supplier.id]: next }))
+      showToast(`Supplier "${supplier.name}" ${next === "Inactive" ? "deactivated" : "reactivated"}`)
+      reload()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to update supplier status", "error")
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Toast */}
@@ -151,6 +217,21 @@ export default function SupplierListPage() {
               <RefreshCw className="h-4 w-4" />
             </Button>
           )}
+          {/* Status filter — Active hides retired (Inactive) suppliers by default */}
+          <div className="inline-flex rounded-lg border border-border bg-background p-0.5 text-xs font-semibold">
+            {(["Active", "Inactive", "All"] as const).map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => setStatusFilter(opt)}
+                className={`px-3 py-1.5 rounded-md transition-colors cursor-pointer ${
+                  statusFilter === opt ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
           <Button className="gap-2 font-semibold cursor-pointer" onClick={() => setIsOpen(true)}>
             <Plus className="h-4 w-4" />
             <span>Add Supplier</span>
@@ -161,7 +242,9 @@ export default function SupplierListPage() {
       {/* Supplier Cards Grid */}
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {filtered.map((supplier) => (
-          <Card key={supplier.id} className="flex flex-col transition-all duration-300 hover:shadow-lg hover:border-primary/20 group">
+          <Card key={supplier.id} className={`flex flex-col transition-all duration-300 hover:shadow-lg hover:border-primary/20 group ${
+            supplier.status !== "Active" ? "opacity-70" : ""
+          }`}>
             <CardHeader className="pb-4">
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-2">
@@ -182,7 +265,7 @@ export default function SupplierListPage() {
                     ? "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
                     : "bg-muted text-muted-foreground"
                 }`}>
-                  <CheckCircle2 className="h-3 w-3" />
+                  {supplier.status === "Active" ? <CheckCircle2 className="h-3 w-3" /> : <PowerOff className="h-3 w-3" />}
                   {supplier.status}
                 </span>
               </div>
@@ -202,14 +285,34 @@ export default function SupplierListPage() {
               </div>
             </CardContent>
 
-            <CardFooter className="pt-4">
+            <CardFooter className="pt-4 gap-2">
               <Button
                 render={<Link href={`/suppliers/details?supplier=${supplier.id}`} />}
-                className="w-full font-semibold group/btn"
+                className="flex-1 font-semibold group/btn"
                 variant="secondary"
               >
                 <span>Supplier Details</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={supplier.status === "Active" ? `Deactivate ${supplier.name}` : `Reactivate ${supplier.name}`}
+                title={supplier.status === "Active" ? "Deactivate (retire) supplier" : "Reactivate supplier"}
+                disabled={togglingId === supplier.id}
+                onClick={() => handleToggleStatus(supplier)}
+                className="shrink-0 border-border text-muted-foreground hover:text-primary hover:border-primary/40 cursor-pointer disabled:opacity-50"
+              >
+                {supplier.status === "Active" ? <PowerOff className="h-4 w-4" /> : <Power className="h-4 w-4" />}
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={`Delete ${supplier.name}`}
+                onClick={() => setDeleteTarget(supplier)}
+                className="shrink-0 border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 cursor-pointer"
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
             </CardFooter>
           </Card>
@@ -290,6 +393,54 @@ export default function SupplierListPage() {
                 <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Create Supplier"}</Button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Supplier — confirmation */}
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !deleting && setDeleteTarget(null)}
+        >
+          <div
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Delete Supplier</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0" />
+                <p>
+                  Deleting <strong>{deleteTarget.name}</strong> removes it from the supplier list and clears its price
+                  book. A supplier referenced by any purchase document cannot be deleted.
+                </p>
+              </div>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this supplier?</p>
+              <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
+                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleDeleteSupplier}
+                  disabled={deleting}
+                  className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
+                >
+                  {deleting ? "Deleting…" : "Delete Supplier"}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

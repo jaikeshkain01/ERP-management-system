@@ -61,12 +61,18 @@ export interface UsageImpactItem {
   usedInProducts: number;
 }
 
+export interface CategoryItem {
+  name: string;
+  value: number;
+}
+
 export interface DashboardSummary {
   inventoryValue: number;
   productionBlockers: BlockerItem[];
   purchaseSummary: PurchaseSummaryItem[];
   recentProductionOrders: DashProductionOrder[];
   recentActivities: ActivityItem[];
+  categoryDistribution: CategoryItem[];
   // Catalog-derived panels (now computed server-side from the DB).
   productStatus: ProductStatusItem[];
   lowStock: LowStockItem[];
@@ -112,7 +118,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
       LEFT JOIN LATERAL (
         SELECT MIN(scp.price) AS p
         FROM supplier_component_prices scp
-        WHERE scp.component_id = v.component_id AND scp.brand_id = v.brand_id
+        WHERE scp.component_id = v.component_id
           AND scp.valid_to IS NULL AND scp.deleted_at IS NULL
       ) price ON TRUE
       WHERE ib.deleted_at IS NULL`;
@@ -177,7 +183,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
       status: dashOrderStatus(r.status),
     }));
 
-    // ── Recent activity: unified feed of the latest business events ──
+    // ── Recent activity: unified feed of the latest business events + stock movements ──
     const activityRows = await tx.$queryRaw<{ text: string; ts: Date }[]>`
       SELECT text, ts FROM (
         SELECT 'Production order ' || po.order_no || ' (' || po.qty || ' units) — '
@@ -189,18 +195,32 @@ export async function getDashboard(): Promise<DashboardSummary> {
         UNION ALL
         SELECT 'Purchase request ' || pr_no || ' ' || replace(lower(status::text), '_', ' ') AS text, created_at AS ts
         FROM purchase_requests WHERE deleted_at IS NULL
+        UNION ALL
+        SELECT 'Stock ' || lower(it.type::text) || ' (' || (CASE WHEN it.qty_delta > 0 THEN '+' ELSE '' END) || it.qty_delta::text || ') — ' || c.name AS text, it.created_at AS ts
+        FROM inventory_transactions it
+        JOIN component_brand_variants v ON v.id = it.component_brand_variant_id
+        JOIN components c ON c.id = v.component_id
       ) e
       ORDER BY ts DESC
-      LIMIT 6`;
+      LIMIT 8`;
     const recentActivities: ActivityItem[] = activityRows.map((r) => ({
       text: r.text,
       time: relTime(r.ts),
     }));
 
+    // ── Category distribution (for inventory category ratio chart) ──
+    const categoryDistribution = await tx.$queryRaw<CategoryItem[]>`
+      SELECT COALESCE(NULLIF(c.category, ''), 'General') AS name, COUNT(*)::int AS value
+      FROM components c
+      WHERE c.deleted_at IS NULL
+      GROUP BY COALESCE(NULLIF(c.category, ''), 'General')
+      ORDER BY value DESC
+      LIMIT 6`;
+
     // ── Product build-readiness: buildable units = min over BOM of ⌊available ÷ per-unit⌋ ──
     const productStatus = await tx.$queryRaw<ProductStatusItem[]>`
       WITH demand AS (
-        SELECT p.id AS product_id, p.name, p.status::text AS status,
+        SELECT p.id AS product_id, p.name AS product_name,
                pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
         FROM products p
         JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
@@ -208,7 +228,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
         JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
         JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
         WHERE p.deleted_at IS NULL
-        GROUP BY p.id, p.name, p.status, pl.component_id
+        GROUP BY p.id, p.name, pl.component_id
       ),
       avail AS (
         SELECT v.component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
@@ -216,18 +236,30 @@ export async function getDashboard(): Promise<DashboardSummary> {
         LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
         WHERE v.deleted_at IS NULL
         GROUP BY v.component_id
+      ),
+      comp_build AS (
+        SELECT d.product_id, d.product_name,
+               COALESCE(MIN(FLOOR(COALESCE(a.available, 0) / NULLIF(d.per_unit, 0))), 0)::int AS "buildableQty"
+        FROM demand d
+        LEFT JOIN avail a ON a.component_id = d.component_id
+        GROUP BY d.product_id, d.product_name
       )
-      SELECT d.name AS product, d.status,
-             COALESCE(MIN(FLOOR(COALESCE(a.available, 0) / NULLIF(d.per_unit, 0))), 0)::int AS "buildableQty"
-      FROM demand d
-      LEFT JOIN avail a ON a.component_id = d.component_id
-      GROUP BY d.product_id, d.name, d.status
-      ORDER BY d.name`;
+      SELECT p.name AS product,
+             COALESCE(cb."buildableQty", 0)::int AS "buildableQty",
+             CASE
+               WHEN cb.product_id IS NULL OR cb."buildableQty" = 0 THEN 'Blocked'
+               WHEN cb."buildableQty" < 10 THEN 'Low Stock'
+               ELSE 'Ready'
+             END AS status
+      FROM products p
+      LEFT JOIN comp_build cb ON cb.product_id = p.id
+      WHERE p.deleted_at IS NULL
+      ORDER BY p.name`;
 
-    // ── Low-stock components: on-hand below min (Critical ≤ 50% of min) ──
+    // ── Low-stock components: on-hand below min or out of stock (Critical ≤ 50% of min or 0 stock) ──
     const lowStock = await tx.$queryRaw<LowStockItem[]>`
       SELECT c.name AS component, bal.on_hand::int AS current, c.min_stock::int AS minimum,
-             CASE WHEN bal.on_hand <= c.min_stock * 0.5 THEN 'Critical' ELSE 'Low' END AS status
+             CASE WHEN bal.on_hand = 0 OR bal.on_hand <= c.min_stock * 0.5 THEN 'Critical' ELSE 'Low' END AS status
       FROM components c
       JOIN LATERAL (
         SELECT COALESCE(SUM(ib.on_hand), 0) AS on_hand
@@ -235,7 +267,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
         LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
         WHERE v.component_id = c.id AND v.deleted_at IS NULL
       ) bal ON TRUE
-      WHERE c.deleted_at IS NULL AND bal.on_hand < c.min_stock
+      WHERE c.deleted_at IS NULL AND (bal.on_hand < c.min_stock OR bal.on_hand = 0)
       ORDER BY bal.on_hand`;
 
     // ── Single-supplier risk: components with ≤ 1 distinct current supplier ──
@@ -259,11 +291,20 @@ export async function getDashboard(): Promise<DashboardSummary> {
       ORDER BY c.name
       LIMIT 6`;
 
-    // ── Top-consumed (by annual consumption) ──
+    // ── Top-consumed (by annual consumption or active BOM demand) ──
     const consumedRows = await tx.$queryRaw<{ component: string; monthly: number }[]>`
-      SELECT name AS component, ROUND(annual_consumption / 12.0)::int AS monthly
-      FROM components WHERE deleted_at IS NULL
-      ORDER BY annual_consumption DESC LIMIT 3`;
+      SELECT c.name AS component,
+             GREATEST(
+               ROUND(c.annual_consumption / 12.0)::int,
+               COALESCE(SUM(pl.qty * COALESCE(pp.qty, 1) * 20), 0)::int
+             ) AS monthly
+      FROM components c
+      LEFT JOIN pcb_lines pl ON pl.component_id = c.id AND pl.deleted_at IS NULL
+      LEFT JOIN product_pcbs pp ON pp.pcb_revision_id = pl.pcb_revision_id AND pp.deleted_at IS NULL
+      WHERE c.deleted_at IS NULL
+      GROUP BY c.id, c.name, c.annual_consumption
+      ORDER BY monthly DESC, c.name
+      LIMIT 5`;
     const topConsumed: ConsumedComponent[] = consumedRows.map((r) => ({
       component: r.component,
       monthlyUsage: r.monthly.toLocaleString(),
@@ -291,6 +332,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
       purchaseSummary,
       recentProductionOrders,
       recentActivities,
+      categoryDistribution,
       productStatus,
       lowStock,
       singleSupplier,
@@ -299,3 +341,4 @@ export async function getDashboard(): Promise<DashboardSummary> {
     };
   });
 }
+

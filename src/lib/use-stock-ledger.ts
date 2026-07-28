@@ -8,6 +8,14 @@ export type MoveResult = { ok: boolean; error?: string }
 
 type StockLedger = {
   transactions: StockTransaction[]
+  /**
+   * Authoritative on-hand per component, keyed by genericPN, summed from the
+   * DB's `inventory_balances` projection (never re-derived from the ledger,
+   * which is fetched with a cap and would drift once it truncates).
+   */
+  onHandByComponent: Map<string, number>
+  /** Authoritative on-hand per brand variant, keyed by `genericPN|brandSlug`. */
+  onHandByVariant: Map<string, number>
   /** Append a movement to the real ledger (POST). Resolves to ok/error. */
   addTransaction: (input: NewTransactionInput) => Promise<MoveResult>
   hydrated: boolean
@@ -18,6 +26,7 @@ interface BalanceRow {
   brandSlug: string
   variantId: string
   locationId: string
+  onHand: number
 }
 interface LedgerRowDTO {
   id: string
@@ -42,6 +51,8 @@ async function getData<T>(url: string): Promise<T[]> {
  */
 export function useStockLedger(): StockLedger {
   const [transactions, setTransactions] = React.useState<StockTransaction[]>([])
+  const [onHandByComponent, setOnHandByComponent] = React.useState<Map<string, number>>(new Map())
+  const [onHandByVariant, setOnHandByVariant] = React.useState<Map<string, number>>(new Map())
   const [hydrated, setHydrated] = React.useState(false)
   const variantMap = React.useRef(new Map<string, { variantId: string; locationId: string }>())
 
@@ -49,9 +60,22 @@ export function useStockLedger(): StockLedger {
     try {
       const balances = await getData<BalanceRow>("/api/inventory")
       const vm = new Map<string, { variantId: string; locationId: string }>()
-      for (const b of balances) vm.set(`${b.genericPN}|${b.brandSlug}`, { variantId: b.variantId, locationId: b.locationId })
+      const byComponent = new Map<string, number>()
+      const byVariant = new Map<string, number>()
+      for (const b of balances) {
+        // A variant can have a balance row per storage location; sum them so the
+        // component/variant total reflects on-hand across the whole warehouse set.
+        vm.set(`${b.genericPN}|${b.brandSlug}`, { variantId: b.variantId, locationId: b.locationId })
+        byComponent.set(b.genericPN, (byComponent.get(b.genericPN) ?? 0) + b.onHand)
+        const vKey = `${b.genericPN}|${b.brandSlug}`
+        byVariant.set(vKey, (byVariant.get(vKey) ?? 0) + b.onHand)
+      }
       variantMap.current = vm
+      setOnHandByComponent(byComponent)
+      setOnHandByVariant(byVariant)
 
+      // Ledger is used only for the transaction-history display, never for stock
+      // totals — those come from the authoritative balances above.
       const ledger = await getData<LedgerRowDTO>("/api/inventory/transactions?limit=1000")
       setTransactions(
         ledger.map((l) => ({
@@ -77,19 +101,23 @@ export function useStockLedger(): StockLedger {
   const addTransaction = React.useCallback(
     async (input: NewTransactionInput): Promise<MoveResult> => {
       const loc = variantMap.current.get(`${input.componentId}|${input.brandId}`)
-      if (!loc) {
-        return { ok: false, error: "No stock record for that component/brand — can't move an unstocked variant." }
+      const payload: Record<string, unknown> = {
+        type: input.direction === "in" ? "IN" : "OUT",
+        qty: input.qty,
+        note: input.note || undefined,
       }
+      if (loc) {
+        payload.variantId = loc.variantId
+        payload.locationId = loc.locationId
+      } else {
+        payload.genericPN = input.componentId
+        payload.brandSlug = input.brandId
+      }
+
       const res = await fetch("/api/inventory/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: input.direction === "in" ? "IN" : "OUT",
-          variantId: loc.variantId,
-          locationId: loc.locationId,
-          qty: input.qty,
-          note: input.note || undefined,
-        }),
+        body: JSON.stringify(payload),
       })
       const body = await res.json().catch(() => null)
       if (!res.ok) return { ok: false, error: body?.error?.message ?? "Move failed" }
@@ -99,5 +127,5 @@ export function useStockLedger(): StockLedger {
     [load],
   )
 
-  return { transactions, addTransaction, hydrated }
+  return { transactions, onHandByComponent, onHandByVariant, addTransaction, hydrated }
 }
