@@ -3,10 +3,9 @@
 import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import { Settings, Shield, User, KeyRound, CheckCircle2, ChevronRight, Lock } from "lucide-react"
+import { Shield, User, KeyRound, ChevronRight } from "lucide-react"
 import { ChangePasswordCard } from "@/components/change-password-card"
 import { useData } from "@/lib/data-provider"
-import { ALL_PERMISSIONS } from "@/lib/permissions"
 
 type SettingsTab = "profile" | "password"
 
@@ -30,7 +29,7 @@ export default function SettingsPage() {
         </div>
         <h1 className="text-3xl font-extrabold tracking-tight">Settings</h1>
         <p className="text-muted-foreground">
-          View your profile, security details, and current access permissions.
+          View your profile and security details.
         </p>
       </div>
 
@@ -95,18 +94,6 @@ function ProfileTab() {
   const name = me?.user.name ?? ""
   const email = me?.user.email ?? ""
 
-  // Format permission string for display
-  const formatPermissionName = (perm: string) => {
-    const parts = perm.split('.')
-    if (parts.length !== 2) return perm
-    const resource = parts[0].replace(/_/g, ' ')
-    const action = parts[1]
-    return `${action.charAt(0).toUpperCase() + action.slice(1)} ${resource.charAt(0).toUpperCase() + resource.slice(1)}`
-  }
-
-  // Get user's permission set for quick lookup
-  const userPerms = new Set(me?.permissions ?? [])
-
   return (
     <div className="space-y-6">
       <Card className="border border-border shadow-sm">
@@ -163,59 +150,6 @@ function ProfileTab() {
           <p className="text-[10px] text-muted-foreground/80 block">
             To update your profile information, contact your administrator.
           </p>
-        </CardContent>
-      </Card>
-
-      {/* Access permissions (read-only info) */}
-      <Card className="border border-border shadow-sm">
-        <CardHeader className="border-b border-border bg-muted/20">
-          <div className="flex items-center gap-2">
-            <Settings className="h-5 w-5 text-primary" />
-            <div>
-              <CardTitle className="text-lg font-bold">Access & Permissions</CardTitle>
-              <CardDescription>Your current role and what you can access</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-foreground">Current Role</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Assigned by your administrator</p>
-              </div>
-              <span className="text-xs uppercase font-extrabold text-primary bg-primary/10 px-2.5 py-1 rounded">
-                {me?.user.is_superadmin ? "System Admin" : (me?.roleName || "No Role")}
-              </span>
-            </div>
-            
-            <div className="h-px bg-border" />
-            
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/60">
-              Assigned Permissions
-            </p>
-            
-            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-              {me?.user.is_superadmin ? (
-                <div className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-medium text-emerald-600 dark:text-emerald-400 col-span-full">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  Full System Access (Superadmin)
-                </div>
-              ) : me?.permissions.length ? (
-                me.permissions.map((perm) => (
-                  <div key={perm} className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                    {formatPermissionName(perm)}
-                  </div>
-                ))
-              ) : (
-                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs font-medium text-muted-foreground col-span-full">
-                  <Lock className="h-4 w-4 shrink-0" />
-                  No explicit permissions granted
-                </div>
-              )}
-            </div>
-          </div>
         </CardContent>
       </Card>
     </div>
