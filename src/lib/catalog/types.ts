@@ -6,6 +6,20 @@
 export type StockStatus = "Healthy" | "Low" | "Critical"
 export type SolderType = "SMD" | "DIP"
 
+/** Lifecycle stage of an item — drives behaviour (raw is bought, finished is shipped, …). */
+export type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+
+/** A node in the tenant's item-category tree (Phase 2A). `id` is the category uuid. */
+export interface ItemCategory {
+  id: string
+  parentId: string | null
+  name: string
+  slug: string
+  path: string
+  defaultItemType: ItemType | null
+  sortOrder: number
+}
+
 export interface Spec {
   key: string
   value: string
@@ -13,6 +27,8 @@ export interface Spec {
 
 /** A manufacturer-specific variant of a generic component. */
 export interface ComponentBrandVariant {
+  /** The variant uuid (needed for variant edit/delete APIs). Absent in mock mode. */
+  id?: string
   brandId: string
   partNo: string
   stock: number
@@ -31,6 +47,11 @@ export interface Component {
   genericPN: string
   name: string
   category: string
+  /** Category tree node (uuid) this item belongs to, and its materialised path. */
+  categoryId: string | null
+  categoryPath: string | null
+  /** Lifecycle stage (raw/semi_assembled/assembled/consumable/asset/packaging). */
+  itemType: ItemType
   description: string
   stock: number
   minStock: number
@@ -66,6 +87,7 @@ export interface StockTransaction {
   qty: number // always positive; direction gives the sign
   date: string // ISO string
   note?: string
+  lotNo?: string
 }
 
 export interface Brand {

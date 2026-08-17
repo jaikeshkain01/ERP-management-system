@@ -177,7 +177,7 @@ export function ImportBomModal({
               <div className="flex flex-wrap items-center gap-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5 text-xs">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
                 <span className="font-semibold text-foreground">
-                  {result.lines.length} components
+                  {result.lines.length} items
                 </span>
                 <span className="text-muted-foreground">·</span>
                 <span className="text-muted-foreground">

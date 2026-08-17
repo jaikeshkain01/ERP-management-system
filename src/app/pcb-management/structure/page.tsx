@@ -290,12 +290,12 @@ function PCBStructureContent() {
                 )}
                 <div>
                   <CardTitle className="text-lg font-bold">
-                    {viewMode === "tree" ? "PCB Component Tree" : "Bill of Materials (Excel View)"}
+                    {viewMode === "tree" ? "PCB Item Tree" : "Bill of Materials (Excel View)"}
                   </CardTitle>
                   <CardDescription>
                     {viewMode === "tree"
-                      ? `Visual breakdown of ${pcb.name} parts with quantities. Click a component to view details.`
-                      : `Flat BOM sheet for ${pcb.name}. Click a row to view component details.`}
+                      ? `Visual breakdown of ${pcb.name} parts with quantities. Click an item to view details.`
+                      : `Flat BOM sheet for ${pcb.name}. Click a row to view item details.`}
                   </CardDescription>
                 </div>
               </div>
@@ -388,7 +388,7 @@ function PCBStructureContent() {
                         {component.approvedBrands && component.approvedBrands.length > 0 && (
                           <div className="pl-6 flex flex-col gap-1 text-[11px] text-muted-foreground border-l border-dashed border-border/80 ml-3.5 py-0.5 animate-in fade-in duration-300">
                             <span className="font-semibold text-[10px] uppercase text-muted-foreground/50 tracking-wider flex items-center gap-1">
-                              Approved Brands:
+                              Approved Manufacturers:
                               <span className="text-primary font-extrabold">{component.approvedBrands.length}</span>
                             </span>
                             <div className="flex flex-wrap gap-1.5 mt-0.5">
@@ -571,7 +571,7 @@ function PCBStructureContent() {
 
                 <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-3">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Unique Components</span>
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Unique Items</span>
                     <span className="font-bold text-foreground text-sm">{pcb.components.length}</span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -622,7 +622,7 @@ function PCBStructureContent() {
                 <table className="w-full text-left text-foreground">
                   <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-semibold">
                     <tr>
-                      <th scope="col" className="px-4 py-2.5">Component</th>
+                      <th scope="col" className="px-4 py-2.5">Item</th>
                       <th scope="col" className="px-4 py-2.5 text-center">Qty / PCB</th>
                       {buildQty > 1 && (
                         <th scope="col" className="px-4 py-2.5 text-right">Total Req.</th>
@@ -712,7 +712,7 @@ function PCBStructureContent() {
             <div className="flex items-center justify-between border-b border-border pb-4">
               <div className="flex items-center gap-2">
                 <Nut className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-bold text-foreground">Component Details</h3>
+                <h3 className="text-lg font-bold text-foreground">Item Details</h3>
               </div>
               <Button 
                 variant="ghost" 
@@ -773,13 +773,13 @@ function PCBStructureContent() {
             <div className="space-y-2.5">
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="h-4 w-4 text-primary" />
-                <span className="text-xs uppercase font-bold text-muted-foreground/70 tracking-wider">Approved Brands ({selectedComponentDetail.brands.length})</span>
+                <span className="text-xs uppercase font-bold text-muted-foreground/70 tracking-wider">Approved Manufacturers ({selectedComponentDetail.brands.length})</span>
               </div>
               <div className="border border-border rounded-lg overflow-hidden text-xs">
                 <table className="w-full text-left text-foreground">
                   <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-semibold">
                     <tr>
-                      <th scope="col" className="px-4 py-2">Brand</th>
+                      <th scope="col" className="px-4 py-2">Manufacturer</th>
                       <th scope="col" className="px-4 py-2 text-right">Status</th>
                     </tr>
                   </thead>
@@ -851,7 +851,7 @@ function PCBStructureContent() {
                 render={<Link href={`/components/details?component=${selectedComponentDetail.id}`} />}
                 onClick={() => setSelectedCompId(null)}
               >
-                <span>Open Full Component Dashboard</span>
+                <span>Open Full Item Dashboard</span>
               </Button>
             </div>
           </div>

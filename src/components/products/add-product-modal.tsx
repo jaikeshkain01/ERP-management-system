@@ -210,7 +210,7 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
       }))
       .filter((g) => g.lines.length > 0)
 
-    if (groups.length === 0) return setError("Add at least one component line (Name or Part Number).")
+    if (groups.length === 0) return setError("Add at least one item line (Name or Part Number).")
     if (isProduct && groups.some((g) => !g.name)) return setError("Give every PCB a name.")
 
     onApply({
@@ -359,7 +359,7 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
               </h3>
               <p className="text-xs text-muted-foreground">
                 {isProduct
-                  ? "Define one or more PCBs, each with its components — search the catalog to link real parts, new ones are created automatically."
+                  ? "Define one or more PCBs, each with its items — search the catalog to link real parts, new ones are created automatically."
                   : "Enter a new labelled bill of materials for this product."}
               </p>
             </div>
@@ -431,7 +431,7 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground/70 tracking-wider">
-                  PCBs &amp; Components
+                  PCBs &amp; Items
                 </span>
                 <Button type="button" variant="outline" size="sm" onClick={addPcb} className="gap-1 border-border font-bold">
                   <CircuitBoard className="h-3.5 w-3.5" />
@@ -482,7 +482,7 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
                                       <span>
                                         <span className="block truncate font-medium text-sm">{cp.name}</span>
                                         <span className="block truncate text-[10px] text-muted-foreground">
-                                          {cp.id} · {cp.layers}L · {cp.componentsCount} component{cp.componentsCount !== 1 ? "s" : ""}
+                                          {cp.id} · {cp.layers}L · {cp.componentsCount} item{cp.componentsCount !== 1 ? "s" : ""}
                                         </span>
                                       </span>
                                     </span>
@@ -502,11 +502,11 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
                         {/* Status hint below the input */}
                         {pcb.linkedPcbId ? (
                           <span className="mt-0.5 flex items-center gap-1 text-[10px] text-emerald-600">
-                            <Link2 className="h-3 w-3" /> Linked to catalog PCB — {(() => { const linked = getPcb(pcb.linkedPcbId); return linked ? `${linked.componentsCount} components loaded` : pcb.linkedPcbId })()}
+                            <Link2 className="h-3 w-3" /> Linked to catalog PCB — {(() => { const linked = getPcb(pcb.linkedPcbId); return linked ? `${linked.componentsCount} items loaded` : pcb.linkedPcbId })()}
                           </span>
                         ) : pcb.name.trim() ? (
                           <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-500">
-                            <Sparkles className="h-3 w-3" /> Custom PCB — components entered manually
+                            <Sparkles className="h-3 w-3" /> Custom PCB — items entered manually
                           </span>
                         ) : null}
                       </div>
@@ -541,8 +541,8 @@ export function AddProductModal({ mode = "product", defaultVersionLabel = "v1", 
           )}
 
           <p className="text-[10px] text-muted-foreground">
-            <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to an existing catalog component ·{" "}
-            <Sparkles className="inline h-3 w-3 text-amber-500" /> a new component that will be added to the catalog.
+            <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to an existing catalog item ·{" "}
+            <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be added to the catalog.
           </p>
 
           {error && (

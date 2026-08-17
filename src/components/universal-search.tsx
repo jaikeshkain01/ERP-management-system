@@ -271,7 +271,7 @@ export function UniversalSearch() {
         className="flex items-center gap-2.5 bg-white/[0.06] hover:bg-white/[0.11] border border-chrome-border rounded-md py-1.5 pl-3 pr-2 text-left w-64 md:w-80 transition-all select-none group hover:border-white/25"
       >
         <Search className="h-4 w-4 text-chrome-muted group-hover:text-chrome-strong transition-colors shrink-0" />
-        <span className="text-xs text-chrome-muted truncate flex-1">Search Product, PCB, Component...</span>
+        <span className="text-xs text-chrome-muted truncate flex-1">Search Product, PCB, Item...</span>
         <kbd className="hidden sm:inline-flex h-5 select-none items-center gap-1 rounded border border-chrome-border bg-white/[0.07] px-1.5 font-mono text-[9px] font-medium text-chrome-muted">
           <span className="text-xs">⌘</span>K
         </kbd>
@@ -294,7 +294,7 @@ export function UniversalSearch() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Type to search Products, PCBs, Components, Brands, Suppliers..."
+                placeholder="Type to search Products, PCBs, Items, Manufacturers, Suppliers..."
                 className="w-full bg-transparent border-0 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 text-base"
               />
               {query && (
@@ -326,7 +326,7 @@ export function UniversalSearch() {
                 onClick={() => setActiveTab("components")}
                 className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${activeTab === "components" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"}`}
               >
-                <span>Components</span>
+                <span>Items</span>
                 <span className="text-[9px] opacity-75 font-mono">⌥2</span>
               </button>
               <button 
@@ -342,7 +342,7 @@ export function UniversalSearch() {
                 onClick={() => setActiveTab("brands")}
                 className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${activeTab === "brands" ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"}`}
               >
-                <span>Brands & Suppliers</span>
+                <span>Manufacturers & Suppliers</span>
                 <span className="text-[9px] opacity-75 font-mono">⌥4</span>
               </button>
             </div>
@@ -418,7 +418,7 @@ export function UniversalSearch() {
                     <h3 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80 mb-3">Search Guidelines</h3>
                     <div className="p-4 rounded-xl bg-muted/20 border border-border/30 text-[11px] text-muted-foreground/90 space-y-2.5 leading-relaxed font-medium">
                       <p>💡 <span className="font-bold text-foreground">Multi-word search:</span> Search `resistor yageo` to find Resistors supplied by Yageo.</p>
-                      <p>🔑 <span className="font-bold text-foreground">Part Numbers:</span> Search by generic PN (like `RES-10K`) or brand part number (like `RC0402JR`).</p>
+                      <p>🔑 <span className="font-bold text-foreground">Part Numbers:</span> Search by generic PN (like `RES-10K`) or manufacturer part number (like `RC0402JR`).</p>
                       <p>🚀 <span className="font-bold text-foreground">Hotkeys:</span> Use <kbd className="bg-background px-1 py-0.2 rounded border border-border text-[9px] font-mono">Alt</kbd> + <kbd className="bg-background px-1 py-0.2 rounded border border-border text-[9px] font-mono">1-4</kbd> to switch tabs.</p>
                     </div>
                   </div>
@@ -453,7 +453,7 @@ export function UniversalSearch() {
                               {item.type === "component" ? `Generic PN: ${item.data.genericPN}` : 
                                item.type === "product" ? `Code: ${item.data.code}` :
                                item.type === "pcb" ? `Product: ${item.data.productName}` :
-                               item.type === "brand" ? `Brand Profile` :
+                               item.type === "brand" ? `Manufacturer Profile` :
                                `Supplier Agreement`}
                             </span>
                           </div>
@@ -514,7 +514,7 @@ export function UniversalSearch() {
                                 ) : result.type === "pcb" ? (
                                   <span>Product: <HighlightText text={result.data.productName} query={query} /></span>
                                 ) : result.type === "brand" ? (
-                                  <span>Brand Profile</span>
+                                  <span>Manufacturer Profile</span>
                                 ) : (
                                   <span>Supplier Offerings</span>
                                 )}
@@ -593,7 +593,7 @@ export function UniversalSearch() {
                               </span>
                             </div>
                             <div className="bg-background border border-border/40 rounded-xl p-4 shadow-3xs">
-                              <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Total Brands</span>
+                              <span className="text-[10px] uppercase font-bold text-muted-foreground block tracking-wider">Total Manufacturers</span>
                               <span className="text-sm font-semibold text-foreground mt-1.5 block">{selectedItem.data.brands.length}</span>
                             </div>
                             <div className="bg-background border border-border/40 rounded-xl p-4 shadow-3xs">
@@ -604,13 +604,13 @@ export function UniversalSearch() {
 
                           {/* Brand Variants Table */}
                           <div className="space-y-2 text-left">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80">Brand Variants</span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80">Manufacturer Variants</span>
                             <div className="border border-border/40 rounded-lg overflow-hidden bg-background shadow-3xs">
                               <table className="w-full text-xs text-left text-foreground">
                                 <thead className="bg-muted/40 text-muted-foreground/85 text-[10px] uppercase font-semibold border-b border-border/40">
                                   <tr>
-                                    <th className="px-4 py-2.5">Brand</th>
-                                    <th className="px-4 py-2.5">Brand Part No</th>
+                                    <th className="px-4 py-2.5">Manufacturer</th>
+                                    <th className="px-4 py-2.5">Manufacturer Part No</th>
                                     <th className="px-4 py-2.5 text-right">Stock</th>
                                   </tr>
                                 </thead>
@@ -713,7 +713,7 @@ export function UniversalSearch() {
                               <table className="w-full text-xs text-left text-foreground">
                                 <thead className="bg-muted/40 text-muted-foreground/85 text-[10px] uppercase font-semibold border-b border-border/40">
                                   <tr>
-                                    <th className="px-4 py-2.5">Component</th>
+                                    <th className="px-4 py-2.5">Item</th>
                                     <th className="px-4 py-2.5 text-right">Generic PN</th>
                                   </tr>
                                 </thead>
@@ -739,19 +739,19 @@ export function UniversalSearch() {
                       {selectedItem.type === "brand" && (
                         <div className="space-y-5 text-xs text-left">
                           <div className="bg-background border border-border/40 rounded-xl p-4 shadow-3xs">
-                            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Total Components Carried</span>
-                            <span className="text-sm font-bold text-primary mt-1.5 block">{selectedItem.data.componentCount} components</span>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Total Items Carried</span>
+                            <span className="text-sm font-bold text-primary mt-1.5 block">{selectedItem.data.componentCount} items</span>
                           </div>
 
                           <div className="space-y-2">
-                            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80">Qualified catalog components</span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80">Qualified catalog items</span>
                             <div className="border border-border/40 rounded-lg overflow-hidden bg-background shadow-3xs">
                               <table className="w-full text-xs text-left text-foreground">
                                 <thead className="bg-muted/40 text-muted-foreground/85 text-[10px] uppercase font-semibold border-b border-border/40">
                                   <tr>
-                                    <th className="px-4 py-2.5">Component</th>
+                                    <th className="px-4 py-2.5">Item</th>
                                     <th className="px-4 py-2.5">Generic PN</th>
-                                    <th className="px-4 py-2.5 text-right">Brand PN</th>
+                                    <th className="px-4 py-2.5 text-right">Manufacturer PN</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border/30 font-medium">
@@ -791,8 +791,8 @@ export function UniversalSearch() {
                               <table className="w-full text-xs text-left text-foreground">
                                 <thead className="bg-muted/40 text-muted-foreground/85 text-[10px] uppercase font-semibold border-b border-border/40">
                                   <tr>
-                                    <th className="px-4 py-2.5">Component</th>
-                                    <th className="px-4 py-2.5">Brand</th>
+                                    <th className="px-4 py-2.5">Item</th>
+                                    <th className="px-4 py-2.5">Manufacturer</th>
                                     <th className="px-4 py-2.5 text-right">Negotiated Price</th>
                                   </tr>
                                 </thead>

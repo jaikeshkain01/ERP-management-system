@@ -63,9 +63,9 @@ export default function Dashboard() {
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
     { title: "Products", value: totalProducts.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
     { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
-    { title: "Components", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
+    { title: "Items", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
-    { title: "Brands", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
+    { title: "Manufacturers", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
     { title: "Inventory Value", value: compactINR(realValuation), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
@@ -88,6 +88,7 @@ export default function Dashboard() {
   const lowStock = React.useMemo(() => {
     if (ops?.lowStock != null) return ops.lowStock
     return d.COMPONENTS.filter((c) => c.stock < c.minStock || c.stock === 0).map((c) => ({
+      componentId: c.id,
       component: c.name,
       current: c.stock,
       minimum: c.minStock,
@@ -98,6 +99,7 @@ export default function Dashboard() {
   const singleSupplierComponents = React.useMemo(() => {
     if (ops?.singleSupplier != null) return ops.singleSupplier
     return d.COMPONENTS.filter((c) => d.isSingleSupplier(c)).map((c) => ({
+      componentId: c.id,
       component: c.name,
       supplier: c.offers[0] ? d.getSupplierName(c.offers[0].supplierId) : "—",
     }))
@@ -168,8 +170,8 @@ export default function Dashboard() {
   const effectiveTab: TabId = tabs.some((tab) => tab.id === activeTab) ? activeTab : "overview"
 
   const allQuickLinks: { label: string; desc: string; href: string; icon: React.ComponentType<{ className?: string }>; accent: string; moduleId?: ModuleId }[] = [
-    { label: "Add Component", desc: "Register a new raw part", href: "/components/add", icon: Plus, accent: "text-emerald-600 bg-emerald-500/10" },
-    { label: "Component List", desc: "Browse parts catalog", href: "/components/list", icon: Nut, accent: "text-primary bg-primary/10" },
+    { label: "Add Item", desc: "Register a new raw part", href: "/components/add", icon: Plus, accent: "text-emerald-600 bg-emerald-500/10" },
+    { label: "Item List", desc: "Browse parts catalog", href: "/components/list", icon: Nut, accent: "text-primary bg-primary/10" },
     { label: "Inventory", desc: "Stock & valuation", href: "/components/inventory", icon: Package, accent: "text-primary bg-primary/10", moduleId: "inventory" },
     { label: "Production Planner", desc: "Schedule builds", href: "/production/planner", icon: Factory, accent: "text-primary bg-primary/10", moduleId: "production" },
     { label: "Purchase Requests", desc: "Raise & approve PRs", href: "/purchases/requests", icon: ShoppingCart, accent: "text-primary bg-primary/10", moduleId: "purchasing" },
@@ -260,7 +262,7 @@ export default function Dashboard() {
         {productionBlockers.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground flex flex-col items-center gap-2">
             <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ No production blockers detected</span>
-            <span className="text-xs">All required component materials are available in sufficient quantities.</span>
+            <span className="text-xs">All required item materials are available in sufficient quantities.</span>
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -268,7 +270,7 @@ export default function Dashboard() {
               <div key={idx} className="flex justify-between items-center px-6 py-3.5 hover:bg-destructive/10 transition-colors">
                 <div className="flex flex-col">
                   <span className="font-bold text-foreground">{item.product}</span>
-                  <span className="text-xs text-muted-foreground">Missing Component: <strong className="text-foreground">{item.missingComp}</strong></span>
+                  <span className="text-xs text-muted-foreground">Missing Item: <strong className="text-foreground">{item.missingComp}</strong></span>
                 </div>
                 <span className="font-mono font-extrabold text-destructive">
                   -{item.qty} units
@@ -287,7 +289,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-amber-500" />
           <div>
-            <CardTitle className="text-lg font-bold">Low Stock Components</CardTitle>
+            <CardTitle className="text-lg font-bold">Low Stock Items</CardTitle>
             <CardDescription>BOM catalog items below safety margins</CardDescription>
           </div>
         </div>
@@ -296,13 +298,13 @@ export default function Dashboard() {
         {lowStock.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground flex flex-col items-center gap-1">
             <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ Stock levels optimal</span>
-            <span className="text-xs">No catalog components are currently below minimum safety stock levels.</span>
+            <span className="text-xs">No catalog items are currently below minimum safety stock levels.</span>
           </div>
         ) : (
           <table className="w-full text-sm text-left text-foreground">
             <thead className="bg-muted/40 text-muted-foreground border-b border-border font-semibold uppercase text-xs">
               <tr>
-                <th scope="col" className="px-6 py-3">Component</th>
+                <th scope="col" className="px-6 py-3">Item</th>
                 <th scope="col" className="px-6 py-3">Current</th>
                 <th scope="col" className="px-6 py-3">Minimum</th>
                 <th scope="col" className="px-6 py-3 text-right">Status</th>
@@ -312,7 +314,7 @@ export default function Dashboard() {
               {lowStock.map((item, idx) => (
                 <tr key={idx} className="hover:bg-muted/10 transition-colors">
                   <td className="px-6 py-3.5 font-bold">
-                    <Link href="/components/list" className="text-primary hover:underline">{item.component}</Link>
+                    <Link href={`/components/list?component=${encodeURIComponent(item.componentId)}`} className="text-primary hover:underline">{item.component}</Link>
                   </td>
                   <td className="px-6 py-3.5 font-mono text-destructive font-bold">{item.current.toLocaleString()}</td>
                   <td className="px-6 py-3.5 font-mono text-muted-foreground">{item.minimum.toLocaleString()}</td>
@@ -413,18 +415,18 @@ export default function Dashboard() {
         {/* Single Source Table */}
         <div className="space-y-2">
           <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-            Single Supplier Components
+            Single Supplier Items
           </span>
           <div className="border border-border rounded-lg overflow-hidden bg-background">
             {singleSupplierComponents.length === 0 ? (
               <div className="p-4 text-center text-xs text-muted-foreground">
-                No components with single-supplier risk.
+                No items with single-supplier risk.
               </div>
             ) : (
               <table className="w-full text-xs text-left text-foreground">
                 <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                   <tr>
-                    <th className="px-4 py-2">Component</th>
+                    <th className="px-4 py-2">Item</th>
                     <th className="px-4 py-2 text-right">Sole Supplier</th>
                   </tr>
                 </thead>
@@ -432,7 +434,7 @@ export default function Dashboard() {
                   {singleSupplierComponents.map((s, idx) => (
                     <tr key={idx} className="hover:bg-muted/5">
                       <td className="px-4 py-2.5 font-bold">
-                        <Link href="/components/list" className="text-primary hover:underline">{s.component}</Link>
+                        <Link href={`/components/list?component=${encodeURIComponent(s.componentId)}`} className="text-primary hover:underline">{s.component}</Link>
                       </td>
                       <td className="px-4 py-2.5 text-right font-semibold text-muted-foreground">{s.supplier}</td>
                     </tr>
@@ -458,7 +460,7 @@ export default function Dashboard() {
                   . If their sole distributor channels experience delays, production of dependent products will block.
                 </>
               ) : (
-                "No critical sole-supplier dependencies detected across catalog components."
+                "No critical sole-supplier dependencies detected across catalog items."
               )}
             </p>
           </div>
@@ -495,7 +497,7 @@ export default function Dashboard() {
           <BarChart2 className="h-5 w-5 text-primary" />
           <div>
             <CardTitle className="text-lg font-bold">Inventory Category Ratio</CardTitle>
-            <CardDescription>Catalog component count by category</CardDescription>
+            <CardDescription>Catalog item count by category</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -549,18 +551,18 @@ export default function Dashboard() {
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <TrendingUp className="h-5 w-5 text-primary" />
-          <h3 className="text-base font-bold text-foreground">Top Consumed Components</h3>
+          <h3 className="text-base font-bold text-foreground">Top Consumed Items</h3>
         </div>
         <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
           {topConsumed.length === 0 ? (
             <div className="p-4 text-center text-xs text-muted-foreground">
-              No component usage recorded.
+              No item usage recorded.
             </div>
           ) : (
             <table className="w-full text-left text-foreground">
               <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                 <tr>
-                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2">Item</th>
                   <th className="px-4 py-2 text-right">Monthly Usage</th>
                 </tr>
               </thead>
@@ -581,18 +583,18 @@ export default function Dashboard() {
       <div className="space-y-3 border-t border-border/50 pt-4">
         <div className="flex items-center gap-2">
           <Layers className="h-5 w-5 text-primary" />
-          <h3 className="text-base font-bold text-foreground">Component Usage Impact</h3>
+          <h3 className="text-base font-bold text-foreground">Item Usage Impact</h3>
         </div>
         <div className="border border-border rounded-lg overflow-hidden bg-background text-xs">
           {usageImpact.length === 0 ? (
             <div className="p-4 text-center text-xs text-muted-foreground">
-              No active BOM component mappings.
+              No active BOM item mappings.
             </div>
           ) : (
             <table className="w-full text-left text-foreground">
               <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                 <tr>
-                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2">Item</th>
                   <th className="px-4 py-2 text-right">Used In Products</th>
                 </tr>
               </thead>
@@ -611,7 +613,7 @@ export default function Dashboard() {
           {usageImpact.length > 0 ? (
             `⚠️ If ${usageImpact[0].component} is unavailable, ${usageImpact[0].usedInProducts} product line${usageImpact[0].usedInProducts === 1 ? "" : "s"} will be affected.`
           ) : (
-            "All components mapped across product BOM structures."
+            "All items mapped across product BOM structures."
           )}
         </div>
       </div>

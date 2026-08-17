@@ -20,11 +20,11 @@ function EditComponentContent() {
       <div className="space-y-6">
         <div className="flex flex-col gap-2">
           <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <span>Components</span>
+            <span>Items</span>
             <span>/</span>
-            <span className="text-foreground font-medium">Edit Component</span>
+            <span className="text-foreground font-medium">Edit Item</span>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight">Edit Component</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">Edit Item</h1>
         </div>
         <Card className="border border-border shadow-sm">
           <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
@@ -32,14 +32,14 @@ function EditComponentContent() {
               <Boxes className="h-6 w-6" />
             </div>
             <div className="space-y-1">
-              <p className="text-base font-bold text-foreground">Component not found</p>
+              <p className="text-base font-bold text-foreground">Item not found</p>
               <p className="text-sm text-muted-foreground max-w-sm">
-                This component could not be located. It may have been deleted or the link is stale.
+                This item could not be located. It may have been deleted or the link is stale.
               </p>
             </div>
             <Button variant="outline" render={<Link href="/components/list" />} className="gap-2 border-border bg-background">
               <ArrowLeft className="h-4 w-4" />
-              <span>Back to Component List</span>
+              <span>Back to Item List</span>
             </Button>
           </CardContent>
         </Card>
@@ -49,8 +49,13 @@ function EditComponentContent() {
 
   const initial: ComponentFormInitial = {
     category: component.category,
+    categoryId: component.categoryId ?? "",
+    itemType: component.itemType ?? "raw",
     name: component.name,
     genericPN: component.genericPN,
+    description: component.description ?? "",
+    unit: component.unit || "PCS",
+    minStock: component.minStock ? String(component.minStock) : "",
     solderType: component.solderType,
     footprint: component.footprint ?? "",
     spq: component.spq ? String(component.spq) : "",
@@ -72,7 +77,7 @@ export default function EditComponentPage() {
     <React.Suspense
       fallback={
         <div className="flex h-[400px] items-center justify-center text-muted-foreground text-sm font-medium">
-          Loading component…
+          Loading item…
         </div>
       }
     >

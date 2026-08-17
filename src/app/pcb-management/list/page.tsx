@@ -170,7 +170,7 @@ export default function PCBListPage() {
       <StatStrip
         items={[
           { label: "Total PCBs", value: totalPcbs, icon: CircuitBoard },
-          { label: "Total Components", value: totalComponents, icon: Boxes },
+          { label: "Total Items", value: totalComponents, icon: Boxes },
           { label: "Active Boards", value: activeCount, desc: "Released to production", icon: CheckCircle2, tone: "success" },
         ]}
       />
@@ -249,7 +249,7 @@ export default function PCBListPage() {
                     <Nut className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Components</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Items</span>
                     <span className="text-sm font-black mt-1 text-foreground">{pcb.componentsCount}</span>
                   </div>
                 </div>
@@ -287,7 +287,7 @@ export default function PCBListPage() {
                 className="flex-1 font-semibold group/btn"
                 variant="secondary"
               >
-                <span>View Components</span>
+                <span>View Items</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
               </Button>
               <Button

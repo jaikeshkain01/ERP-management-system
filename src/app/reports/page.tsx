@@ -366,7 +366,7 @@ export default function ReportsPage() {
           {/* Category Valuation Summary */}
           <Card className="md:col-span-3 border border-border shadow-sm">
             <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-              <CardTitle className="text-lg font-bold">Asset Valuation by Component Category</CardTitle>
+              <CardTitle className="text-lg font-bold">Asset Valuation by Item Category</CardTitle>
               <CardDescription>Total raw material capital holding distribution across categories</CardDescription>
             </CardHeader>
             <CardContent className="p-6">
@@ -427,7 +427,7 @@ export default function ReportsPage() {
           <Card className="border border-border shadow-sm">
             <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
               <CardTitle className="text-lg font-bold">Top 5 Most Valuable Inventory SKUs</CardTitle>
-              <CardDescription>Highest capital-holding component inventory items on hand</CardDescription>
+              <CardDescription>Highest capital-holding item inventory items on hand</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <DragScrollArea className="overflow-x-auto">
@@ -435,7 +435,7 @@ export default function ReportsPage() {
                   <thead className="bg-muted uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                     <tr>
                       <th className="px-6 py-3">Rank</th>
-                      <th className="px-6 py-3">Component Item</th>
+                      <th className="px-6 py-3">Item</th>
                       <th className="px-6 py-3">Category</th>
                       <th className="px-6 py-3 text-right">Unit Cost</th>
                       <th className="px-6 py-3 text-right">Stock On-Hand</th>
@@ -477,7 +477,7 @@ export default function ReportsPage() {
                 <CardTitle className="text-lg font-bold">Single-Supplier Sourcing Dependencies ({singleSupplierSKUs.length})</CardTitle>
               </div>
               <CardDescription className="text-amber-600/80 dark:text-amber-400/80">
-                Components reliant on a single distributor channel — high procurement vulnerability risk.
+                Items reliant on a single distributor channel — high procurement vulnerability risk.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">
@@ -485,10 +485,10 @@ export default function ReportsPage() {
                 <table className="w-full text-xs text-left text-foreground">
                   <thead className="bg-amber-500/10 uppercase text-[10px] text-amber-700 dark:text-amber-300 border-b border-amber-500/20 font-semibold">
                     <tr>
-                      <th className="px-6 py-2.5">Component</th>
+                      <th className="px-6 py-2.5">Item</th>
                       <th className="px-6 py-2.5">Generic P/N</th>
                       <th className="px-6 py-2.5">Exclusive Supplier</th>
-                      <th className="px-6 py-2.5">Brand</th>
+                      <th className="px-6 py-2.5">Manufacturer</th>
                       <th className="px-6 py-2.5 text-right">Unit Price</th>
                     </tr>
                   </thead>
@@ -512,7 +512,7 @@ export default function ReportsPage() {
           <Card className="border border-border shadow-sm">
             <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
               <CardTitle className="text-lg font-bold">Supplier Performance & Offer Matrix</CardTitle>
-              <CardDescription>Registered distributor channels, brand coverage, and average delivery lead times</CardDescription>
+              <CardDescription>Registered distributor channels, manufacturer coverage, and average delivery lead times</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <DragScrollArea className="overflow-x-auto">
@@ -522,7 +522,7 @@ export default function ReportsPage() {
                       <th className="px-6 py-3">Supplier Name</th>
                       <th className="px-6 py-3">Contact</th>
                       <th className="px-6 py-3 text-center">Catalog Offers</th>
-                      <th className="px-6 py-3 text-center">Brands Covered</th>
+                      <th className="px-6 py-3 text-center">Manufacturers Covered</th>
                       <th className="px-6 py-3 text-right">Avg Lead Time</th>
                     </tr>
                   </thead>

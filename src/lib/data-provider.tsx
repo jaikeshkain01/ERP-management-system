@@ -9,7 +9,7 @@
 import * as React from "react";
 import { createSelectors, type DataSet, type Selectors } from "@/lib/catalog";
 
-const EMPTY: DataSet = { components: [], brands: [], suppliers: [], pcbs: [], products: [] };
+const EMPTY: DataSet = { components: [], brands: [], suppliers: [], pcbs: [], products: [], itemCategories: [] };
 
 export interface Me {
   user: { id: string; name: string; email: string; is_superadmin?: boolean };

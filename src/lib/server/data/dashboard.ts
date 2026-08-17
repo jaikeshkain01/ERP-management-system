@@ -40,6 +40,7 @@ export interface ProductStatusItem {
 }
 
 export interface LowStockItem {
+  componentId: string; // generic_pn — the client catalog's component id-space (see bootstrap), for deep-linking
   component: string;
   current: number;
   minimum: number;
@@ -47,6 +48,7 @@ export interface LowStockItem {
 }
 
 export interface SingleSupplierItem {
+  componentId: string; // generic_pn — the client catalog's component id-space (see bootstrap), for deep-linking
   component: string;
   supplier: string;
 }
@@ -258,7 +260,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
 
     // ── Low-stock components: on-hand below min or out of stock (Critical ≤ 50% of min or 0 stock) ──
     const lowStock = await tx.$queryRaw<LowStockItem[]>`
-      SELECT c.name AS component, bal.on_hand::int AS current, c.min_stock::int AS minimum,
+      SELECT c.generic_pn AS "componentId", c.name AS component, bal.on_hand::int AS current, c.min_stock::int AS minimum,
              CASE WHEN bal.on_hand = 0 OR bal.on_hand <= c.min_stock * 0.5 THEN 'Critical' ELSE 'Low' END AS status
       FROM components c
       JOIN LATERAL (
@@ -278,7 +280,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
         WHERE scp.valid_to IS NULL AND scp.deleted_at IS NULL
         GROUP BY scp.component_id
       )
-      SELECT c.name AS component,
+      SELECT c.generic_pn AS "componentId", c.name AS component,
              COALESCE((
                SELECT s.name FROM supplier_component_prices scp2
                JOIN suppliers s ON s.id = scp2.supplier_id

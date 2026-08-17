@@ -63,10 +63,10 @@ export const BASE_AREAS: Array<{
   icon: React.ComponentType<{ className?: string }>
   href: string
 }> = [
-  { label: "Components", description: "Raw parts catalog and datasheets.", icon: Nut, href: "/components/list" },
+  { label: "Items", description: "Raw parts catalog and datasheets.", icon: Nut, href: "/components/list" },
   { label: "Products", description: "Finished goods catalog.", icon: Package, href: "/products/list" },
   { label: "PCB Management", description: "Board variations library.", icon: Cpu, href: "/pcb-management/list" },
-  { label: "Suppliers & Brands", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
+  { label: "Suppliers & Manufacturers", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
 ]
 
 export const DEFAULT_ENABLED: Record<ModuleId, boolean> = {
@@ -124,13 +124,13 @@ export const WORKSPACES: Workspace[] = [
   },
   {
     id: "components",
-    label: "Components",
+    label: "Items",
     icon: Nut,
     href: "/components/list",
     tabs: [
-      { title: "Component List", href: "/components/list" },
-      { title: "Component Details", href: "/components/details" },
-      { title: "Add Component", href: "/components/add" },
+      { title: "Item List", href: "/components/list" },
+      { title: "Item Details", href: "/components/details" },
+      { title: "Add Item", href: "/components/add" },
     ],
   },
   {
@@ -189,13 +189,13 @@ export const WORKSPACES: Workspace[] = [
   },
   {
     id: "suppliers",
-    label: "Suppliers & Brands",
+    label: "Suppliers & Manufacturers",
     icon: Truck,
     href: "/suppliers/list",
     tabs: [
       { title: "Suppliers", href: "/suppliers/list" },
       { title: "Supplier Details", href: "/suppliers/details" },
-      { title: "Brands", href: "/brands/list" },
+      { title: "Manufacturers", href: "/brands/list" },
     ],
   },
   {

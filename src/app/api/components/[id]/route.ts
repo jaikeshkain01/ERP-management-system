@@ -14,6 +14,8 @@ const PatchBody = z.object({
   genericPN: z.string().trim().min(1).optional(),
   name: z.string().trim().min(1).optional(),
   category: z.string().max(120).nullable().optional(),
+  categoryId: z.string().uuid().nullable().optional(),
+  itemType: z.enum(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"]).optional(),
   description: z.string().max(2000).nullable().optional(),
   unit: z.string().trim().min(1).optional(),
   solderType: z.enum(["SMD", "DIP"]).nullable().optional(),

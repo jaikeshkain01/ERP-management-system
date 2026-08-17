@@ -73,6 +73,9 @@ export type NewTransactionInput = {
   direction: StockDirection
   qty: number
   note?: string
+  /** Inbound only: lot number (blank → auto) + optional expiry (YYYY-MM-DD). */
+  lotNo?: string
+  expiryDate?: string
 }
 
 /** Builds a persisted transaction. Runtime only (uses new Date()). */

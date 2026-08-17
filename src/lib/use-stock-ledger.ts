@@ -35,6 +35,8 @@ interface LedgerRowDTO {
   qtyDelta: number
   createdAt: string
   note: string | null
+  lotNo: string | null
+  supplierSlug: string | null
 }
 
 async function getData<T>(url: string): Promise<T[]> {
@@ -82,11 +84,12 @@ export function useStockLedger(): StockLedger {
           id: l.id,
           componentId: l.genericPN,
           brandId: l.brandSlug,
-          supplierId: undefined,
+          supplierId: l.supplierSlug ?? undefined,
           direction: l.qtyDelta >= 0 ? ("in" as const) : ("out" as const),
           qty: Math.abs(l.qtyDelta),
           date: l.createdAt,
           note: l.note ?? undefined,
+          lotNo: l.lotNo ?? undefined,
         })),
       )
     } finally {
@@ -105,6 +108,9 @@ export function useStockLedger(): StockLedger {
         type: input.direction === "in" ? "IN" : "OUT",
         qty: input.qty,
         note: input.note || undefined,
+        ...(input.direction === "in"
+          ? { lotNo: input.lotNo || undefined, expiryDate: input.expiryDate || undefined, supplierSlug: input.supplierId || undefined }
+          : {}),
       }
       if (loc) {
         payload.variantId = loc.variantId

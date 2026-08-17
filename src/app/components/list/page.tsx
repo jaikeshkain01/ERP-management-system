@@ -13,6 +13,8 @@ import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { useData } from "@/lib/data-provider"
+import { stockHealth } from "@/lib/stock-status"
+import { CategoryCascade } from "@/components/category-cascade"
 
 interface Specification {
   key: string
@@ -49,6 +51,8 @@ interface ComponentData {
   genericPN: string
   name: string
   category: string
+  categoryId: string | null
+  categoryPath: string | null
   stock: number
   minStock: number
   unit: string
@@ -72,6 +76,8 @@ function buildComponentsData(d: ReturnType<typeof useData>): ComponentData[] {
       genericPN: c.genericPN,
       name: c.name,
       category: c.category,
+      categoryId: c.categoryId,
+      categoryPath: c.categoryPath,
       stock: c.stock,
       minStock: c.minStock,
       unit: c.unit,
@@ -102,10 +108,13 @@ function buildComponentsData(d: ReturnType<typeof useData>): ComponentData[] {
 }
 
 const getStatusInfo = (comp: ComponentData) => {
-  if (comp.stock <= comp.minStock * 0.5) {
+  // Stock health comes from the shared helper (single source of truth); sourcing
+  // risk is a SEPARATE axis, surfaced only when the stock itself is Healthy.
+  const health = stockHealth(comp.stock, comp.minStock)
+  if (health === "Critical") {
     return { text: "Critical", dot: "bg-destructive", bar: "bg-destructive", colorClass: "bg-destructive/10 text-destructive border-destructive/20" }
   }
-  if (comp.stock < comp.minStock) {
+  if (health === "Low") {
     return { text: "Low Stock", dot: "bg-amber-500", bar: "bg-amber-500", colorClass: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" }
   }
   if (comp.purchaseInsights.singleSupplierRisk === "YES") {
@@ -115,6 +124,9 @@ const getStatusInfo = (comp: ComponentData) => {
 }
 
 // Parse "₹0.80" → 0.80 for valuation math
+// A part with no identifier at all (no generic PN and no manufacturer PN).
+const hasNoPn = (c: ComponentData) =>
+  !c.genericPN?.trim() && c.brandVariants.every((bv) => !bv.brandPartNo?.trim())
 const parsePrice = (p: string) => parseFloat(p.replace(/[^\d.]/g, "")) || 0
 const cheapestOffer = (comp: ComponentData) =>
   comp.suppliers.length
@@ -144,8 +156,6 @@ function ComponentListContent() {
     footprint: true
   })
 
-  // Dynamic dropdown lists derived from database
-  const categories = Array.from(new Set(COMPONENTS_DATA.map(c => c.category)))
   const solderTypes = Array.from(new Set(COMPONENTS_DATA.map(c => c.solderType)))
   const footprints = Array.from(new Set(COMPONENTS_DATA.map(c => c.footprint)))
   const brands = Array.from(new Set(COMPONENTS_DATA.flatMap(c => c.brandVariants.map(bv => bv.brand))))
@@ -153,7 +163,8 @@ function ComponentListContent() {
   const stockStatuses = ["Healthy", "Low Stock", "Critical", "Single Supplier Risk"]
 
   // Filters State
-  const [filterCategory, setFilterCategory] = React.useState<string>("All")
+  const [filterCategoryId, setFilterCategoryId] = React.useState<string>("")
+  const [filterNoPn, setFilterNoPn] = React.useState(false)
   const [filterSolderType, setFilterSolderType] = React.useState<string>("All")
   const [filterBrand, setFilterBrand] = React.useState<string>("All")
   const [filterSupplier, setFilterSupplier] = React.useState<string>("All")
@@ -161,12 +172,13 @@ function ComponentListContent() {
   const [filterFootprint, setFilterFootprint] = React.useState<string>("All")
 
   const handleResetFilters = () => {
-    setFilterCategory("All")
+    setFilterCategoryId("")
     setFilterSolderType("All")
     setFilterBrand("All")
     setFilterSupplier("All")
     setFilterStockStatus("All")
     setFilterFootprint("All")
+    setFilterNoPn(false)
     setSearchQuery("")
     setSearchFields({
       genericPN: true,
@@ -189,14 +201,22 @@ function ComponentListContent() {
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [])
 
-  // Auto-open drawer from query params
+  // Auto-open drawer from query params. Depends on COMPONENTS_DATA too, because
+  // the catalog loads asynchronously — on the first render (empty catalog) the
+  // component wouldn't be found, and without this dep the effect would never
+  // re-run once the data arrived, leaving the deep link with no drawer opened.
+  // The ref makes it fire once per distinct param (re-opens on a new param, but
+  // won't fight a manual close or a later data reload).
+  const autoOpenedParamRef = React.useRef<string | null>(null)
   React.useEffect(() => {
     const compParam = searchParams.get("component")
-    if (compParam && COMPONENTS_DATA.some(c => c.id === compParam)) {
+    if (!compParam || autoOpenedParamRef.current === compParam) return
+    if (COMPONENTS_DATA.some(c => c.id === compParam)) {
       setSelectedId(compParam)
       setIsDrawerOpen(true)
+      autoOpenedParamRef.current = compParam
     }
-  }, [searchParams])
+  }, [searchParams, COMPONENTS_DATA])
 
   const selectedComponent = COMPONENTS_DATA.find(c => c.id === selectedId) || COMPONENTS_DATA[0]
 
@@ -229,10 +249,16 @@ function ComponentListContent() {
       if (!matchesQuery) return false
     }
 
-    // Category Selector
-    if (filterCategory !== "All" && comp.category !== filterCategory) return false
+    // Category → Subcategory cascade. Match the most specific selected node (a
+    // chosen subcategory wins over its parent category), including descendants.
+    if (filterCategoryId) {
+      const selPath = data.getCategory(filterCategoryId)?.path
+      const p = comp.categoryPath
+      if (!selPath || !p || (p !== selPath && !p.startsWith(selPath + "/"))) return false
+    }
 
     // Solder Type Selector
+    if (filterNoPn && !hasNoPn(comp)) return false
     if (filterSolderType !== "All" && comp.solderType !== filterSolderType) return false
 
     // Footprint Selector
@@ -268,7 +294,7 @@ function ComponentListContent() {
   const soleSourceCount = COMPONENTS_DATA.filter((c) => c.purchaseInsights.singleSupplierRisk === "YES").length
 
   const kpis = [
-    { title: "Catalog Items", value: COMPONENTS_DATA.length.toLocaleString(), desc: "Active components", icon: Nut, color: "text-primary bg-primary/10 border-primary/20" },
+    { title: "Catalog Items", value: COMPONENTS_DATA.length.toLocaleString(), desc: "Active items", icon: Nut, color: "text-primary bg-primary/10 border-primary/20" },
     { title: "Inventory Value", value: formatINR(totalValue), desc: "At best unit price", icon: Landmark, color: "text-emerald-600 bg-emerald-500/10 border-emerald-500/20" },
     { title: "Low / Critical", value: String(lowOrCritical), desc: "Below safety stock", icon: AlertCircle, color: "text-amber-600 bg-amber-500/10 border-amber-500/20" },
     { title: "Single-Supplier Risk", value: String(soleSourceCount), desc: "Sole-sourced parts", icon: ShieldAlert, color: "text-rose-600 bg-rose-500/10 border-rose-500/20" }
@@ -280,12 +306,12 @@ function ComponentListContent() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
-            <span className="hover:text-foreground transition-colors cursor-pointer">Components</span>
+            <span className="hover:text-foreground transition-colors cursor-pointer">Items</span>
             <span>/</span>
-            <span className="text-foreground font-semibold">Component List</span>
+            <span className="text-foreground font-semibold">Item List</span>
           </div>
           <h1 className="text-3xl font-extrabold tracking-tight text-foreground">
-            Component List
+            Item List
           </h1>
           <p className="text-sm text-muted-foreground">
             Master raw-parts catalog — physical stock levels, sourcing, and safety thresholds.
@@ -300,7 +326,7 @@ function ComponentListContent() {
           </Button>
           <Button className="gap-2 font-semibold" render={<Link href="/components/add" />}>
             <Plus className="h-4 w-4" />
-            <span>Add Component</span>
+            <span>Add Item</span>
           </Button>
         </div>
       </div>
@@ -329,7 +355,7 @@ function ComponentListContent() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search part name, generic P/N, brand, supplier, footprint…"
+            placeholder="Search part name, generic P/N, manufacturer, supplier, footprint…"
             className="pl-9 bg-background border-border h-10 text-sm rounded-lg focus-visible:ring-1 focus-visible:ring-primary"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -341,9 +367,9 @@ function ComponentListContent() {
           <span className="text-xs text-muted-foreground font-semibold">Search by:</span>
           {[
             { id: "genericPN", label: "Generic Part No" },
-            { id: "brandPartNo", label: "Brand Part No" },
+            { id: "brandPartNo", label: "Manufacturer Part No" },
             { id: "name", label: "Name" },
-            { id: "brand", label: "Brand" },
+            { id: "brand", label: "Manufacturer" },
             { id: "supplier", label: "Supplier" },
             { id: "footprint", label: "Footprint" }
           ].map((field) => {
@@ -370,8 +396,19 @@ function ComponentListContent() {
             <div className="flex items-center gap-2">
               <Filter className="h-4.5 w-4.5 text-primary" />
               <span className="text-xs font-bold uppercase tracking-wider text-foreground">Filter Catalog</span>
+              {(() => {
+                const n = COMPONENTS_DATA.filter(hasNoPn).length
+                return n > 0 ? (
+                  <button
+                    onClick={() => setFilterNoPn((v) => !v)}
+                    className={`ml-2 inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-colors ${filterNoPn ? "border-destructive bg-destructive/10 text-destructive" : "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
+                  >
+                    <AlertCircle className="h-3 w-3" /> {n} without part no.
+                  </button>
+                ) : null
+              })()}
             </div>
-            {(filterCategory !== "All" || filterSolderType !== "All" || filterBrand !== "All" || filterSupplier !== "All" || filterStockStatus !== "All" || filterFootprint !== "All") && (
+            {(filterCategoryId !== "" || filterNoPn || filterSolderType !== "All" || filterBrand !== "All" || filterSupplier !== "All" || filterStockStatus !== "All" || filterFootprint !== "All") && (
               <button 
                 onClick={handleResetFilters}
                 className="text-xs text-destructive hover:underline font-semibold cursor-pointer"
@@ -381,17 +418,10 @@ function ComponentListContent() {
             )}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            {/* Category */}
-            <div className="space-y-1">
+            {/* Category — dynamic multi-level cascade (drills into the tree) */}
+            <div className="space-y-1 col-span-2 md:col-span-3 lg:col-span-6">
               <label className="text-[10px] uppercase font-bold text-muted-foreground/80">Category</label>
-              <select 
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-                className="w-full bg-background border border-border rounded-lg text-xs p-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer text-foreground font-semibold"
-              >
-                <option value="All">All Categories</option>
-                {categories.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <CategoryCascade value={filterCategoryId} onChange={setFilterCategoryId} allLabel="All Categories" />
             </div>
             {/* Solder Type */}
             <div className="space-y-1">
@@ -407,13 +437,13 @@ function ComponentListContent() {
             </div>
             {/* Brand */}
             <div className="space-y-1">
-              <label className="text-[10px] uppercase font-bold text-muted-foreground/80">Brand</label>
-              <select 
+              <label className="text-[10px] uppercase font-bold text-muted-foreground/80">Manufacturer</label>
+              <select
                 value={filterBrand}
                 onChange={(e) => setFilterBrand(e.target.value)}
                 className="w-full bg-background border border-border rounded-lg text-xs p-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer text-foreground font-semibold"
               >
-                <option value="All">All Brands</option>
+                <option value="All">All Manufacturers</option>
                 {brands.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
@@ -457,7 +487,7 @@ function ComponentListContent() {
         </div>
       </div>
 
-      {/* Component List Table Card */}
+      {/* Item List Table Card */}
       <Card className="w-full border border-border shadow-2xs overflow-hidden bg-card">
         <CardHeader className="border-b border-border bg-muted/10 px-6 py-4">
           <div className="flex items-center justify-between gap-4">
@@ -479,7 +509,7 @@ function ComponentListContent() {
                   <th scope="col" className="px-6 py-3 font-semibold">Generic Part No</th>
                   <th scope="col" className="px-6 py-3 font-semibold">Name</th>
                   <th scope="col" className="px-6 py-3 font-semibold">Category</th>
-                  <th scope="col" className="px-6 py-3 font-semibold text-center w-20">Brands</th>
+                  <th scope="col" className="px-6 py-3 font-semibold text-center w-20">Manufacturers</th>
                   <th scope="col" className="px-6 py-3 font-semibold text-center w-20">Suppliers</th>
                   <th scope="col" className="px-6 py-3 font-semibold w-44">Stock Level</th>
                   <th scope="col" className="px-6 py-3 font-semibold text-right w-28">Best Price</th>
@@ -503,7 +533,11 @@ function ComponentListContent() {
                       <td className="pl-6 pr-2 py-4">
                         <span className={`block h-2 w-2 rounded-full ${info.dot}`} title={info.text} />
                       </td>
-                      <td className="px-6 py-4 font-mono font-bold text-xs text-primary">{comp.genericPN}</td>
+                      <td className="px-6 py-4 font-mono font-bold text-xs text-primary">
+                        {comp.genericPN || (hasNoPn(comp)
+                          ? <span className="inline-flex items-center gap-1 rounded border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-bold text-destructive not-italic">No P/N</span>
+                          : <span className="text-muted-foreground">—</span>)}
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-2.5">
                           <div className={`h-8 w-8 shrink-0 flex items-center justify-center rounded-lg ${isSelected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}>
@@ -539,7 +573,7 @@ function ComponentListContent() {
                     <td colSpan={9} className="px-6 py-14 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <Search className="h-8 w-8 opacity-30" />
-                        <span className="text-sm font-medium">No components match your search and filters</span>
+                        <span className="text-sm font-medium">No items match your search and filters</span>
                         <button onClick={handleResetFilters} className="text-xs text-primary hover:underline font-semibold cursor-pointer mt-1">
                           Reset all filters
                         </button>
@@ -571,7 +605,7 @@ function ComponentListContent() {
           <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4 shrink-0">
             <div className="flex items-center gap-2">
               <Nut className="h-5 w-5 text-primary" />
-              <h3 className="text-base font-extrabold text-foreground">Component Details</h3>
+              <h3 className="text-base font-extrabold text-foreground">Item Details</h3>
             </div>
             <Button 
               variant="ghost" 
@@ -590,7 +624,7 @@ function ComponentListContent() {
             <div className="space-y-2">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Component Name</span>
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Item Name</span>
                   <h4 className="text-xl font-extrabold text-foreground tracking-tight">{selectedComponent.name}</h4>
                 </div>
                 <Button 
@@ -624,7 +658,7 @@ function ComponentListContent() {
             <div className="space-y-2">
               <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
                 <Info className="h-3.5 w-3.5 text-primary" />
-                Component Information
+                Item Information
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
@@ -674,7 +708,7 @@ function ComponentListContent() {
                   </span>
                 </div>
                 <div className="bg-secondary/40 border border-border/60 p-3 rounded-lg text-center">
-                  <span className="text-[9px] uppercase font-bold text-muted-foreground block">Available Brands</span>
+                  <span className="text-[9px] uppercase font-bold text-muted-foreground block">Available Manufacturers</span>
                   <span className="text-base font-black text-foreground font-mono mt-1 block">
                     {selectedComponent.brandVariants.length}
                   </span>
@@ -701,14 +735,14 @@ function ComponentListContent() {
             <div className="space-y-2">
               <h5 className="text-[11px] uppercase font-bold text-muted-foreground tracking-wider flex items-center gap-1.5">
                 <Tag className="h-3.5 w-3.5 text-primary" />
-                Brand Variants
+                Manufacturer Variants
               </h5>
               <div className="border border-border rounded-lg overflow-hidden bg-muted/5 text-xs">
                 <table className="w-full text-left">
                   <thead className="bg-muted/40 text-muted-foreground text-[9px] uppercase border-b border-border">
                     <tr>
-                      <th className="px-4 py-2 font-bold">Brand</th>
-                      <th className="px-4 py-2 font-bold">Brand Part No</th>
+                      <th className="px-4 py-2 font-bold">Manufacturer</th>
+                      <th className="px-4 py-2 font-bold">Manufacturer Part No</th>
                       <th className="px-4 py-2 font-bold text-right">Stock</th>
                     </tr>
                   </thead>
@@ -865,7 +899,7 @@ export default function ComponentListPage() {
   return (
     <React.Suspense fallback={
       <div className="flex h-[400px] items-center justify-center text-muted-foreground text-sm font-medium">
-        Loading component inventory...
+        Loading item inventory...
       </div>
     }>
       <ComponentListContent />

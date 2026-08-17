@@ -31,6 +31,8 @@ export function StockMoveModal({ mode, componentId, componentName, brandStocks, 
   const [brandId, setBrandId] = React.useState(brandOptions[0]?.id ?? "")
   const [supplierId, setSupplierId] = React.useState("")
   const [qty, setQty] = React.useState("")
+  const [lotNo, setLotNo] = React.useState("")
+  const [expiryDate, setExpiryDate] = React.useState("")
   const [note, setNote] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
 
@@ -38,7 +40,7 @@ export function StockMoveModal({ mode, componentId, componentName, brandStocks, 
 
   const submit = () => {
     const n = Number(qty)
-    if (!brandId) return setError("Select a brand.")
+    if (!brandId) return setError("Select a manufacturer.")
     if (!Number.isFinite(n) || n <= 0) return setError("Enter a quantity greater than 0.")
     if (!isIn && n > brandOnHand) {
       return setError(`Only ${brandOnHand.toLocaleString()} in stock for ${getBrandName(brandId)}.`)
@@ -50,6 +52,7 @@ export function StockMoveModal({ mode, componentId, componentName, brandStocks, 
       direction: mode,
       qty: n,
       note,
+      ...(isIn ? { lotNo, expiryDate } : {}),
     })
   }
 
@@ -87,7 +90,7 @@ export function StockMoveModal({ mode, componentId, componentName, brandStocks, 
 
         <div className="space-y-4 px-5 py-5">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-muted-foreground">Brand / Manufacturer</label>
+            <label className="text-xs font-semibold text-muted-foreground">Manufacturer</label>
             <select
               value={brandId}
               onChange={(e) => { setBrandId(e.target.value); setError(null) }}
@@ -130,6 +133,19 @@ export function StockMoveModal({ mode, componentId, componentName, brandStocks, 
               placeholder="e.g. 2000"
             />
           </div>
+
+          {isIn && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Lot / Batch No.</label>
+                <Input value={lotNo} onChange={(e) => setLotNo(e.target.value)} placeholder="blank → auto" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">Expiry (optional)</label>
+                <Input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-muted-foreground">Note (optional)</label>

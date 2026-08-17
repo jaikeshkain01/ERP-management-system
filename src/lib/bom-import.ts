@@ -9,7 +9,10 @@ import { parseAllSheets, parseSpreadsheetFile, type ParsedSheet } from "@/lib/im
 export interface ImportedBomLine {
   type: string
   name: string
+  /** Manufacturer part number (the BOM's "Part Number" column, by default). */
   partNumber: string
+  /** Internal generic part number — only populated when a "Generic Part No" column exists. */
+  genericPartNumber?: string
   solderType: string
   footprint: string
   qty: number
@@ -36,6 +39,17 @@ export interface BomImportResult {
 const FIELD_ALIASES: Record<BomField, string[]> = {
   type: ["type", "category", "component type", "part type"],
   name: ["name", "description", "component", "value", "part name", "designation"],
+  // Generic (internal) PN is matched FIRST so a "Generic Part No" column claims
+  // it before the manufacturer "Part Number" alias can (Pass 1 exact match).
+  genericPartNumber: [
+    "generic part number",
+    "generic part no",
+    "generic pn",
+    "generic p/n",
+    "internal part number",
+    "internal part no",
+    "internal pn",
+  ],
   partNumber: [
     "part number",
     "part no",
@@ -118,8 +132,9 @@ export function mapSheetToBom(sheet: ParsedSheet): BomImportResult {
     }
     const name = at("name")
     const partNumber = at("partNumber")
+    const genericPartNumber = at("genericPartNumber")
     // Junk / group-separator rows carry neither an identity nor a part number.
-    if (!name && !partNumber) {
+    if (!name && !partNumber && !genericPartNumber) {
       skipped++
       continue
     }
@@ -128,6 +143,7 @@ export function mapSheetToBom(sheet: ParsedSheet): BomImportResult {
       type: at("type"),
       name,
       partNumber,
+      genericPartNumber,
       solderType: at("solderType"),
       footprint: at("footprint"),
       qty: qtyRaw ? Math.max(0, Math.round(toNumber(qtyRaw))) : 1,
@@ -263,7 +279,8 @@ export async function parseBomWorkbook(file: File): Promise<WorkbookBomResult> {
 export const BOM_FIELD_LABELS: Record<BomField, string> = {
   type: "Type",
   name: "Name",
-  partNumber: "Part Number",
+  partNumber: "Manufacturer Part No",
+  genericPartNumber: "Generic Part No",
   solderType: "Solder Type",
   footprint: "Footprint",
   qty: "Quantity",

@@ -24,6 +24,7 @@ import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
+import { pickOutboundLot } from "@/lib/server/data/inventory";
 import { formatINR, formatLeadTime } from "@/lib/catalog";
 
 /** A month bucket of finished-batch output for the Reports yield chart. */
@@ -288,21 +289,14 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
     const now = new Date();
     let consumed = 0;
     for (const a of allocations) {
-      // Issue: append a CONSUMPTION ledger row (on_hand −qty) …
-      await tx.inventory_transactions.create({
-        data: {
-          company_id: ctx.companyId!,
-          type: "CONSUMPTION",
-          component_brand_variant_id: a.component_brand_variant_id,
-          warehouse_id: a.warehouse_id,
-          location_id: a.location_id,
-          qty_delta: -Number(a.qty),
-          ref_type: "production_order",
-          ref_id: po.id,
-          reason: `Consumed by ${orderNo}`,
-          created_by: ctx.userId,
-        },
-      });
+      // Issue: append a CONSUMPTION ledger row (on_hand −qty), FEFO-tagged for traceability.
+      const lotId = await pickOutboundLot(tx, ctx, a.component_brand_variant_id, a.location_id);
+      await tx.$executeRaw`
+        INSERT INTO inventory_transactions
+          (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, reason, created_by)
+        VALUES (${ctx.companyId!}::uuid, 'CONSUMPTION'::inventory_txn_type, ${a.component_brand_variant_id}::uuid,
+                ${a.warehouse_id}::uuid, ${a.location_id}::uuid, ${-Number(a.qty)}, ${lotId}::uuid,
+                'production_order', ${po.id}::uuid, ${`Consumed by ${orderNo}`}, ${ctx.userId}::uuid)`;
       // … record the consumption move …
       await tx.production_material_moves.create({
         data: {

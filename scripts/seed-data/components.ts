@@ -8,7 +8,7 @@ import type { Component } from "./types"
 // as the sum of `brandVariants[].stock` — a single source of truth, mirroring the
 // backend Inventory design (docs/ARCHITECTURE.md §7a). Never edit a component's
 // top-level stock directly; adjust the brand variants.
-const COMPONENT_CATALOG: Component[] = [
+const COMPONENT_CATALOG: Omit<Component, "categoryId" | "categoryPath" | "itemType">[] = [
   {
     id: "resistor-10k",
     genericPN: "RES-10K",
@@ -550,4 +550,7 @@ const COMPONENT_CATALOG: Component[] = [
 export const COMPONENTS: Component[] = COMPONENT_CATALOG.map((c) => ({
   ...c,
   stock: c.brandVariants.reduce((sum, v) => sum + v.stock, 0),
+  categoryId: null,
+  categoryPath: null,
+  itemType: "raw",
 }))

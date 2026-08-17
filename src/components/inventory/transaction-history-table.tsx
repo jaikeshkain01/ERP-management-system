@@ -34,7 +34,8 @@ export function TransactionHistoryTable({
               <tr>
                 <th className="px-3 py-2 text-left font-semibold">Date</th>
                 <th className="px-3 py-2 text-left font-semibold">Type</th>
-                <th className="px-3 py-2 text-left font-semibold">Brand</th>
+                <th className="px-3 py-2 text-left font-semibold">Manufacturer</th>
+                <th className="px-3 py-2 text-left font-semibold">Lot</th>
                 <th className="px-3 py-2 text-left font-semibold">Supplier</th>
                 <th className="px-3 py-2 text-right font-semibold">Qty</th>
                 <th className="px-3 py-2 text-right font-semibold">Balance</th>
@@ -60,6 +61,7 @@ export function TransactionHistoryTable({
                       </span>
                     </td>
                     <td className="px-3 py-2 font-semibold">{getBrandName(r.brandId)}</td>
+                    <td className="px-3 py-2 font-mono text-muted-foreground">{r.lotNo ?? "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{r.supplierId ? getSupplierName(r.supplierId) : "—"}</td>
                     <td className={`px-3 py-2 text-right font-mono font-semibold ${isIn ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
                       {isIn ? "+" : "−"}{r.qty.toLocaleString()}
@@ -71,7 +73,7 @@ export function TransactionHistoryTable({
               })}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
                     No movements recorded yet.
                   </td>
                 </tr>

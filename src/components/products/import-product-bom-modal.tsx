@@ -196,7 +196,7 @@ export function ImportProductBomModal({ onApply, onClose, defaultProductName }: 
                   {chosen.length} of {pcbs.length} sheets selected
                 </span>
                 <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground">{totalComponents} components</span>
+                <span className="text-muted-foreground">{totalComponents} items</span>
                 <span className="text-muted-foreground">·</span>
                 <span className="text-muted-foreground">
                   {totalParts.toLocaleString()} total parts
@@ -248,7 +248,7 @@ export function ImportProductBomModal({ onApply, onClose, defaultProductName }: 
                             ) : null}
                           </div>
                           <div className="text-[11px] text-muted-foreground">
-                            {pcb.lines.length} components · {parts.toLocaleString()} parts
+                            {pcb.lines.length} items · {parts.toLocaleString()} parts
                             {pcb.skippedRows > 0 && ` · ${pcb.skippedRows} blank rows skipped`}
                           </div>
                         </div>
@@ -310,7 +310,7 @@ export function ImportProductBomModal({ onApply, onClose, defaultProductName }: 
                           </table>
                           {pcb.lines.length > preview.length && (
                             <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-                              + {pcb.lines.length - preview.length} more components
+                              + {pcb.lines.length - preview.length} more items
                             </p>
                           )}
                         </div>

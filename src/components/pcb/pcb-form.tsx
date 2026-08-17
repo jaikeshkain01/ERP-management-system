@@ -134,7 +134,7 @@ export function PcbForm({ initial, submitLabel = "Save", busy = false, onSubmit,
         componentId: l.componentId.trim() || undefined,
       }))
 
-    if (bomLines.length === 0) return setError("Add at least one component line (Name or Part Number).")
+    if (bomLines.length === 0) return setError("Add at least one item line (Name or Part Number).")
 
     const layerNum = Math.round(Number(layers) || 0)
     onSubmit({
@@ -299,8 +299,8 @@ export function PcbForm({ initial, submitLabel = "Save", busy = false, onSubmit,
       </div>
 
       <p className="text-[10px] text-muted-foreground">
-        <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to an existing catalog component ·{" "}
-        <Sparkles className="inline h-3 w-3 text-amber-500" /> a new component that will be added to the catalog.
+        <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to an existing catalog item ·{" "}
+        <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be added to the catalog.
       </p>
 
       {error && (

@@ -74,7 +74,7 @@ export default function ProductionReadinessPage() {
       setToast({ message: body?.error?.message ?? "Failed to create Purchase Request", prId: "—" })
     } else {
       setToast({
-        message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of ${READINESS_SHORT_COMPONENT} (Brand: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
+        message: `Successfully generated Purchase Request for ${missingQty.toLocaleString()} units of ${READINESS_SHORT_COMPONENT} (Manufacturer: ${s.brand}) from ${s.supplierName} (Total: ₹${parseFloat(totalCost).toLocaleString()})`,
         prId: body.data.prId,
       })
     }
@@ -157,7 +157,7 @@ export default function ProductionReadinessPage() {
         {/* Left Side: Table Checklist */}
         <Card className="lg:col-span-2 border border-border shadow-sm overflow-hidden">
           <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-            <CardTitle className="text-lg font-bold">Component Allocation Audit</CardTitle>
+            <CardTitle className="text-lg font-bold">Item Allocation Audit</CardTitle>
             <CardDescription>
               {readiness ? `Batch: ${readiness.product} (${readiness.qty.toLocaleString()} Units)` : "Select a product and batch quantity"}
             </CardDescription>
@@ -167,7 +167,7 @@ export default function ProductionReadinessPage() {
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                   <tr>
-                    <th scope="col" className="px-6 py-3 font-semibold">Component</th>
+                    <th scope="col" className="px-6 py-3 font-semibold">Item</th>
                     <th scope="col" className="px-6 py-3 font-semibold">Required</th>
                     {inventoryOn && <th scope="col" className="px-6 py-3 font-semibold">Available</th>}
                     <th scope="col" className="px-6 py-3 font-semibold text-right">Status</th>
@@ -221,7 +221,7 @@ export default function ProductionReadinessPage() {
                 </CardTitle>
               </div>
               <CardDescription className="text-destructive/80 mt-0.5">
-                Batch release cancelled due to component shortages.
+                Batch release cancelled due to item shortages.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -244,7 +244,7 @@ export default function ProductionReadinessPage() {
                     <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                       <tr>
                         <th className="px-3 py-2">Select</th>
-                        <th className="px-3 py-2">Brand</th>
+                        <th className="px-3 py-2">Manufacturer</th>
                         <th className="px-3 py-2">Supplier</th>
                         <th className="px-3 py-2 text-right">Price</th>
                       </tr>

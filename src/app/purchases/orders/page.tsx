@@ -117,7 +117,7 @@ function PurchaseOrdersContent() {
                 <thead className="bg-muted/40 uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                   <tr>
                     <th className="px-6 py-3">PO Number</th>
-                    <th className="px-6 py-3">Component</th>
+                    <th className="px-6 py-3">Item</th>
                     <th className="px-6 py-3">Supplier</th>
                     <th className="px-6 py-3">Quantity</th>
                     <th className="px-6 py-3">Total Cost</th>
@@ -131,7 +131,7 @@ function PurchaseOrdersContent() {
                       <td className="px-6 py-4 font-mono font-bold text-primary">{po.poId}</td>
                       <td className="px-6 py-4">
                         <span className="font-semibold block">{po.componentName}</span>
-                        <span className="text-xs text-muted-foreground">Brand: {po.brandName}</span>
+                        <span className="text-xs text-muted-foreground">Manufacturer: {po.brandName}</span>
                       </td>
                       <td className="px-6 py-4 font-semibold">{po.supplierName}</td>
                       <td className="px-6 py-4 font-mono">{po.qty.toLocaleString()}</td>
@@ -193,7 +193,7 @@ function PurchaseOrdersContent() {
               <div className="border-t border-border/50 pt-3 space-y-2">
                 <span className="font-bold text-foreground block">Stock Replenishment:</span>
                 <p>
-                  Clicking <strong>Receive</strong> updates the status to Completed, confirming delivery of materials. In a full ERP cycle, this action increments physical component inventory.
+                  Clicking <strong>Receive</strong> updates the status to Completed, confirming delivery of materials. In a full ERP cycle, this action increments physical item inventory.
                 </p>
               </div>
               <div className="border-t border-border/50 pt-3 flex justify-between">

@@ -167,7 +167,7 @@ function BrandDashboardContent() {
       })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message || "Failed to delete brand", "error")
+        showToast(body?.error?.message || "Failed to delete manufacturer", "error")
         return
       }
       const deletedId = deleteBrandTarget.id
@@ -177,12 +177,12 @@ function BrandDashboardContent() {
         delete next[deletedId]
         return next
       })
-      showToast(`Brand "${deleteBrandTarget.name}" deleted`)
+      showToast(`Manufacturer "${deleteBrandTarget.name}" deleted`)
       setDeleteBrandTarget(null)
       if (selectedId === deletedId) router.push("/brands/list")
       d.reload()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to delete brand", "error")
+      showToast(err instanceof Error ? err.message : "Failed to delete manufacturer", "error")
     } finally {
       setDeletingBrand(false)
     }
@@ -202,14 +202,14 @@ function BrandDashboardContent() {
       })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message || "Failed to update brand status", "error")
+        showToast(body?.error?.message || "Failed to update manufacturer status", "error")
         return
       }
       setBrands((prev) => (prev[brand.id] ? { ...prev, [brand.id]: { ...prev[brand.id], status: next } } : prev))
-      showToast(`Brand "${brand.name}" ${next === "Inactive" ? "deactivated" : "reactivated"}`)
+      showToast(`Manufacturer "${brand.name}" ${next === "Inactive" ? "deactivated" : "reactivated"}`)
       d.reload()
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to update brand status", "error")
+      showToast(err instanceof Error ? err.message : "Failed to update manufacturer status", "error")
     } finally {
       setTogglingBrandId(null)
     }
@@ -265,14 +265,14 @@ function BrandDashboardContent() {
   const handleAddBrand = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newBrandName.trim() || !newBrandDesc.trim() || !newBrandHQ.trim() || !newBrandFounded.trim()) {
-      showToast("Please fill all brand fields", "error")
+      showToast("Please fill all manufacturer fields", "error")
       return
     }
 
     const brandKey = slugify(newBrandName)
 
     if (brands[brandKey]) {
-      showToast("A brand with this name already exists", "error")
+      showToast("A manufacturer with this name already exists", "error")
       return
     }
 
@@ -289,7 +289,7 @@ function BrandDashboardContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to register brand", "error")
+      showToast(body?.error?.message || "Failed to register manufacturer", "error")
       return
     }
 
@@ -311,7 +311,7 @@ function BrandDashboardContent() {
     setNewBrandFounded("")
     setNewBrandStatus("Approved")
     setActiveModal(null)
-    showToast(`Brand "${newBrand.name}" registered successfully!`)
+    showToast(`Manufacturer "${newBrand.name}" registered successfully!`)
     handleRowClick(brandKey)
   }
 
@@ -321,7 +321,7 @@ function BrandDashboardContent() {
 
     // Check if component already exists in selected brand components
     if (targetBrand.components.some(c => c.id === newCompId)) {
-      showToast("This component is already associated with this brand", "error")
+      showToast("This item is already associated with this manufacturer", "error")
       return
     }
 
@@ -338,7 +338,7 @@ function BrandDashboardContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to link component", "error")
+      showToast(body?.error?.message || "Failed to link item", "error")
       return
     }
 
@@ -356,7 +356,7 @@ function BrandDashboardContent() {
     })
     setNewCompStock("1000")
     setActiveModal(null)
-    showToast(`Component "${newComp.displayName}" linked to ${targetBrand.name}`)
+    showToast(`Item "${newComp.displayName}" linked to ${targetBrand.name}`)
   }
 
   const handleAddSupplier = async (e: React.FormEvent) => {
@@ -365,7 +365,7 @@ function BrandDashboardContent() {
 
     // Check if supplier is already linked to this brand
     if (targetBrand.suppliers.some(s => s.id === newSupName)) {
-      showToast("This supplier is already mapped to this brand", "error")
+      showToast("This supplier is already mapped to this manufacturer", "error")
       return
     }
 
@@ -428,7 +428,7 @@ function BrandDashboardContent() {
   if (!mounted) {
     return (
       <div className="flex h-[400px] items-center justify-center text-muted-foreground text-sm font-medium">
-        Loading Brand Management...
+        Loading Manufacturer Management...
       </div>
     )
   }
@@ -458,7 +458,7 @@ function BrandDashboardContent() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
-              <h3 className="text-lg font-bold text-foreground">Delete Brand</h3>
+              <h3 className="text-lg font-bold text-foreground">Delete Manufacturer</h3>
               <Button
                 variant="ghost"
                 size="icon"
@@ -474,10 +474,10 @@ function BrandDashboardContent() {
                 <AlertCircle className="h-5 w-5 shrink-0" />
                 <p>
                   Deleting <strong>{deleteBrandTarget.name}</strong> removes it from the manufacturer catalog and clears its
-                  price book. A brand used by components, BOM lines or purchase documents cannot be deleted.
+                  price book. A manufacturer used by items, BOM lines or purchase documents cannot be deleted.
                 </p>
               </div>
-              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this brand?</p>
+              <p className="text-sm font-semibold text-foreground/80">Are you sure you want to delete this manufacturer?</p>
               <div className="flex items-center justify-end gap-3 border-t border-border/50 pt-4">
                 <Button variant="outline" onClick={() => setDeleteBrandTarget(null)} disabled={deletingBrand}>
                   Cancel
@@ -487,7 +487,7 @@ function BrandDashboardContent() {
                   disabled={deletingBrand}
                   className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold"
                 >
-                  {deletingBrand ? "Deleting…" : "Delete Brand"}
+                  {deletingBrand ? "Deleting…" : "Delete Manufacturer"}
                 </Button>
               </div>
             </div>
@@ -498,13 +498,13 @@ function BrandDashboardContent() {
       {/* Header */}
       <div className="flex flex-col gap-2">
         <div className="text-sm text-muted-foreground flex items-center gap-2">
-          <span>Brands</span>
+          <span>Manufacturers</span>
           <span>/</span>
-          <span className="text-foreground font-medium">Brand List</span>
+          <span className="text-foreground font-medium">Manufacturer List</span>
         </div>
-        <h1 className="text-3xl font-extrabold tracking-tight">Brand Management</h1>
+        <h1 className="text-3xl font-extrabold tracking-tight">Manufacturer Management</h1>
         <p className="text-muted-foreground">
-          Track approved manufacturer brands, product lineages, and procurement sources.
+          Track approved manufacturers, product lineages, and procurement sources.
         </p>
       </div>
 
@@ -514,7 +514,7 @@ function BrandDashboardContent() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input 
             id="brand-search"
-            placeholder="Search manufacturer brands..." 
+            placeholder="Search manufacturers..."
             className="pl-9 bg-background border-border"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -542,7 +542,7 @@ function BrandDashboardContent() {
             onClick={() => setActiveModal('add-brand')}
           >
             <Plus className="h-4 w-4" />
-            <span>Add Brand</span>
+            <span>Add Manufacturer</span>
           </Button>
         </div>
       </div>
@@ -553,7 +553,7 @@ function BrandDashboardContent() {
         <Card className="border border-border shadow-sm overflow-hidden h-fit">
           <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
             <CardTitle className="text-lg font-bold">Manufacturer Catalog</CardTitle>
-            <CardDescription>Select a manufacturer brand to view detail matrix</CardDescription>
+            <CardDescription>Select a manufacturer to view detail matrix</CardDescription>
           </CardHeader>
           <CardContent className="p-0 divide-y divide-border">
             {filteredBrands.map((b) => {
@@ -583,13 +583,13 @@ function BrandDashboardContent() {
 
                   <div className="flex items-center gap-2">
                     <span className="inline-flex flex-col items-end text-right text-[10px] text-muted-foreground font-semibold">
-                      <span>{b.components.length} components</span>
+                      <span>{b.components.length} items</span>
                       <span>{b.suppliers.length} suppliers</span>
                     </span>
                     <button
                       type="button"
                       aria-label={b.status === "Inactive" ? `Reactivate ${b.name}` : `Deactivate ${b.name}`}
-                      title={b.status === "Inactive" ? "Reactivate brand" : "Deactivate (retire) brand"}
+                      title={b.status === "Inactive" ? "Reactivate manufacturer" : "Deactivate (retire) manufacturer"}
                       disabled={togglingBrandId === b.id}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -619,7 +619,7 @@ function BrandDashboardContent() {
             })}
             {filteredBrands.length === 0 && (
               <div className="p-8 text-center text-muted-foreground text-sm">
-                No manufacturer brands match your search.
+                No manufacturers match your search.
               </div>
             )}
           </CardContent>
@@ -634,9 +634,9 @@ function BrandDashboardContent() {
                   <Award className="h-6 w-6" />
                 </div>
                 <div className="space-y-1">
-                  <p className="text-base font-bold text-foreground">No brand to display</p>
+                  <p className="text-base font-bold text-foreground">No manufacturer to display</p>
                   <p className="text-sm text-muted-foreground max-w-sm">
-                    There are no manufacturer brands yet. Use “Add Brand” to register the first one.
+                    There are no manufacturers yet. Use “Add Manufacturer” to register the first one.
                   </p>
                 </div>
               </CardContent>
@@ -692,7 +692,7 @@ function BrandDashboardContent() {
               {/* KPIs */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-border/50 pt-4">
                 <div className="bg-secondary/40 border border-border/40 p-3 rounded-lg flex flex-col gap-0.5">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Components</span>
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Items</span>
                   <span className="text-lg font-black text-foreground">{selectedBrand.components.length}</span>
                 </div>
                 <div className="bg-secondary/40 border border-border/40 p-3 rounded-lg flex flex-col gap-0.5">
@@ -719,7 +719,7 @@ function BrandDashboardContent() {
               <div className="flex items-center gap-2">
                 <Layers className="h-5 w-5 text-primary" />
                 <div>
-                  <CardTitle className="text-lg font-bold">Components Range</CardTitle>
+                  <CardTitle className="text-lg font-bold">Items Range</CardTitle>
                   <CardDescription>Active parts manufactured by {selectedBrand.name}</CardDescription>
                 </div>
               </div>
@@ -733,7 +733,7 @@ function BrandDashboardContent() {
                 }}
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>Link Component</span>
+                <span>Link Item</span>
               </Button>
             </CardHeader>
             <CardContent className="p-0">
@@ -741,7 +741,7 @@ function BrandDashboardContent() {
                 <table className="w-full text-sm text-left text-foreground">
                   <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                     <tr>
-                      <th scope="col" className="px-6 py-3 font-semibold">Component</th>
+                      <th scope="col" className="px-6 py-3 font-semibold">Item</th>
                       <th scope="col" className="px-6 py-3 font-semibold">Category</th>
                       <th scope="col" className="px-6 py-3 font-semibold">Current Stock</th>
                       <th scope="col" className="px-6 py-3 font-semibold">BOM Status</th>
@@ -778,7 +778,7 @@ function BrandDashboardContent() {
                     {selectedBrand.components.length === 0 && (
                       <tr>
                         <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground text-sm">
-                          No active components mapped to this brand.
+                          No active items mapped to this manufacturer.
                         </td>
                       </tr>
                     )}
@@ -818,7 +818,7 @@ function BrandDashboardContent() {
                   <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                     <tr>
                       <th scope="col" className="px-6 py-3 font-semibold">Distributor Name</th>
-                      <th scope="col" className="px-6 py-3 font-semibold">Est. Brand Pricing</th>
+                      <th scope="col" className="px-6 py-3 font-semibold">Est. Manufacturer Pricing</th>
                       <th scope="col" className="px-6 py-3 font-semibold">MOQ</th>
                       <th scope="col" className="px-6 py-3 font-semibold">Avg. Lead Time</th>
                       <th scope="col" className="px-6 py-3 font-semibold">Rating</th>
@@ -856,7 +856,7 @@ function BrandDashboardContent() {
                     {selectedBrand.suppliers.length === 0 && (
                       <tr>
                         <td colSpan={6} className="px-6 py-8 text-center text-muted-foreground text-sm">
-                          No supplier matrix entries mapped to this brand.
+                          No supplier matrix entries mapped to this manufacturer.
                         </td>
                       </tr>
                     )}
@@ -883,8 +883,8 @@ function BrandDashboardContent() {
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
               <h3 className="text-lg font-bold text-foreground">
-                {activeModal === 'add-brand' && "Register Manufacturer Brand"}
-                {activeModal === 'add-component' && "Link Component Range"}
+                {activeModal === 'add-brand' && "Register Manufacturer"}
+                {activeModal === 'add-component' && "Link Item Range"}
                 {activeModal === 'add-supplier' && "Map Supplier Distribution Matrix"}
               </h3>
               <Button 
@@ -901,7 +901,7 @@ function BrandDashboardContent() {
             {activeModal === 'add-brand' && (
               <form onSubmit={handleAddBrand} className="p-6 space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Manufacturer Name</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Name</label>
                   <Input 
                     placeholder="e.g. Murata" 
                     value={newBrandName}
@@ -941,7 +941,7 @@ function BrandDashboardContent() {
                   </div>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Overview Description</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Overview Description</label>
                   <textarea 
                     className="flex min-h-20 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     placeholder="Overview profile, key focus areas, and compliance remarks..." 
@@ -952,7 +952,7 @@ function BrandDashboardContent() {
                 </div>
                 <div className="flex justify-end gap-2 border-t border-border/40 pt-4 mt-2">
                   <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
-                  <Button type="submit">Register Brand</Button>
+                  <Button type="submit">Register Manufacturer</Button>
                 </div>
               </form>
             )}
@@ -961,7 +961,7 @@ function BrandDashboardContent() {
             {activeModal === 'add-component' && (
               <form onSubmit={handleAddComponent} className="p-6 space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Component Catalog Item</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Catalog Item</label>
                   <select
                     className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                     value={newCompId}
@@ -1004,7 +1004,7 @@ function BrandDashboardContent() {
                 </div>
                 <div className="flex justify-end gap-2 border-t border-border/40 pt-4 mt-2">
                   <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
-                  <Button type="submit">Link Component</Button>
+                  <Button type="submit">Link Item</Button>
                 </div>
               </form>
             )}
@@ -1073,7 +1073,7 @@ export default function BrandDashboardPage() {
   return (
     <React.Suspense fallback={
       <div className="flex h-[400px] items-center justify-center text-muted-foreground text-sm font-medium">
-        Loading Brand Management...
+        Loading Manufacturer Management...
       </div>
     }>
       <BrandDashboardContent />

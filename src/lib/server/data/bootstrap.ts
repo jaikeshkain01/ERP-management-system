@@ -16,6 +16,8 @@ import type {
   Product,
   Spec,
   SolderType,
+  ItemType,
+  ItemCategory,
   PcbStatus,
   ProductStatus,
 } from "@/lib/catalog";
@@ -25,7 +27,7 @@ export async function getBootstrap(): Promise<DataSet> {
   return withTenant(ctx, async (tx) => {
     await assertPermission(tx, ctx, "component.view");
 
-    const [brandRows, supplierRows, compRows, variantRows, offerRows, pcbRows, lineRows, prodRows, ppRows] =
+    const [brandRows, supplierRows, compRows, variantRows, offerRows, pcbRows, lineRows, prodRows, ppRows, categoryRows] =
       await Promise.all([
         tx.$queryRaw<Brand[]>`
           SELECT slug AS id, name, COALESCE(description,'') AS description,
@@ -42,25 +44,28 @@ export async function getBootstrap(): Promise<DataSet> {
           unit: string; solderType: string | null; footprint: string; spq: number | null;
           minStock: number; reorderQty: number; annualConsumption: number; specs: Spec[];
           preferredSupplierId: string | null;
+          categoryId: string | null; categoryPath: string | null; itemType: string;
         }[]>`
-          SELECT generic_pn AS id, generic_pn AS "genericPN", name, COALESCE(category,'') AS category,
+          SELECT COALESCE(NULLIF(generic_pn,''), id::text) AS id, COALESCE(generic_pn,'') AS "genericPN", name, COALESCE(category,'') AS category,
                  COALESCE(description,'') AS description, unit, solder_type AS "solderType",
                  COALESCE(footprint,'') AS footprint, spq, min_stock::float8 AS "minStock",
                  reorder_qty::float8 AS "reorderQty", annual_consumption::float8 AS "annualConsumption",
                  specs,
-                 (SELECT s.slug FROM suppliers s WHERE s.id = components.preferred_supplier_id) AS "preferredSupplierId"
+                 (SELECT s.slug FROM suppliers s WHERE s.id = components.preferred_supplier_id) AS "preferredSupplierId",
+                 category_id AS "categoryId", item_type::text AS "itemType",
+                 (SELECT ic.path FROM item_categories ic WHERE ic.id = components.category_id) AS "categoryPath"
           FROM components WHERE deleted_at IS NULL ORDER BY name`,
-        tx.$queryRaw<{ componentPN: string; brandId: string; partNo: string; stock: number }[]>`
-          SELECT c.generic_pn AS "componentPN", b.slug AS "brandId", v.part_no AS "partNo",
+        tx.$queryRaw<{ variantId: string; componentPN: string; brandId: string; partNo: string; stock: number }[]>`
+          SELECT v.id AS "variantId", COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentPN", b.slug AS "brandId", v.part_no AS "partNo",
                  COALESCE(SUM(ib.on_hand),0)::float8 AS stock
           FROM component_brand_variants v
           JOIN components c ON c.id = v.component_id AND c.deleted_at IS NULL
           JOIN brands b ON b.id = v.brand_id
           LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
           WHERE v.deleted_at IS NULL
-          GROUP BY c.generic_pn, b.slug, v.part_no`,
+          GROUP BY v.id, COALESCE(NULLIF(c.generic_pn,''), c.id::text), b.slug, v.part_no`,
         tx.$queryRaw<{ componentPN: string; supplierId: string; brandId: string; price: number; leadTimeDays: number | null }[]>`
-          SELECT c.generic_pn AS "componentPN", s.slug AS "supplierId", b.slug AS "brandId",
+          SELECT COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentPN", s.slug AS "supplierId", b.slug AS "brandId",
                  scp.price::float8 AS price, scp.lead_time_days AS "leadTimeDays"
           FROM supplier_component_prices scp
           JOIN components c ON c.id = scp.component_id AND c.deleted_at IS NULL
@@ -71,7 +76,7 @@ export async function getBootstrap(): Promise<DataSet> {
           SELECT slug AS id, name, COALESCE(description,'') AS description, layers, status
           FROM pcbs WHERE deleted_at IS NULL ORDER BY name`,
         tx.$queryRaw<{ pcbId: string; componentId: string; qty: number; refDes: string | null; preferredBrandId: string | null; remarks: string | null }[]>`
-          SELECT pc.slug AS "pcbId", c.generic_pn AS "componentId", pl.qty::int AS qty,
+          SELECT pc.slug AS "pcbId", COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentId", pl.qty::int AS qty,
                  pl.ref_des AS "refDes", b.slug AS "preferredBrandId", pl.remarks
           FROM pcbs pc
           JOIN pcb_revisions pr ON pr.pcb_id = pc.id AND pr.status = 'Active' AND pr.deleted_at IS NULL
@@ -91,6 +96,10 @@ export async function getBootstrap(): Promise<DataSet> {
           JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
           JOIN pcbs pc ON pc.id = pr.pcb_id
           WHERE p.deleted_at IS NULL`,
+        tx.$queryRaw<{ id: string; parentId: string | null; name: string; slug: string; path: string; defaultItemType: string | null; sortOrder: number }[]>`
+          SELECT id, parent_id AS "parentId", name, slug, path,
+                 default_item_type::text AS "defaultItemType", sort_order AS "sortOrder"
+          FROM item_categories WHERE deleted_at IS NULL ORDER BY path`,
       ]);
 
     // group children by parent business key
@@ -101,13 +110,15 @@ export async function getBootstrap(): Promise<DataSet> {
 
     const components: Component[] = compRows.map((c) => {
       const brandVariants = (variantsByComp.get(c.id) ?? []).map((v) => ({
-        brandId: v.brandId, partNo: v.partNo, stock: v.stock,
+        id: v.variantId, brandId: v.brandId, partNo: v.partNo, stock: v.stock,
       }));
       const offers = (offersByComp.get(c.id) ?? []).map((o) => ({
         supplierId: o.supplierId, brandId: o.brandId, price: o.price, leadTimeDays: o.leadTimeDays ?? 0,
       }));
       return {
         id: c.id, genericPN: c.genericPN, name: c.name, category: c.category, description: c.description,
+        categoryId: c.categoryId, categoryPath: c.categoryPath,
+        itemType: (c.itemType ?? "raw") as ItemType,
         stock: brandVariants.reduce((s, v) => s + v.stock, 0),
         minStock: c.minStock, reorderQty: c.reorderQty, unit: c.unit,
         bin: "", lastCount: "",
@@ -140,7 +151,12 @@ export async function getBootstrap(): Promise<DataSet> {
         .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0)),
     }));
 
-    return { components, brands: brandRows, suppliers: supplierRows, pcbs, products };
+    const itemCategories: ItemCategory[] = categoryRows.map((r) => ({
+      id: r.id, parentId: r.parentId, name: r.name, slug: r.slug, path: r.path,
+      defaultItemType: (r.defaultItemType ?? null) as ItemType | null, sortOrder: r.sortOrder,
+    }));
+
+    return { components, brands: brandRows, suppliers: supplierRows, pcbs, products, itemCategories };
   });
 }
 

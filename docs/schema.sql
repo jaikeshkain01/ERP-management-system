@@ -61,6 +61,7 @@ CREATE TYPE permission_action    AS ENUM ('view','create','edit','delete','appro
 CREATE TYPE audit_action         AS ENUM ('INSERT','UPDATE','DELETE');
 CREATE TYPE location_kind        AS ENUM ('zone','rack','bin');        -- storage_locations tree (extensible)
 CREATE TYPE material_move_kind   AS ENUM ('allocation','consumption'); -- production_material_moves
+CREATE TYPE item_type            AS ENUM ('raw','semi_assembled','assembled','consumable','asset','packaging'); -- item lifecycle stage
 
 -- ============================================================================
 --  §0  TENANCY ROOT
@@ -241,12 +242,34 @@ CREATE UNIQUE INDEX uq_location_default_bin ON storage_locations (company_id, wa
   WHERE is_default AND kind = 'bin' AND deleted_at IS NULL;
 
 -- NOTE: no stock / bin / last_count here — quantity is owned by the inventory ledger.
+-- item_categories: tenant-scoped category TREE (Phase 2A). Replaces the flat
+-- components.category text; `path` is a materialised slug path for descendant filtering.
+CREATE TABLE item_categories (
+  id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id        uuid NOT NULL REFERENCES companies(id),
+  parent_id         uuid,                   -- up the tree; NULL at a root
+  name              text NOT NULL,
+  slug              text NOT NULL,
+  path              text NOT NULL,          -- 'electronic-components/passive/resistors'
+  default_item_type item_type,              -- pre-fills item_type for items added here
+  sort_order        integer NOT NULL DEFAULT 0,
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id),
+  FOREIGN KEY (company_id, parent_id) REFERENCES item_categories (company_id, id)
+);
+CREATE UNIQUE INDEX uq_item_categories_path ON item_categories (company_id, path) WHERE deleted_at IS NULL;
+
 CREATE TABLE components (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id         uuid NOT NULL REFERENCES companies(id),
   generic_pn         text NOT NULL,          -- internal part number, e.g. RES-10K
   name               text NOT NULL,
-  category           text,                   -- label: Passive, IC, MCU, Connector, … (was categories table)
+  category           text,                   -- LEGACY flat label (kept until fully migrated to category_id)
+  category_id        uuid,                   -- FK into item_categories tree (Phase 2A)
+  item_type          item_type NOT NULL DEFAULT 'raw',  -- lifecycle stage (Phase 2A)
   description        text,
   unit               text NOT NULL DEFAULT 'PCS',
   solder_type        solder_type,
@@ -260,9 +283,11 @@ CREATE TABLE components (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
   deleted_at  timestamptz,
-  UNIQUE (company_id, id)
+  UNIQUE (company_id, id),
+  FOREIGN KEY (company_id, category_id) REFERENCES item_categories (company_id, id)
 );
 CREATE UNIQUE INDEX uq_components_generic_pn ON components (company_id, generic_pn) WHERE deleted_at IS NULL;
+CREATE INDEX ix_components_category ON components (company_id, category_id);
 
 CREATE TABLE pcbs (
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -468,11 +493,37 @@ CREATE TABLE inventory_balances (
 
 -- THE LEDGER — immutable, append-only. No updated_*/deleted_at.
 -- A TRANSFER is recorded as TWO rows (source −qty, dest +qty) sharing transfer_group_id.
+-- item_lots: a traceable batch of a variant (supplier lot / date-code / auto-generated).
+-- Lot detail lives on the LEDGER (inventory_transactions.lot_id); balances stay an
+-- aggregate (variant, location) projection. Per-lot on-hand/value is derived from the ledger.
+CREATE TABLE item_lots (
+  id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id                 uuid NOT NULL REFERENCES companies(id),
+  component_brand_variant_id uuid NOT NULL,
+  lot_no                     text NOT NULL,           -- supplier lot, or auto 'LOT-YYYYMMDD-XXXX' / 'LOT-UNASSIGNED'
+  supplier_id                uuid,
+  received_date              date,
+  mfg_date                   date,
+  expiry_date                date,                    -- drives FEFO consumption
+  unit_cost                  numeric(14,4),           -- per-lot cost → lot valuation
+  date_code                  text,
+  msl                        text,                    -- moisture sensitivity level
+  note                       text,
+  created_by  uuid REFERENCES users(id), updated_by uuid REFERENCES users(id),
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz,
+  UNIQUE (company_id, id),
+  FOREIGN KEY (company_id, component_brand_variant_id) REFERENCES component_brand_variants (company_id, id)
+);
+CREATE UNIQUE INDEX uq_item_lots_no ON item_lots (company_id, component_brand_variant_id, lot_no) WHERE deleted_at IS NULL;
+
 CREATE TABLE inventory_transactions (
   id                         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id                 uuid NOT NULL REFERENCES companies(id),
   type                       inventory_txn_type NOT NULL,
   component_brand_variant_id uuid NOT NULL,
+  lot_id                     uuid NOT NULL,     -- traceable batch (BEFORE-INSERT trigger auto-assigns if omitted)
   warehouse_id               uuid NOT NULL,      -- denormalized from location_id (roll-up + FK guard)
   location_id                uuid NOT NULL,      -- bin leaf; a TRANSFER's two legs carry different locations
   qty_delta                  numeric(14,3) NOT NULL CHECK (qty_delta <> 0),  -- signed
@@ -848,6 +899,30 @@ CREATE TRIGGER trg_apply_inventory_txn
   AFTER INSERT ON inventory_transactions
   FOR EACH ROW EXECUTE FUNCTION apply_inventory_txn();
 
+-- 2b) Auto-assign a lot when the app omits one, so lot_id can be NOT NULL without
+--     touching every insert path (opening stock, receive, consume, transfer, adjust).
+CREATE OR REPLACE FUNCTION assign_default_lot() RETURNS trigger AS $$
+DECLARE v_lot uuid;
+BEGIN
+  IF NEW.lot_id IS NULL THEN
+    SELECT id INTO v_lot FROM item_lots
+      WHERE company_id = NEW.company_id AND component_brand_variant_id = NEW.component_brand_variant_id
+        AND lot_no = 'LOT-UNASSIGNED' AND deleted_at IS NULL LIMIT 1;
+    IF v_lot IS NULL THEN
+      INSERT INTO item_lots (company_id, component_brand_variant_id, lot_no, created_by)
+      VALUES (NEW.company_id, NEW.component_brand_variant_id, 'LOT-UNASSIGNED', NEW.created_by)
+      RETURNING id INTO v_lot;
+    END IF;
+    NEW.lot_id := v_lot;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_assign_default_lot
+  BEFORE INSERT ON inventory_transactions
+  FOR EACH ROW EXECUTE FUNCTION assign_default_lot();
+
 -- 3) Maintain inventory_balances.reserved from ALLOCATION material-moves (available is generated).
 --    Only kind='allocation' rows touch reserved; consumptions hit the ledger instead.
 CREATE OR REPLACE FUNCTION apply_allocation() RETURNS trigger AS $$
@@ -925,7 +1000,7 @@ DECLARE t text;
   audited text[] := ARRAY[
     'companies','users','company_memberships','roles',
     'brands','suppliers','warehouses','storage_locations',
-    'components','pcbs','pcb_revisions','products','bom_versions',
+    'item_lots','item_categories','components','pcbs','pcb_revisions','products','bom_versions',
     'product_pcbs','pcb_lines','component_brand_variants','supplier_component_prices',
     'production_orders','production_order_items',
     'purchase_requests','purchase_request_items','purchase_orders','purchase_order_items',
@@ -965,7 +1040,7 @@ DECLARE t text;
   tenant_tables text[] := ARRAY[
     'roles','role_permissions',
     'brands','suppliers','warehouses','storage_locations',
-    'components','pcbs',
+    'item_lots','item_categories','components','pcbs',
     'pcb_revisions','products','bom_versions',
     'product_pcbs','pcb_lines','component_brand_variants',
     'supplier_component_prices',

@@ -164,7 +164,7 @@ function SupplierDetailsContent() {
     }
 
     if (supplier.parts.some(p => p.partId === newPartId && p.brandId === newBrandId)) {
-      showToast("This exact part and brand is already registered for this supplier", "error")
+      showToast("This exact part and manufacturer is already registered for this supplier", "error")
       return
     }
 
@@ -260,8 +260,8 @@ function SupplierDetailsContent() {
       {/* Summary KPI readout — instrument strip */}
       <StatStrip
         items={[
-          { label: "Components Supplied", value: supplier.componentsSupplied.toLocaleString(), desc: "Active supply parts in catalog", icon: PackageOpen },
-          { label: "Brands Supported", value: supplier.brandsSupported.toLocaleString(), desc: "Authorized manufacturing lines", icon: Award },
+          { label: "Items Supplied", value: supplier.componentsSupplied.toLocaleString(), desc: "Active supply parts in catalog", icon: PackageOpen },
+          { label: "Manufacturers Supported", value: supplier.brandsSupported.toLocaleString(), desc: "Authorized manufacturing lines", icon: Award },
           { label: "Products Impacted", value: supplier.productsImpacted.toLocaleString(), desc: "Downstream assemblies dependent", icon: Layers },
         ]}
       />
@@ -273,7 +273,7 @@ function SupplierDetailsContent() {
             <div className="flex items-center gap-2">
               <PackageOpen className="h-5 w-5 text-primary" />
               <div>
-                <CardTitle className="text-lg font-bold">Components Sold</CardTitle>
+                <CardTitle className="text-lg font-bold">Items Sold</CardTitle>
                 <CardDescription>BOM pricing structures from {supplier.name}</CardDescription>
               </div>
             </div>
@@ -287,7 +287,7 @@ function SupplierDetailsContent() {
               }}
             >
               <Plus className="h-3.5 w-3.5" />
-              <span>Map Component</span>
+              <span>Map Item</span>
             </Button>
           </CardHeader>
           <CardContent className="p-0">
@@ -295,8 +295,8 @@ function SupplierDetailsContent() {
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-xs uppercase bg-muted/40 text-muted-foreground border-b border-border">
                   <tr>
-                    <th scope="col" className="px-6 py-3 font-semibold">Component</th>
-                    <th scope="col" className="px-6 py-3 font-semibold">Brand</th>
+                    <th scope="col" className="px-6 py-3 font-semibold">Item</th>
+                    <th scope="col" className="px-6 py-3 font-semibold">Manufacturer</th>
                     <th scope="col" className="px-6 py-3 font-semibold">Price</th>
                     <th scope="col" className="px-6 py-3 text-right">Lead Time</th>
                   </tr>
@@ -327,7 +327,7 @@ function SupplierDetailsContent() {
                   {supplier.parts.length === 0 && (
                     <tr>
                       <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
-                        No active components supplied by this vendor.
+                        No active items supplied by this vendor.
                       </td>
                     </tr>
                   )}
@@ -408,7 +408,7 @@ function SupplierDetailsContent() {
           >
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
-              <h3 className="text-lg font-bold text-foreground">Map Component & Brand</h3>
+              <h3 className="text-lg font-bold text-foreground">Map Item & Manufacturer</h3>
               <Button 
                 variant="ghost" 
                 size="icon" 
@@ -422,7 +422,7 @@ function SupplierDetailsContent() {
             {/* Modal Body */}
             <form onSubmit={handleAddPart} className="p-6 space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Component</label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Item</label>
                 <select
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                   value={newPartId}
@@ -439,7 +439,7 @@ function SupplierDetailsContent() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Manufacturer Brand</label>
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Select Manufacturer</label>
                 <select
                   className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
                   value={newBrandId}
@@ -480,7 +480,7 @@ function SupplierDetailsContent() {
 
               <div className="flex justify-end gap-2 border-t border-border/40 pt-4 mt-2">
                 <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button>
-                <Button type="submit">Map Component</Button>
+                <Button type="submit">Map Item</Button>
               </div>
             </form>
           </div>

@@ -25,9 +25,28 @@ interface SupplierOffer {
 }
 
 interface MfgVariant {
+  variantId?: string
   manufacturer: string
   mfgPartNo: string
   stock: number
+}
+
+/** A traceable lot row from /api/item-lots (carries the id + all editable fields). */
+interface LotRow {
+  id: string
+  lotNo: string
+  partNo: string | null
+  supplierSlug: string | null
+  supplierName: string | null
+  receivedDate: string | null
+  mfgDate: string | null
+  expiryDate: string | null
+  unitCost: number | null
+  dateCode: string | null
+  msl: string | null
+  note: string | null
+  onHand: number
+  value: number
 }
 
 interface UsageItem {
@@ -91,6 +110,7 @@ function buildComponentsData(d: ReturnType<typeof useData>): Record<string, Comp
           description: c.description,
           usedInList: d.productsUsingComponent(c.id).map((p) => p.code),
           mfgVariants: c.brandVariants.map((v) => ({
+            variantId: v.id,
             manufacturer: d.getBrandName(v.brandId),
             mfgPartNo: v.partNo,
             stock: v.stock,
@@ -123,11 +143,21 @@ function ComponentDetailsContent() {
   const router = useRouter()
   const d = useData()
   const COMPONENTS_DATA = React.useMemo(() => buildComponentsData(d), [d])
-  const componentId = searchParams.get("component") || d.COMPONENTS[0]?.id || ""
+  // The URL param may carry either the internal id or the generic part number,
+  // depending on the linking screen (e.g. purchase-request views only expose the
+  // generic PN). Resolve either to the canonical component id so the correct
+  // record loads instead of silently falling back to the first component.
+  const componentParam = searchParams.get("component") || ""
+  const componentId =
+    (componentParam &&
+      (d.COMPONENTS.find((c) => c.id === componentParam)?.id ??
+        d.COMPONENTS.find((c) => c.genericPN === componentParam)?.id)) ||
+    d.COMPONENTS[0]?.id ||
+    ""
 
   // Component details State
   const [componentsData, setComponentsData] = React.useState<Record<string, ComponentDetailData>>(COMPONENTS_DATA)
-  const [activeModal, setActiveModal] = React.useState<'add-supplier' | 'edit-price' | 'set-preferred' | 'add-variant' | 'delete-component' | null>(null)
+  const [activeModal, setActiveModal] = React.useState<'add-supplier' | 'edit-price' | 'set-preferred' | 'add-variant' | 'edit-variant' | 'delete-variant' | 'edit-lot' | 'delete-lot' | 'delete-component' | null>(null)
   
   // Toast notifications State
   const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
@@ -152,6 +182,28 @@ function ComponentDetailsContent() {
   const [newVariantPartNo, setNewVariantPartNo] = React.useState("")
   const [newVariantStock, setNewVariantStock] = React.useState("")
 
+  // Edit / delete Variant State
+  const [editingVariant, setEditingVariant] = React.useState<MfgVariant | null>(null)
+  const [editVariantMfg, setEditVariantMfg] = React.useState("")
+  const [editVariantPartNo, setEditVariantPartNo] = React.useState("")
+
+  // Edit / delete Lot State
+  const [editingLot, setEditingLot] = React.useState<LotRow | null>(null)
+  const [lotForm, setLotForm] = React.useState({
+    lotNo: "", supplier: "", receivedDate: "", mfgDate: "", expiryDate: "", unitCost: "", dateCode: "", msl: "", note: "",
+  })
+
+  // Live per-lot inventory (on-hand + value + editable metadata) from the item-lots API.
+  const [lots, setLots] = React.useState<LotRow[]>([])
+  const loadLots = React.useCallback(() => {
+    if (!componentId) return
+    fetch(`/api/item-lots?componentId=${encodeURIComponent(componentId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => setLots(b?.data ?? []))
+      .catch(() => {})
+  }, [componentId])
+  React.useEffect(() => { loadLots() }, [loadLots])
+
   // Keep the local view model in sync with the backend data (re-derives after d.reload()).
   React.useEffect(() => {
     setComponentsData(COMPONENTS_DATA)
@@ -175,11 +227,11 @@ function ComponentDetailsContent() {
       <div className="space-y-6">
         <div className="flex flex-col gap-2">
           <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <span>Components</span>
+            <span>Items</span>
             <span>/</span>
-            <span className="text-foreground font-medium">Component Details</span>
+            <span className="text-foreground font-medium">Item Details</span>
           </div>
-          <h1 className="text-3xl font-extrabold tracking-tight">Component Details</h1>
+          <h1 className="text-3xl font-extrabold tracking-tight">Item Details</h1>
         </div>
         <Card className="border border-border shadow-sm">
           <CardContent className="flex flex-col items-center justify-center gap-4 py-16 text-center">
@@ -187,14 +239,14 @@ function ComponentDetailsContent() {
               <Boxes className="h-6 w-6" />
             </div>
             <div className="space-y-1">
-              <p className="text-base font-bold text-foreground">No component to display</p>
+              <p className="text-base font-bold text-foreground">No item to display</p>
               <p className="text-sm text-muted-foreground max-w-sm">
-                There are no components in the system yet. Add a component to view its details, variants, and supplier offers.
+                There are no items in the system yet. Add an item to view its details, variants, and supplier offers.
               </p>
             </div>
             <Button variant="outline" render={<Link href="/components/list" />} className="gap-2 border-border bg-background">
               <ArrowLeft className="h-4 w-4" />
-              <span>Back to Component List</span>
+              <span>Back to Item List</span>
             </Button>
           </CardContent>
         </Card>
@@ -243,7 +295,7 @@ function ComponentDetailsContent() {
     d.reload()
 
     setActiveModal(null)
-    showToast(`Successfully deleted component ${component.name}!`)
+    showToast(`Successfully deleted item ${component.name}!`)
     setTimeout(() => {
       router.push("/components/list")
     }, 1000)
@@ -492,6 +544,123 @@ function ComponentDetailsContent() {
     showToast(`Successfully added variant ${newVariant.manufacturer} ${newVariant.mfgPartNo}!`)
   }
 
+  // ── Variant edit / delete ────────────────────────────────────────────────
+  const openEditVariant = (v: MfgVariant) => {
+    setEditingVariant(v)
+    setEditVariantMfg(v.manufacturer)
+    setEditVariantPartNo(v.mfgPartNo)
+    setActiveModal("edit-variant")
+  }
+
+  const handleEditVariant = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingVariant?.variantId) return
+    if (!editVariantMfg.trim() || !editVariantPartNo.trim()) {
+      showToast("Please fill in all fields", "error")
+      return
+    }
+    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}/variants/${editingVariant.variantId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ brand: editVariantMfg.trim(), partNo: editVariantPartNo.trim() }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to update variant", "error")
+      return
+    }
+    setActiveModal(null)
+    setEditingVariant(null)
+    d.reload()
+    showToast(`Updated variant ${editVariantMfg.trim()} ${editVariantPartNo.trim()}`)
+  }
+
+  const handleDeleteVariant = async () => {
+    if (!editingVariant?.variantId) return
+    const res = await fetch(`/api/components/${encodeURIComponent(componentId)}/variants/${editingVariant.variantId}`, { method: "DELETE" })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to delete variant", "error")
+      setActiveModal(null)
+      return
+    }
+    setActiveModal(null)
+    setEditingVariant(null)
+    d.reload()
+    showToast(`Removed variant ${editingVariant.manufacturer} ${editingVariant.mfgPartNo}`)
+  }
+
+  // ── Lot edit / delete ────────────────────────────────────────────────────
+  const openEditLot = (l: LotRow) => {
+    setEditingLot(l)
+    setLotForm({
+      lotNo: l.lotNo,
+      supplier: l.supplierSlug ?? "",
+      receivedDate: l.receivedDate ?? "",
+      mfgDate: l.mfgDate ?? "",
+      expiryDate: l.expiryDate ?? "",
+      unitCost: l.unitCost != null ? String(l.unitCost) : "",
+      dateCode: l.dateCode ?? "",
+      msl: l.msl ?? "",
+      note: l.note ?? "",
+    })
+    setActiveModal("edit-lot")
+  }
+
+  const handleEditLot = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingLot) return
+    if (!lotForm.lotNo.trim()) {
+      showToast("Lot number is required", "error")
+      return
+    }
+    // Send only the editable fields; blank dates/cost clear the column.
+    const payload = {
+      lotNo: lotForm.lotNo.trim(),
+      supplier: lotForm.supplier || null,
+      receivedDate: lotForm.receivedDate || null,
+      mfgDate: lotForm.mfgDate || null,
+      expiryDate: lotForm.expiryDate || null,
+      unitCost: lotForm.unitCost.trim() === "" ? null : Number(lotForm.unitCost),
+      dateCode: lotForm.dateCode.trim() || null,
+      msl: lotForm.msl.trim() || null,
+      note: lotForm.note.trim() || null,
+    }
+    if (payload.unitCost != null && (isNaN(payload.unitCost) || payload.unitCost < 0)) {
+      showToast("Unit cost must be a valid non-negative number", "error")
+      return
+    }
+    const res = await fetch(`/api/item-lots/${editingLot.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to update lot", "error")
+      return
+    }
+    setActiveModal(null)
+    setEditingLot(null)
+    loadLots()
+    showToast(`Updated lot ${payload.lotNo}`)
+  }
+
+  const handleDeleteLot = async () => {
+    if (!editingLot) return
+    const res = await fetch(`/api/item-lots/${editingLot.id}`, { method: "DELETE" })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) {
+      showToast(body?.error?.message || "Failed to delete lot", "error")
+      setActiveModal(null)
+      return
+    }
+    setActiveModal(null)
+    setEditingLot(null)
+    loadLots()
+    showToast(`Deleted lot ${editingLot.lotNo}`)
+  }
+
   const handleEditSupplierChange = (supName: string) => {
     setEditSupplierName(supName)
     const supplier = component.suppliers.find(s => s.name === supName)
@@ -519,9 +688,9 @@ function ComponentDetailsContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/80 pb-5">
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
-            <span>Components</span>
+            <span>Items</span>
             <span>/</span>
-            <Link href="/components/list" className="hover:text-foreground transition-colors font-medium">Component List</Link>
+            <Link href="/components/list" className="hover:text-foreground transition-colors font-medium">Item List</Link>
             <span>/</span>
             <span className="text-foreground font-bold">{component.name}</span>
           </div>
@@ -581,7 +750,7 @@ function ComponentDetailsContent() {
         {[
           { label: "Total Stock", value: calculatedTotalStock.toLocaleString(), sub: component.unit, icon: Boxes, accent: "text-primary bg-primary/10" },
           { label: "Stock Health", value: `${stockPct}%`, sub: isHealthy ? "Healthy" : "Below min", icon: Gauge, accent: isHealthy ? "text-emerald-600 bg-emerald-500/10" : "text-destructive bg-destructive/10" },
-          { label: "Variants", value: String(component.mfgVariants.length), sub: "Approved brands", icon: Wrench, accent: "text-primary bg-primary/10" },
+          { label: "Variants", value: String(component.mfgVariants.length), sub: "Approved manufacturers", icon: Wrench, accent: "text-primary bg-primary/10" },
           { label: "Suppliers", value: String(component.suppliers.length), sub: singleSupplierRisk ? "Sole source" : "Multi-source", icon: Truck, accent: singleSupplierRisk ? "text-amber-500 bg-amber-500/10" : "text-primary bg-primary/10" },
           { label: "Best Price", value: cheapestSupplier ? cheapestSupplier.price : "—", sub: cheapestSupplier ? cheapestSupplier.name : "No offers", icon: TrendingDown, accent: "text-emerald-600 bg-emerald-500/10" },
           { label: "Used In", value: String(component.usedInProductsCount), sub: `${component.usedInPCBsCount} PCBs`, icon: Layers, accent: "text-primary bg-primary/10" },
@@ -608,6 +777,51 @@ function ComponentDetailsContent() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Side: Info & Lists */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Lot Inventory — per-lot on-hand + value (live from the stock API) */}
+          {lots.length > 0 && (
+            <Card className="border border-border shadow-sm overflow-hidden">
+              <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
+                <CardTitle className="text-lg font-bold">Lot Inventory</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-muted-foreground text-[11px] uppercase">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold">Lot / Batch</th>
+                      <th className="px-4 py-2 text-left font-semibold">Mfr PN</th>
+                      <th className="px-4 py-2 text-left font-semibold">Expiry</th>
+                      <th className="px-4 py-2 text-right font-semibold">On Hand</th>
+                      <th className="px-4 py-2 text-right font-semibold">Unit Cost</th>
+                      <th className="px-4 py-2 text-right font-semibold">Value</th>
+                      <th className="px-4 py-2 text-right font-semibold">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {lots.map((l) => (
+                      <tr key={l.id} className="hover:bg-muted/10">
+                        <td className="px-4 py-2 font-mono font-semibold">{l.lotNo}</td>
+                        <td className="px-4 py-2 font-mono text-muted-foreground">{l.partNo ?? "—"}</td>
+                        <td className="px-4 py-2">{l.expiryDate ?? "—"}</td>
+                        <td className="px-4 py-2 text-right font-mono">{l.onHand.toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right font-mono">{l.unitCost != null ? `₹${l.unitCost}` : "—"}</td>
+                        <td className="px-4 py-2 text-right font-mono font-semibold">₹{Math.round(l.value).toLocaleString()}</td>
+                        <td className="px-4 py-2 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Edit lot" onClick={() => openEditLot(l)}>
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Delete lot" onClick={() => { setEditingLot(l); setActiveModal("delete-lot") }}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
           {/* Card 1: Specifications (Consolidated Field | Value Layout) */}
           <Card className="border border-border shadow-sm overflow-hidden">
             <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
@@ -644,7 +858,7 @@ function ComponentDetailsContent() {
               <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">
                   <Wrench className="h-5 w-5 text-primary" />
-                  <CardTitle className="text-lg font-bold">Brand Variants</CardTitle>
+                  <CardTitle className="text-lg font-bold">Manufacturer Variants</CardTitle>
                 </div>
                 <Button 
                   size="sm"
@@ -665,9 +879,10 @@ function ComponentDetailsContent() {
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="bg-muted/40 text-muted-foreground border-b border-border font-bold uppercase text-[10px]">
                   <tr>
-                    <th scope="col" className="px-6 py-3">Brand</th>
-                    <th scope="col" className="px-6 py-3">Brand Part No</th>
+                    <th scope="col" className="px-6 py-3">Manufacturer</th>
+                    <th scope="col" className="px-6 py-3">Manufacturer Part No</th>
                     <th scope="col" className="px-6 py-3 text-right">Stock</th>
+                    <th scope="col" className="px-6 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -686,13 +901,27 @@ function ComponentDetailsContent() {
                           <span className="font-mono text-xs font-bold w-16 text-right">{(variant.stock || 0).toLocaleString()}</span>
                         </div>
                       </td>
+                      <td className="px-6 py-3.5 text-right">
+                        {variant.variantId ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" title="Edit variant" onClick={() => openEditVariant(variant)}>
+                              <Edit2 className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="Delete variant" onClick={() => { setEditingVariant(variant); setActiveModal("delete-variant") }}>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground/60">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {(!component.mfgVariants || component.mfgVariants.length === 0) && (
                     <tr>
-                      <td colSpan={3} className="px-6 py-8 text-center text-muted-foreground">
+                      <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
                         <Inbox className="h-8 w-8 mx-auto text-muted-foreground/60 mb-2" />
-                        No brand variants registered.
+                        No manufacturer variants registered.
                       </td>
                     </tr>
                   )}
@@ -994,7 +1223,11 @@ function ComponentDetailsContent() {
                 {activeModal === 'edit-price' && "Edit Supplier Agreement Price"}
                 {activeModal === 'set-preferred' && "Set Preferred Supplier"}
                 {activeModal === 'add-variant' && "Add Approved Variant"}
-                {activeModal === 'delete-component' && "Confirm Component Deletion"}
+                {activeModal === 'edit-variant' && "Edit Manufacturer Variant"}
+                {activeModal === 'delete-variant' && "Remove Variant"}
+                {activeModal === 'edit-lot' && "Edit Lot / Batch"}
+                {activeModal === 'delete-lot' && "Delete Lot / Batch"}
+                {activeModal === 'delete-component' && "Confirm Item Deletion"}
               </h3>
               <Button 
                 variant="ghost" 
@@ -1012,11 +1245,11 @@ function ComponentDetailsContent() {
                 <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
                   <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
                   <p>
-                    Warning: Deleting <strong>{component.name}</strong> will permanently remove it from the component catalog indexes and local storage catalogs.
+                    Warning: Deleting <strong>{component.name}</strong> will permanently remove it from the item catalog indexes and local storage catalogs.
                   </p>
                 </div>
                 <p className="text-sm text-foreground/80 leading-normal font-semibold">
-                  Are you sure you want to delete this component?
+                  Are you sure you want to delete this item?
                 </p>
                 <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
                   <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
@@ -1035,9 +1268,9 @@ function ComponentDetailsContent() {
             {activeModal === 'add-supplier' && (
               <form onSubmit={handleAddSupplier} className="p-6 space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Name</label>
-                  <Input 
-                    placeholder="e.g. Yageo" 
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Name</label>
+                  <Input
+                    placeholder="e.g. Yageo"
                     value={newSupplierMfg}
                     onChange={(e) => setNewSupplierMfg(e.target.value)}
                     required
@@ -1183,16 +1416,16 @@ function ComponentDetailsContent() {
             {activeModal === 'add-variant' && (
               <form onSubmit={handleAddVariant} className="p-6 space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Name</label>
-                  <Input 
-                    placeholder="e.g. Panasonic" 
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Name</label>
+                  <Input
+                    placeholder="e.g. Panasonic"
                     value={newVariantMfg}
                     onChange={(e) => setNewVariantMfg(e.target.value)}
                     required
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Brand Part Number</label>
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Part Number</label>
                   <Input 
                     placeholder="e.g. ERJ2RK" 
                     value={newVariantPartNo}
@@ -1215,6 +1448,109 @@ function ComponentDetailsContent() {
                 </div>
               </form>
             )}
+
+            {/* Edit Variant Form */}
+            {activeModal === 'edit-variant' && (
+              <form onSubmit={handleEditVariant} className="p-6 space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Name</label>
+                  <Input placeholder="e.g. Panasonic" value={editVariantMfg} onChange={(e) => setEditVariantMfg(e.target.value)} required />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Manufacturer Part Number</label>
+                  <Input placeholder="e.g. ERJ2RK" value={editVariantPartNo} onChange={(e) => setEditVariantPartNo(e.target.value)} required />
+                </div>
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
+                  <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
+                  <Button type="submit">Save Changes</Button>
+                </div>
+              </form>
+            )}
+
+            {/* Delete Variant Confirm */}
+            {activeModal === 'delete-variant' && editingVariant && (
+              <div className="p-6 space-y-4">
+                <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
+                  <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+                  <p>Removing <strong>{editingVariant.manufacturer} {editingVariant.mfgPartNo}</strong> is blocked if it has stock movements or a supplier price.</p>
+                </div>
+                <p className="text-sm text-foreground/80 leading-normal font-semibold">Remove this manufacturer variant?</p>
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
+                  <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
+                  <Button type="button" onClick={handleDeleteVariant} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold">Remove Variant</Button>
+                </div>
+              </div>
+            )}
+
+            {/* Edit Lot Form */}
+            {activeModal === 'edit-lot' && editingLot && (
+              <form onSubmit={handleEditLot} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Lot / Batch No</label>
+                    <Input value={lotForm.lotNo} onChange={(e) => setLotForm({ ...lotForm, lotNo: e.target.value })} required />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Supplier</label>
+                    <select
+                      value={lotForm.supplier}
+                      onChange={(e) => setLotForm({ ...lotForm, supplier: e.target.value })}
+                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    >
+                      <option value="">— None —</option>
+                      {d.SUPPLIERS.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Received Date</label>
+                    <Input type="date" value={lotForm.receivedDate} onChange={(e) => setLotForm({ ...lotForm, receivedDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mfg Date</label>
+                    <Input type="date" value={lotForm.mfgDate} onChange={(e) => setLotForm({ ...lotForm, mfgDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Expiry Date</label>
+                    <Input type="date" value={lotForm.expiryDate} onChange={(e) => setLotForm({ ...lotForm, expiryDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unit Cost (₹)</label>
+                    <Input type="number" step="0.0001" min="0" value={lotForm.unitCost} onChange={(e) => setLotForm({ ...lotForm, unitCost: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date Code</label>
+                    <Input value={lotForm.dateCode} onChange={(e) => setLotForm({ ...lotForm, dateCode: e.target.value })} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">MSL</label>
+                    <Input value={lotForm.msl} onChange={(e) => setLotForm({ ...lotForm, msl: e.target.value })} />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Note</label>
+                  <Input value={lotForm.note} onChange={(e) => setLotForm({ ...lotForm, note: e.target.value })} />
+                </div>
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
+                  <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
+                  <Button type="submit">Save Lot</Button>
+                </div>
+              </form>
+            )}
+
+            {/* Delete Lot Confirm */}
+            {activeModal === 'delete-lot' && editingLot && (
+              <div className="p-6 space-y-4">
+                <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
+                  <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+                  <p>Deleting lot <strong>{editingLot.lotNo}</strong> is blocked if it has any stock movements. Only unused lots can be removed.</p>
+                </div>
+                <p className="text-sm text-foreground/80 leading-normal font-semibold">Delete this lot?</p>
+                <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/50">
+                  <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
+                  <Button type="button" onClick={handleDeleteLot} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold">Delete Lot</Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1226,7 +1562,7 @@ export default function ComponentDetailsPage() {
   return (
     <React.Suspense fallback={
       <div className="flex h-[400px] items-center justify-center text-muted-foreground text-sm font-medium">
-        Loading component parameters...
+        Loading item parameters...
       </div>
     }>
       <ComponentDetailsContent />

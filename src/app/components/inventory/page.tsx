@@ -18,9 +18,7 @@ import { useStockLedger } from "@/lib/use-stock-ledger"
 import type { BrandStock, NewTransactionInput } from "@/lib/stock-ledger"
 import { StockMoveModal } from "@/components/inventory/stock-move-modal"
 import { TransactionHistoryTable } from "@/components/inventory/transaction-history-table"
-
-// --- Types ---
-type StockStatus = "Healthy" | "Low" | "Critical" | "Out of Stock"
+import { stockStatus, type StockStatus } from "@/lib/stock-status"
 
 interface BrandVariant {
   brand: string
@@ -107,12 +105,7 @@ function buildInventory(
 }
 
 // --- Helpers ---
-function getStatus(item: InventoryItem): StockStatus {
-  if (item.stock === 0) return "Out of Stock"
-  if (item.stock < item.minStock * 0.5) return "Critical"
-  if (item.stock < item.minStock) return "Low"
-  return "Healthy"
-}
+const getStatus = (item: InventoryItem): StockStatus => stockStatus(item.stock, item.minStock)
 
 const STATUS_STYLES: Record<StockStatus, { pill: string; bar: string; dot: string }> = {
   Healthy: {
@@ -232,7 +225,7 @@ export default function InventoryPage() {
       {/* Header */}
       <div className="flex flex-col gap-2">
         <div className="text-sm text-muted-foreground flex items-center gap-2">
-          <span>Components</span>
+          <span>Items</span>
           <span>/</span>
           <span className="text-foreground font-medium">Inventory</span>
         </div>
@@ -240,7 +233,7 @@ export default function InventoryPage() {
           <div>
             <h1 className="text-3xl font-extrabold tracking-tight">Inventory</h1>
             <p className="text-muted-foreground mt-1">
-              Stock levels, valuation, bin allocation, and supplier coverage across the component catalog.
+              Stock levels, valuation, bin allocation, and supplier coverage across the item catalog.
             </p>
           </div>
         </div>
@@ -283,7 +276,7 @@ export default function InventoryPage() {
                   value={draftQuery}
                   onChange={(e) => setDraftQuery(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submitSearch()}
-                  placeholder="Search part, P/N, brand, bin…"
+                  placeholder="Search part, P/N, manufacturer, bin…"
                   className="h-9 w-full pl-8 pr-8 sm:w-72"
                 />
                 {draftQuery && (
@@ -342,7 +335,7 @@ export default function InventoryPage() {
             <table className="w-full text-sm text-left text-foreground">
               <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border tracking-wide">
                 <tr>
-                  <th className="px-6 py-3 font-semibold">Component</th>
+                  <th className="px-6 py-3 font-semibold">Item</th>
                   <th className="px-6 py-3 font-semibold">Category</th>
                   <th className="px-6 py-3 font-semibold w-[200px]">Stock Level</th>
                   <th className="px-6 py-3 font-semibold text-right">Value</th>
@@ -474,13 +467,13 @@ export default function InventoryPage() {
                               {/* Brand variants */}
                               <div className="space-y-3">
                                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                  <Tag className="h-3.5 w-3.5" /> Brand Variants
+                                  <Tag className="h-3.5 w-3.5" /> Manufacturer Variants
                                 </h4>
                                 <div className="rounded-lg border border-border overflow-hidden bg-background">
                                   <table className="w-full text-xs">
                                     <thead className="bg-muted/40 text-muted-foreground">
                                       <tr>
-                                        <th className="px-3 py-2 text-left font-semibold">Brand</th>
+                                        <th className="px-3 py-2 text-left font-semibold">Manufacturer</th>
                                         <th className="px-3 py-2 text-left font-semibold">Part No.</th>
                                         <th className="px-3 py-2 text-right font-semibold">Stock</th>
                                       </tr>
@@ -536,9 +529,9 @@ export default function InventoryPage() {
                                   variant="outline"
                                   size="sm"
                                   className="h-8 text-xs font-semibold w-full cursor-pointer"
-                                  render={<Link href="/components/details" />}
+                                  render={<Link href={`/components/details?component=${encodeURIComponent(item.id)}`} />}
                                 >
-                                  View full component record
+                                  View full item record
                                   <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
                                 </Button>
                               </div>
@@ -560,7 +553,7 @@ export default function InventoryPage() {
                     <td colSpan={7} className="px-6 py-16 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <Search className="h-8 w-8 opacity-30" />
-                        <span className="text-sm font-medium">No components match your search</span>
+                        <span className="text-sm font-medium">No items match your search</span>
                         <span className="text-xs">Try a different term or reset the filters</span>
                         <Button variant="outline" size="sm" className="mt-2 cursor-pointer" onClick={() => { clearSearch(); setCategory("All"); setStatusFilter("All") }}>
                           Reset filters
@@ -578,7 +571,7 @@ export default function InventoryPage() {
             <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-6 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>
                 Showing <strong className="text-foreground font-mono">{rows.length}</strong> of{" "}
-                <strong className="text-foreground font-mono">{INVENTORY.length}</strong> components
+                <strong className="text-foreground font-mono">{INVENTORY.length}</strong> items
               </span>
               <span className="flex items-center gap-1.5">
                 <DollarSign className="h-3.5 w-3.5" />

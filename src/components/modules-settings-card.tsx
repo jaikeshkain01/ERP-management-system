@@ -33,7 +33,7 @@ export function ModulesSettingsCard() {
             <div className="min-w-0 flex-1">
               <p className="text-sm font-bold text-foreground">Base Platform</p>
               <p className="text-xs text-muted-foreground">
-                Dashboard, master data (components, products, PCBs, suppliers, brands) and settings.
+                Dashboard, master data (items, products, PCBs, suppliers, manufacturers) and settings.
               </p>
             </div>
             <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary">

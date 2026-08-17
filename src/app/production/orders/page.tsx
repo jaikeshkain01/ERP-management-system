@@ -94,7 +94,7 @@ export default function ProductionOrdersPage() {
         const shorts = body?.error?.details?.shorts
         showToast(
           shorts?.length
-            ? `${order.id}: ${shorts.length} component${shorts.length > 1 ? "s" : ""} short — can't reserve stock.`
+            ? `${order.id}: ${shorts.length} item${shorts.length > 1 ? "s" : ""} short — can't reserve stock.`
             : body?.error?.message ?? `Failed to advance ${order.id}`,
           "error",
         )
@@ -103,7 +103,7 @@ export default function ProductionOrdersPage() {
       const msg: Record<StatusColumn, string> = {
         Draft: "",
         Ready: `${order.id} allocated — stock reserved for the batch.`,
-        "In Progress": `${order.id} released to the floor — components consumed from inventory.`,
+        "In Progress": `${order.id} released to the floor — items consumed from inventory.`,
         Completed: `${order.id} completed — batch closed.`,
       }
       showToast(msg[target])
@@ -372,7 +372,7 @@ function PlanModal({ orderId, onClose }: { orderId: string; onClose: () => void 
               <table className="w-full text-sm text-left">
                 <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                   <tr>
-                    <th className="px-4 py-2.5">Component</th>
+                    <th className="px-4 py-2.5">Item</th>
                     <th className="px-4 py-2.5 text-right">Required</th>
                     <th className="px-4 py-2.5 text-right">Available</th>
                     <th className="px-4 py-2.5 text-right">Allocated</th>
@@ -402,7 +402,7 @@ function PlanModal({ orderId, onClose }: { orderId: string; onClose: () => void 
                   ))}
                   {items.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No planned components.</td>
+                      <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">No planned items.</td>
                     </tr>
                   )}
                 </tbody>

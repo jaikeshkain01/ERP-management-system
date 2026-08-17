@@ -629,10 +629,10 @@ function ProductStructureContent() {
                   <CardDescription>
                     {isUserProduct
                       ? viewMode === "tree"
-                        ? `BOM ${displayVersion} for ${displayName}, grouped by component type.`
+                        ? `BOM ${displayVersion} for ${displayName}, grouped by item type.`
                         : `Flat BOM sheet (${displayVersion}) for ${displayName}.`
                       : viewMode === "tree"
-                        ? `Visual breakdown of ${displayName} components. Click on a component to view specifications.`
+                        ? `Visual breakdown of ${displayName} items. Click on an item to view specifications.`
                         : `Flat BOM sheet for ${displayName} across all PCBs. Click a row to view details.`}
                   </CardDescription>
                 </div>
@@ -756,7 +756,7 @@ function ProductStructureContent() {
                                       <span className="font-mono font-bold text-primary">{detail ? detail.genericPN : (component.lookupId?.toUpperCase() || "N/A")}</span>
                                     </div>
                                     <div className="flex flex-col items-end">
-                                      <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Approved Brands</span>
+                                      <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Approved Manufacturers</span>
                                       <span className="font-extrabold text-foreground">{detail ? detail.brands.length : (component.brandsCount || 0)}</span>
                                     </div>
                                   </div>
@@ -769,7 +769,7 @@ function ProductStructureContent() {
                                         onClick={() => toggleComponentExpand(toggleKey)}
                                         className="flex items-center gap-1 text-[9px] uppercase font-bold text-muted-foreground/70 hover:text-primary transition-colors"
                                       >
-                                        <span>Approved Brands</span>
+                                        <span>Approved Manufacturers</span>
                                         <span className="font-mono text-[10px]">{isExpanded ? "▲" : "▼"}</span>
                                       </button>
                                       
@@ -996,14 +996,14 @@ function ProductStructureContent() {
                     <span className="font-bold text-foreground text-sm">{displayPcbCount}</span>
                   </div>
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">{isUserProduct ? "BOM Lines" : "Unique Components"}</span>
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">{isUserProduct ? "BOM Lines" : "Unique Items"}</span>
                     <span className="font-bold text-foreground text-sm">{displayUniqueCount}</span>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4 border-t border-border/50 pt-3">
                   <div className="flex flex-col gap-1">
-                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Total Components</span>
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground/60 font-semibold">Total Items</span>
                     <span className="font-bold text-foreground text-sm">{displayTotalCount.toLocaleString()}</span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -1071,7 +1071,7 @@ function ProductStructureContent() {
             <div className="flex items-center justify-between border-b border-border pb-4">
               <div className="flex items-center gap-2">
                 <Nut className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-bold text-foreground">Component Details Drawer</h3>
+                <h3 className="text-lg font-bold text-foreground">Item Details Drawer</h3>
               </div>
               <Button 
                 variant="ghost" 
@@ -1132,13 +1132,13 @@ function ProductStructureContent() {
             <div className="space-y-2.5">
               <div className="flex items-center gap-1.5">
                 <ShieldCheck className="h-4 w-4 text-primary" />
-                <span className="text-xs uppercase font-bold text-muted-foreground/70 tracking-wider">Approved Brands ({selectedComponentDetail.brands.length})</span>
+                <span className="text-xs uppercase font-bold text-muted-foreground/70 tracking-wider">Approved Manufacturers ({selectedComponentDetail.brands.length})</span>
               </div>
               <div className="border border-border rounded-lg overflow-hidden text-xs">
                 <table className="w-full text-left text-foreground">
                   <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-semibold">
                     <tr>
-                      <th scope="col" className="px-4 py-2">Brand</th>
+                      <th scope="col" className="px-4 py-2">Manufacturer</th>
                       <th scope="col" className="px-4 py-2 text-right">Status</th>
                     </tr>
                   </thead>
@@ -1210,7 +1210,7 @@ function ProductStructureContent() {
                 render={<Link href={`/components/details?component=${selectedComponentDetail.id}`} />}
                 onClick={() => setSelectedCompId(null)}
               >
-                <span>Open Full Component Dashboard</span>
+                <span>Open Full Item Dashboard</span>
               </Button>
             </div>
           </div>
@@ -1267,7 +1267,7 @@ function ProductStructureContent() {
               <div className="flex items-start gap-3 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-xs font-semibold leading-relaxed text-destructive">
                 <AlertCircle className="h-5 w-5 shrink-0" />
                 <p>
-                  Deleting <strong>{displayName}</strong> removes it from the product list. Its PCBs and components stay
+                  Deleting <strong>{displayName}</strong> removes it from the product list. Its PCBs and items stay
                   in the catalog. A product with production orders cannot be deleted.
                 </p>
               </div>

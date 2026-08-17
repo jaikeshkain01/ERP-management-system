@@ -291,10 +291,7 @@ export default function ProductListPage() {
             <PencilRuler className="h-4 w-4" />
             <span>Add Manually</span>
           </Button>
-          <Button
-            onClick={() => setIsImportOpen(true)}
-            className="gap-2 font-semibold"
-          >
+          <Button render={<Link href="/products/import" />} className="gap-2 font-semibold">
             <Upload className="h-4 w-4" />
             <span>Import BOM</span>
           </Button>
@@ -401,7 +398,7 @@ export default function ProductListPage() {
                     <Nut className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Components</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Items</span>
                     <span className="text-sm font-black mt-1 text-foreground">{product.components}</span>
                   </div>
                 </div>
@@ -412,7 +409,7 @@ export default function ProductListPage() {
                     <Award className="h-4 w-4 text-purple-600 dark:text-purple-400" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Brands</span>
+                    <span className="text-[10px] uppercase font-bold text-muted-foreground leading-none">Manufacturers</span>
                     <span className="text-sm font-black mt-1 text-foreground">{product.brands}</span>
                   </div>
                 </div>

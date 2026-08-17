@@ -11,6 +11,7 @@ import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
+import { stockHealth } from "@/lib/stock-status";
 
 export interface ComponentFilters {
   category?: string;
@@ -22,11 +23,23 @@ export interface ComponentFilters {
 export type StockStatus = "Healthy" | "Low" | "Critical";
 
 /** The camelCase view returned to the client (matches @/lib/catalog types). */
+/** Extra fields that live outside the generated Prisma client (raw-SQL columns). */
+interface ComponentMeta {
+  categoryId: string | null;
+  categoryPath: string | null;
+  itemType: string;
+}
+
 export interface ComponentView {
   id: string;
   genericPN: string;
   name: string;
   category: string | null;
+  /** Category tree node (uuid) + its materialised path (Phase 2A). */
+  categoryId: string | null;
+  categoryPath: string | null;
+  /** Lifecycle stage: raw/semi_assembled/assembled/consumable/asset/packaging. */
+  itemType: string;
   description: string | null;
   unit: string;
   solderType: string | null;
@@ -49,12 +62,8 @@ interface StockAgg {
   reserved: number;
 }
 
-/** Healthy / Low / Critical from stock vs min-stock (mirrors the catalog selector). */
-function statusOf(stock: number, minStock: number): StockStatus {
-  if (stock <= minStock * 0.5) return "Critical";
-  if (stock < minStock) return "Low";
-  return "Healthy";
-}
+/** Healthy / Low / Critical from stock vs min-stock — shared with every UI surface. */
+const statusOf = stockHealth;
 
 export async function listComponents(filters: ComponentFilters): Promise<ComponentView[]> {
   const ctx = await requireSession();
@@ -78,7 +87,18 @@ export async function listComponents(filters: ComponentFilters): Promise<Compone
       for (const a of agg) stockByComponent.set(a.componentId, a);
     }
 
-    return rows.map((r) => fromDb(r, stockByComponent.get(r.id)));
+    // category_id / item_type / category path live outside the generated client — fetch via raw SQL.
+    const metaById = new Map<string, ComponentMeta>();
+    if (rows.length) {
+      const meta = await tx.$queryRaw<(ComponentMeta & { id: string })[]>`
+        SELECT c.id, c.category_id AS "categoryId", c.item_type::text AS "itemType",
+               (SELECT ic.path FROM item_categories ic WHERE ic.id = c.category_id) AS "categoryPath"
+        FROM components c
+        WHERE c.id IN (${Prisma.join(rows.map((r) => Prisma.sql`${r.id}::uuid`))})`;
+      for (const m of meta) metaById.set(m.id, { categoryId: m.categoryId, categoryPath: m.categoryPath, itemType: m.itemType });
+    }
+
+    return rows.map((r) => fromDb(r, stockByComponent.get(r.id), metaById.get(r.id)));
   });
 }
 
@@ -94,6 +114,8 @@ export interface CreateComponentInput {
   genericPN: string;
   name: string;
   category?: string;
+  categoryId?: string | null;
+  itemType?: string;
   description?: string;
   unit?: string;
   solderType?: "SMD" | "DIP";
@@ -202,8 +224,25 @@ export async function createComponent(input: CreateComponentInput): Promise<Comp
       }
     }
 
+    // category_id / item_type live outside the generated client (Phase 2A) — set via raw SQL.
+    let categoryPath: string | null = null;
+    if (input.categoryId !== undefined || input.itemType !== undefined) {
+      await tx.$executeRaw`
+        UPDATE components SET
+          category_id = ${input.categoryId ?? null}::uuid,
+          item_type = ${input.itemType ?? "raw"}::item_type,
+          updated_by = ${ctx.userId}::uuid
+        WHERE id = ${comp.id}::uuid`;
+      if (input.categoryId) {
+        const p = await tx.$queryRaw<{ path: string }[]>`
+          SELECT path FROM item_categories WHERE id = ${input.categoryId}::uuid AND deleted_at IS NULL`;
+        categoryPath = p[0]?.path ?? null;
+      }
+    }
+
     return {
       id: comp.id, genericPN, name: input.name.trim(), category: input.category ?? null,
+      categoryId: input.categoryId ?? null, categoryPath, itemType: input.itemType ?? "raw",
       description: input.description ?? null, unit: input.unit ?? "PCS",
       solderType: input.solderType ?? null, footprint: input.footprint ?? null, spq: input.spq ?? null,
       minStock, reorderQty: input.reorderQty ?? 0, annualConsumption: 0, specs,
@@ -230,6 +269,8 @@ export interface UpdateComponentInput {
   genericPN?: string;
   name?: string;
   category?: string | null;
+  categoryId?: string | null;
+  itemType?: string;
   description?: string | null;
   unit?: string;
   solderType?: "SMD" | "DIP" | null;
@@ -294,15 +335,29 @@ export async function updateComponent(idOrSlug: string, patch: UpdateComponentIn
       },
     });
 
-    // preferred_supplier_id lives outside the generated Prisma client (added by a
-    // later migration) — set it via raw SQL when the caller provided it.
+    // preferred_supplier_id / category_id / item_type live outside the generated
+    // Prisma client (post-baseline columns) — set them via raw SQL when provided.
     if (preferredSupplierId !== undefined) {
       await tx.$executeRaw`
         UPDATE components SET preferred_supplier_id = ${preferredSupplierId}::uuid, updated_by = ${ctx.userId}::uuid
         WHERE id = ${existing.id}::uuid`;
     }
+    if (patch.categoryId !== undefined) {
+      await tx.$executeRaw`
+        UPDATE components SET category_id = ${patch.categoryId}::uuid, updated_by = ${ctx.userId}::uuid
+        WHERE id = ${existing.id}::uuid`;
+    }
+    if (patch.itemType !== undefined) {
+      await tx.$executeRaw`
+        UPDATE components SET item_type = ${patch.itemType}::item_type, updated_by = ${ctx.userId}::uuid
+        WHERE id = ${existing.id}::uuid`;
+    }
 
-    return fromDb(row, await componentStock(tx, existing.id));
+    const [meta] = await tx.$queryRaw<ComponentMeta[]>`
+      SELECT c.category_id AS "categoryId", c.item_type::text AS "itemType",
+             (SELECT ic.path FROM item_categories ic WHERE ic.id = c.category_id) AS "categoryPath"
+      FROM components c WHERE c.id = ${existing.id}::uuid`;
+    return fromDb(row, await componentStock(tx, existing.id), meta);
   });
 }
 
@@ -372,6 +427,100 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
   });
 }
 
+export interface UpdateVariantInput {
+  brand?: string; // brand name/slug/uuid (resolved / created)
+  partNo?: string;
+}
+
+/** On-hand for a single variant (rolled up over its balance rows). */
+async function variantStock(tx: TxClient, variantId: string): Promise<number> {
+  const rows = await tx.$queryRaw<{ onHand: number }[]>`
+    SELECT COALESCE(SUM(on_hand), 0)::float8 AS "onHand"
+    FROM inventory_balances WHERE component_brand_variant_id = ${variantId}::uuid AND deleted_at IS NULL`;
+  return rows[0]?.onHand ?? 0;
+}
+
+/** Resolve a component + one of its live variants (by uuid/generic_pn and variant uuid). */
+async function findComponentVariant(tx: TxClient, idOrSlug: string, variantId: string) {
+  const comp = await tx.components.findFirst({
+    where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { generic_pn: idOrSlug }) },
+    select: { id: true, generic_pn: true },
+  });
+  if (!comp) throw Errors.notFound("Component");
+  const variant = await tx.component_brand_variants.findFirst({
+    where: { id: variantId, component_id: comp.id, deleted_at: null },
+    select: { id: true, brand_id: true, part_no: true },
+  });
+  if (!variant) throw Errors.notFound("Variant");
+  return { comp, variant };
+}
+
+/** Edit a brand variant's manufacturer / MPN. Changing the brand keeps (component, brand) unique. */
+export async function updateComponentVariant(idOrSlug: string, variantId: string, patch: UpdateVariantInput): Promise<VariantView> {
+  return guarded("component.edit", async (tx, ctx) => {
+    const { comp, variant } = await findComponentVariant(tx, idOrSlug, variantId);
+
+    let brandId = variant.brand_id;
+    if (patch.brand !== undefined && patch.brand.trim()) {
+      brandId = await resolveOrCreateBrand(tx, ctx, patch.brand.trim());
+      if (brandId !== variant.brand_id) {
+        const dupe = await tx.component_brand_variants.findFirst({
+          where: { component_id: comp.id, brand_id: brandId, deleted_at: null, NOT: { id: variant.id } },
+          select: { id: true },
+        });
+        if (dupe) throw Errors.conflict("This brand already has a variant for this component");
+      }
+    }
+
+    const updated = await tx.component_brand_variants.update({
+      where: { id: variant.id },
+      data: {
+        updated_by: ctx.userId,
+        updated_at: new Date(),
+        ...(patch.brand !== undefined && patch.brand.trim() ? { brand_id: brandId } : {}),
+        ...(patch.partNo !== undefined ? { part_no: patch.partNo.trim() } : {}),
+      },
+      select: { part_no: true },
+    });
+
+    const brand = await tx.brands.findUnique({ where: { id: brandId }, select: { slug: true, name: true } });
+    const stock = await variantStock(tx, variant.id);
+    return {
+      componentId: comp.generic_pn,
+      brandId: brand?.slug ?? brandId,
+      brandName: brand?.name ?? "",
+      partNo: updated.part_no,
+      stock,
+    };
+  });
+}
+
+/** Soft-delete a brand variant. Blocked if it has stock movements or a supplier price. */
+export async function deleteComponentVariant(idOrSlug: string, variantId: string): Promise<{ variantId: string; partNo: string }> {
+  return guarded("component.edit", async (tx, ctx) => {
+    const { comp, variant } = await findComponentVariant(tx, idOrSlug, variantId);
+
+    const moved = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one FROM inventory_transactions WHERE component_brand_variant_id = ${variant.id}::uuid LIMIT 1`;
+    if (moved.length) throw Errors.conflict("Variant has stock movements and cannot be deleted");
+
+    const priced = await tx.$queryRaw<{ one: number }[]>`
+      SELECT 1 AS one FROM supplier_component_prices
+      WHERE component_id = ${comp.id}::uuid AND brand_id = ${variant.brand_id}::uuid AND deleted_at IS NULL LIMIT 1`;
+    if (priced.length) throw Errors.conflict("Variant has a supplier price and cannot be deleted");
+
+    // Its lots carry no movements (guarded above) — soft-delete them alongside.
+    await tx.$executeRaw`
+      UPDATE item_lots SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+      WHERE component_brand_variant_id = ${variant.id}::uuid AND deleted_at IS NULL`;
+    await tx.component_brand_variants.update({
+      where: { id: variant.id },
+      data: { deleted_at: new Date(), updated_by: ctx.userId },
+    });
+    return { variantId: variant.id, partNo: variant.part_no };
+  });
+}
+
 /** Soft-delete a component (by uuid or generic_pn). Blocked if it is used in any PCB BOM. */
 export async function deleteComponent(idOrSlug: string): Promise<{ id: string; genericPN: string }> {
   return guarded("component.delete", async (tx, ctx) => {
@@ -406,6 +555,74 @@ export async function deleteComponent(idOrSlug: string): Promise<{ id: string; g
       data: { deleted_at: new Date(), updated_by: ctx.userId },
     });
     return { id: comp.id, genericPN: comp.generic_pn };
+  });
+}
+
+// ── BOM import (bulk find-or-create) ───────────────────────────────────────────
+
+export interface ImportBomRow {
+  categoryId?: string | null;
+  name: string;
+  genericPN?: string;
+  mpn?: string;
+  manufacturer?: string;
+  solderType?: string;
+  footprint?: string;
+}
+export interface ImportBomResult { created: number; linked: number; skipped: number }
+
+/**
+ * Persist reviewed BOM rows as catalog components. Dedup rule: match an existing
+ * component by generic PN, else by manufacturer PN (variant part_no); if neither
+ * matches, create a new component (generic PN may be blank). A manufacturer
+ * variant is created from Manufacturer + MPN when a manufacturer is given.
+ */
+export async function importBomComponents(rows: ImportBomRow[]): Promise<ImportBomResult> {
+  return guarded("component.create", async (tx, ctx) => {
+    let created = 0, linked = 0, skipped = 0;
+    for (const row of rows) {
+      const name = (row.name ?? "").trim();
+      const genericPN = (row.genericPN ?? "").trim();
+      const mpn = (row.mpn ?? "").trim();
+      if (!name && !genericPN && !mpn) { skipped++; continue; }
+
+      // Dedup: generic PN first, then manufacturer PN.
+      let compId: string | null = null;
+      if (genericPN) {
+        const f = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM components WHERE company_id = ${ctx.companyId!}::uuid AND generic_pn = ${genericPN} AND deleted_at IS NULL LIMIT 1`;
+        compId = f[0]?.id ?? null;
+      }
+      if (!compId && mpn) {
+        const f = await tx.$queryRaw<{ id: string }[]>`
+          SELECT c.id FROM components c
+          JOIN component_brand_variants v ON v.component_id = c.id AND v.deleted_at IS NULL
+          WHERE c.company_id = ${ctx.companyId!}::uuid AND v.part_no = ${mpn} AND c.deleted_at IS NULL LIMIT 1`;
+        compId = f[0]?.id ?? null;
+      }
+      if (compId) { linked++; continue; }
+
+      // Create.
+      const solder = (row.solderType ?? "").trim().toUpperCase();
+      const solderVal = solder === "SMD" || solder === "DIP" ? solder : null;
+      const ins = await tx.$queryRaw<{ id: string }[]>`
+        INSERT INTO components (company_id, generic_pn, name, category_id, item_type, solder_type, footprint, created_by, updated_by)
+        VALUES (${ctx.companyId!}::uuid, ${genericPN || null}, ${name || genericPN || mpn},
+                ${row.categoryId || null}::uuid, 'raw'::item_type, ${solderVal}::solder_type,
+                ${(row.footprint ?? "").trim() || null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+        RETURNING id`;
+      const newId = ins[0].id;
+      created++;
+
+      const mfr = (row.manufacturer ?? "").trim();
+      if (mfr) {
+        const brandId = await resolveOrCreateBrand(tx, ctx, mfr);
+        await tx.$executeRaw`
+          INSERT INTO component_brand_variants (company_id, component_id, brand_id, part_no, created_by, updated_by)
+          VALUES (${ctx.companyId!}::uuid, ${newId}::uuid, ${brandId}::uuid, ${mpn}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`;
+      }
+    }
+    return { created, linked, skipped };
   });
 }
 
@@ -446,6 +663,7 @@ function fromDb(
     specs: unknown;
   },
   agg?: StockAgg,
+  meta?: ComponentMeta,
 ): ComponentView {
   const minStock = Number(c.min_stock);
   const stock = agg?.onHand ?? 0;
@@ -454,6 +672,9 @@ function fromDb(
     genericPN: c.generic_pn,
     name: c.name,
     category: c.category,
+    categoryId: meta?.categoryId ?? null,
+    categoryPath: meta?.categoryPath ?? null,
+    itemType: meta?.itemType ?? "raw",
     description: c.description,
     unit: c.unit,
     solderType: c.solder_type,

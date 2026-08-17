@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { ArrowLeft, Plus, Trash2, CheckCircle2, AlertCircle, Cpu, Award, Lock } from "lucide-react"
 import Link from "next/link"
 import { useData } from "@/lib/data-provider"
+import { CategoryCascade } from "@/components/category-cascade"
 
 export interface Specification {
   key: string
@@ -25,8 +26,13 @@ export interface BrandVariant {
 
 export interface ComponentFormInitial {
   category: string
+  categoryId: string
+  itemType: string
   name: string
   genericPN: string
+  description: string
+  unit: string
+  minStock: string
   solderType: "SMD" | "DIP"
   footprint: string
   spq: string
@@ -35,33 +41,36 @@ export interface ComponentFormInitial {
   brandVariants: BrandVariant[]
 }
 
-const CATEGORY_OPTIONS = [
-  "Passive Components",
-  "Optoelectronics",
-  "Integrated Circuits (IC)",
-  "Mechanical Parts",
-  "Connectors",
-  "Peripherals",
+const UNIT_OPTIONS = ["PCS", "Reel", "Tray", "Meter", "Set", "Box", "Roll", "Kg"]
+
+const ITEM_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "raw", label: "Raw (purchased part/material)" },
+  { value: "semi_assembled", label: "Semi-assembled (sub-assembly / WIP)" },
+  { value: "assembled", label: "Assembled (finished good)" },
+  { value: "consumable", label: "Consumable" },
+  { value: "asset", label: "Asset (IT / tools / equipment)" },
+  { value: "packaging", label: "Packaging" },
 ]
 
-// Add-mode demo defaults (unchanged from the original Add page).
+/** Solder type + footprint only make sense for parts that go on a board. */
+const isBoardItem = (itemType: string) => itemType === "raw" || itemType === "semi_assembled"
+
+// Add-mode defaults — a clean, empty form (no demo/mock data).
 const ADD_DEFAULTS: ComponentFormInitial = {
-  category: "Passive Components",
+  category: "",
+  categoryId: "",
+  itemType: "raw",
   name: "",
   genericPN: "",
+  description: "",
+  unit: "PCS",
+  minStock: "",
   solderType: "SMD",
   footprint: "",
   spq: "",
   moq: "",
-  brandVariants: [
-    { brand: "Yageo", partNo: "RC0603JR-0710KL", stock: "1200" },
-    { brand: "Vishay", partNo: "CRCW060310K0FKEA", stock: "800" },
-  ],
-  specifications: [
-    { key: "Tolerance", value: "±5%" },
-    { key: "Power Rating", value: "0.25W" },
-    { key: "Voltage", value: "50V" },
-  ],
+  brandVariants: [{ brand: "", partNo: "", stock: "" }],
+  specifications: [],
 }
 
 export function ComponentForm({
@@ -82,9 +91,29 @@ export function ComponentForm({
   const [isSubmitting, setIsSubmitting] = React.useState(false)
 
   // Section 1: Basic Information
-  const [category, setCategory] = React.useState(seed.category)
+  // The item is filed under the deepest category node chosen in the cascade.
+  const [categoryId, setCategoryId] = React.useState(seed.categoryId)
+  const [itemType, setItemType] = React.useState(seed.itemType)
   const [name, setName] = React.useState(seed.name)
   const [genericPN, setGenericPN] = React.useState(seed.genericPN)
+  const [description, setDescription] = React.useState(seed.description)
+  const [unit, setUnit] = React.useState(seed.unit)
+  const [minStock, setMinStock] = React.useState(seed.minStock)
+
+  // Inline "add category" (lets the tree grow without leaving the form)
+  const [newCatName, setNewCatName] = React.useState("")
+  const [newCatParent, setNewCatParent] = React.useState("")
+  const [creatingCat, setCreatingCat] = React.useState(false)
+
+  // Category tree, flattened in path order with a depth indent for the picker.
+  const categoryOptions = React.useMemo(
+    () =>
+      [...d.ITEM_CATEGORIES]
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .map((c) => ({ id: c.id, depth: c.path.split("/").length - 1, name: c.name })),
+    [d],
+  )
+  const categoryName = d.getCategory(categoryId)?.name ?? ""
 
   // Section 2: PCB & Packaging Information
   const [solderType, setSolderType] = React.useState<"SMD" | "DIP">(seed.solderType)
@@ -107,10 +136,32 @@ export function ComponentForm({
   React.useEffect(() => {
     if (!isEdit && !genericPN && name) {
       const cleanName = name.replace(/\s+/g, "-").toUpperCase()
-      const prefix = category.toLowerCase().includes("passive") ? "RES" : "COMP"
+      const prefix = categoryName.toLowerCase().includes("passive") ? "RES" : "COMP"
       setGenericPN(`${prefix}-${cleanName}`)
     }
-  }, [name, category, genericPN, isEdit])
+  }, [name, categoryName, genericPN, isEdit])
+
+  const handleCreateCategory = async () => {
+    const nm = newCatName.trim()
+    if (!nm) return
+    setCreatingCat(true)
+    try {
+      const res = await fetch("/api/item-categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nm, parentId: newCatParent || null }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) return showToast(body?.error?.message ?? "Failed to add category", "error")
+      await d.reload()
+      setCategoryId(body.data.id) // select the newly created node
+      setNewCatName("")
+      setNewCatParent("")
+      showToast("Category added", "success")
+    } finally {
+      setCreatingCat(false)
+    }
+  }
 
   // Brand Variants handlers
   const handleAddBrandVariant = () => setBrandVariants([...brandVariants, { brand: "", partNo: "", stock: "" }])
@@ -135,7 +186,7 @@ export function ComponentForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) return showToast("Please enter component name", "error")
+    if (!name.trim()) return showToast("Please enter item name", "error")
     if (!genericPN.trim()) return showToast("Please enter Generic Part Number", "error")
 
     setIsSubmitting(true)
@@ -143,6 +194,7 @@ export function ComponentForm({
       const specs = specifications.filter((s) => s.key.trim())
       const spqNum = spq ? parseInt(spq, 10) : undefined
       const moqNum = moq ? parseInt(moq, 10) : undefined
+      const minStockNum = minStock.trim() !== "" ? Number(minStock) : undefined
 
       if (!isEdit) {
         const res = await fetch("/api/components", {
@@ -151,9 +203,14 @@ export function ComponentForm({
           body: JSON.stringify({
             genericPN: genericPN.trim(),
             name: name.trim(),
-            category,
-            solderType,
-            footprint: footprint.trim() || undefined,
+            category: categoryName || undefined,
+            categoryId: categoryId || undefined,
+            itemType,
+            description: description.trim() || undefined,
+            unit: unit.trim() || undefined,
+            minStock: minStockNum,
+            solderType: isBoardItem(itemType) ? solderType : undefined,
+            footprint: isBoardItem(itemType) ? footprint.trim() || undefined : undefined,
             spq: spqNum,
             reorderQty: moqNum,
             specs,
@@ -163,8 +220,8 @@ export function ComponentForm({
           }),
         })
         const body = await res.json().catch(() => null)
-        if (!res.ok) return showToast(body?.error?.message ?? "Failed to register component", "error")
-        showToast("Component registered successfully!", "success")
+        if (!res.ok) return showToast(body?.error?.message ?? "Failed to register item", "error")
+        showToast("Item registered successfully!", "success")
         setTimeout(() => router.push("/components/list"), 1000)
         return
       }
@@ -176,16 +233,21 @@ export function ComponentForm({
         body: JSON.stringify({
           genericPN: genericPN.trim(),
           name: name.trim(),
-          category,
-          solderType,
-          footprint: footprint.trim() || null,
+          category: categoryName || null,
+          categoryId: categoryId || null,
+          itemType,
+          description: description.trim() || null,
+          ...(unit.trim() ? { unit: unit.trim() } : {}),
+          ...(minStockNum !== undefined ? { minStock: minStockNum } : {}),
+          solderType: isBoardItem(itemType) ? solderType : null,
+          footprint: isBoardItem(itemType) ? footprint.trim() || null : null,
           spq: spqNum ?? null,
           ...(moqNum !== undefined ? { reorderQty: moqNum } : {}),
           specs,
         }),
       })
       const body = await res.json().catch(() => null)
-      if (!res.ok) return showToast(body?.error?.message ?? "Failed to update component", "error")
+      if (!res.ok) return showToast(body?.error?.message ?? "Failed to update item", "error")
 
       // New brand variants (existing ones are locked — the variants API is add-only).
       const newVariants = brandVariants.filter((v) => !v.existing && v.brand.trim() && v.partNo.trim())
@@ -204,10 +266,10 @@ export function ComponentForm({
 
       d.reload()
       if (failed.length) {
-        showToast(`Component saved, but some variants failed — ${failed.join("; ")}`, "error")
+        showToast(`Item saved, but some variants failed — ${failed.join("; ")}`, "error")
         return
       }
-      showToast("Component updated successfully!", "success")
+      showToast("Item updated successfully!", "success")
       setTimeout(() => router.push(detailsHref), 1000)
     } finally {
       setIsSubmitting(false)
@@ -216,9 +278,6 @@ export function ComponentForm({
 
   const commonFootprints =
     solderType === "SMD" ? ["0603", "0805", "1206", "SOT-23", "SOIC-8", "QFN-32"] : ["DIP-8", "DIP-14", "TO-92", "TO-220"]
-
-  // Ensure the current (possibly custom) category is selectable in edit mode.
-  const categoryOptions = CATEGORY_OPTIONS.includes(category) ? CATEGORY_OPTIONS : [category, ...CATEGORY_OPTIONS]
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto pb-12">
@@ -243,24 +302,24 @@ export function ComponentForm({
       {/* Header Navigation */}
       <div className="flex flex-col gap-2">
         <div className="text-sm text-muted-foreground flex items-center gap-2">
-          <span>Components</span>
+          <span>Items</span>
           <span>/</span>
           <Link href="/components/list" className="hover:text-foreground transition-colors font-medium">
-            Component List
+            Item List
           </Link>
           <span>/</span>
-          <span className="text-foreground font-semibold">{isEdit ? "Edit Component" : "Add Component"}</span>
+          <span className="text-foreground font-semibold">{isEdit ? "Edit Item" : "Add Item"}</span>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" size="icon" render={<Link href={cancelHref} />} className="h-9 w-9 rounded-lg border-border">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h1 className="text-3xl font-extrabold tracking-tight">{isEdit ? "Edit Component" : "Add Component"}</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight">{isEdit ? "Edit Item" : "Add Item"}</h1>
             <p className="text-muted-foreground">
               {isEdit
-                ? "Update this component's details, packaging, variants and specifications."
-                : "Register a new raw component with nested brand variants."}
+                ? "Update this item's details, packaging, variants and specifications."
+                : "Register a new raw item with nested manufacturer variants."}
             </p>
           </div>
         </div>
@@ -275,18 +334,23 @@ export function ComponentForm({
           </CardHeader>
           <CardContent className="p-6 grid gap-6 md:grid-cols-3">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category *</label>
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Item Type *</label>
               <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                value={itemType}
+                onChange={(e) => setItemType(e.target.value)}
                 className="w-full h-9 rounded-lg border border-border bg-background px-3 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary font-medium"
               >
-                {categoryOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
+                {ITEM_TYPE_OPTIONS.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
                 ))}
               </select>
+              <span className="text-[10px] text-muted-foreground">Drives behaviour (raw is bought, finished is shipped).</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category</label>
+              <CategoryCascade value={categoryId} onChange={setCategoryId} allLabel="— Uncategorised —" manage />
+              <span className="text-[10px] text-muted-foreground">Drill into the tree; filed under the deepest node picked (or add one below).</span>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -299,6 +363,70 @@ export function ComponentForm({
               <Input placeholder="e.g. RES-10K" value={genericPN} onChange={(e) => setGenericPN(e.target.value)} required className="h-9" />
               <span className="text-[10px] text-muted-foreground">Internal company tracking code.</span>
             </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Unit of Measure</label>
+              <select
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                className="w-full h-9 rounded-lg border border-border bg-background px-3 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary font-medium"
+              >
+                {(UNIT_OPTIONS.includes(unit) ? UNIT_OPTIONS : [unit, ...UNIT_OPTIONS]).map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
+              <span className="text-[10px] text-muted-foreground">Stocking unit (e.g. PCS, Reel, Meter).</span>
+            </div>
+
+            <div className="flex flex-col gap-1.5 md:col-span-3">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Description</label>
+              <textarea
+                placeholder="Short description of the item (optional)"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={2}
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary resize-y"
+              />
+            </div>
+
+            {/* Inline category creator — grow the tree without leaving the form */}
+            <div className="md:col-span-3 rounded-lg border border-dashed border-border bg-muted/10 p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">New category name</label>
+                  <Input
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    placeholder="e.g. Resistors"
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Under parent (optional)</label>
+                  <select
+                    value={newCatParent}
+                    onChange={(e) => setNewCatParent(e.target.value)}
+                    className="h-8 rounded-lg border border-border bg-background px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    <option value="">— Top level —</option>
+                    {categoryOptions.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={creatingCat || !newCatName.trim()}
+                  onClick={handleCreateCategory}
+                  className="h-8 gap-1 font-bold"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {creatingCat ? "Adding…" : "Add Category"}
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -309,35 +437,39 @@ export function ComponentForm({
             <CardDescription>Land footprints, packaging counts, and layout types</CardDescription>
           </CardHeader>
           <CardContent className="p-6 grid gap-6 md:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Solder Type</label>
-              <select
-                value={solderType}
-                onChange={(e) => setSolderType(e.target.value as "SMD" | "DIP")}
-                className="w-full h-9 rounded-lg border border-border bg-background px-3 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary font-medium"
-              >
-                <option value="SMD">SMD (Surface Mount Device)</option>
-                <option value="DIP">DIP (Through Hole)</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Footprint</label>
-              <Input placeholder="e.g. 0603, SOIC-8" value={footprint} onChange={(e) => setFootprint(e.target.value)} className="h-9" />
-              <div className="flex flex-wrap gap-1.5 mt-1 items-center">
-                <span className="text-[10px] text-muted-foreground font-bold mr-1">Suggestions:</span>
-                {commonFootprints.map((fp) => (
-                  <button
-                    key={fp}
-                    type="button"
-                    onClick={() => setFootprint(fp)}
-                    className="text-[10px] border border-border hover:bg-primary/5 hover:border-primary hover:text-primary rounded px-2 py-0.5 font-medium transition-all"
+            {isBoardItem(itemType) && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Solder Type</label>
+                  <select
+                    value={solderType}
+                    onChange={(e) => setSolderType(e.target.value as "SMD" | "DIP")}
+                    className="w-full h-9 rounded-lg border border-border bg-background px-3 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary font-medium"
                   >
-                    {fp}
-                  </button>
-                ))}
-              </div>
-            </div>
+                    <option value="SMD">SMD (Surface Mount Device)</option>
+                    <option value="DIP">DIP (Through Hole)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Footprint</label>
+                  <Input placeholder="e.g. 0603, SOIC-8" value={footprint} onChange={(e) => setFootprint(e.target.value)} className="h-9" />
+                  <div className="flex flex-wrap gap-1.5 mt-1 items-center">
+                    <span className="text-[10px] text-muted-foreground font-bold mr-1">Suggestions:</span>
+                    {commonFootprints.map((fp) => (
+                      <button
+                        key={fp}
+                        type="button"
+                        onClick={() => setFootprint(fp)}
+                        className="text-[10px] border border-border hover:bg-primary/5 hover:border-primary hover:text-primary rounded px-2 py-0.5 font-medium transition-all"
+                      >
+                        {fp}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">SPQ (Standard Pack Quantity)</label>
@@ -350,6 +482,12 @@ export function ComponentForm({
               <Input type="number" placeholder="e.g. 1000" value={moq} onChange={(e) => setMoq(e.target.value)} className="h-9" />
               <span className="text-[10px] text-muted-foreground">Standard procurement batch threshold</span>
             </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Minimum Stock (Reorder Point)</label>
+              <Input type="number" min="0" placeholder="e.g. 500" value={minStock} onChange={(e) => setMinStock(e.target.value)} className="h-9" />
+              <span className="text-[10px] text-muted-foreground">Safety-stock level — drives Low/Critical status &amp; reorder alerts.</span>
+            </div>
           </CardContent>
         </Card>
 
@@ -358,11 +496,11 @@ export function ComponentForm({
           <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-lg font-bold text-foreground">Section 3 — Brand Variants</CardTitle>
+                <CardTitle className="text-lg font-bold text-foreground">Section 3 — Manufacturer Variants</CardTitle>
                 <CardDescription>
                   {isEdit
                     ? "Existing variants are locked; add new manufacturer part numbers below."
-                    : "Map manufacturer-specific replacement part numbers and stocks"}
+                    : "Map each manufacturer's part number (MPN) and opening stock for this generic part"}
                 </CardDescription>
               </div>
               <Button
@@ -382,8 +520,8 @@ export function ComponentForm({
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
                   <tr>
-                    <th scope="col" className="px-6 py-3 font-bold w-1/3">Brand</th>
-                    <th scope="col" className="px-6 py-3 font-bold w-1/3">Brand Part Number</th>
+                    <th scope="col" className="px-6 py-3 font-bold w-1/3">Manufacturer</th>
+                    <th scope="col" className="px-6 py-3 font-bold w-1/3">Manufacturer Part No (MPN)</th>
                     <th scope="col" className="px-6 py-3 font-bold w-1/4">{isEdit ? "Stock" : "Initial Stock"}</th>
                     <th scope="col" className="px-3 py-3 w-12 text-center"></th>
                   </tr>
@@ -444,7 +582,7 @@ export function ComponentForm({
                     <tr>
                       <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
                         <Award className="h-8 w-8 mx-auto text-muted-foreground/60 mb-2 stroke-1" />
-                        No brand variants mapped. Click &quot;Add Variant&quot; to map a manufacturer.
+                        No manufacturer variants mapped. Click &quot;Add Variant&quot; to map a manufacturer.
                       </td>
                     </tr>
                   )}
@@ -542,7 +680,7 @@ export function ComponentForm({
             disabled={isSubmitting}
             className="font-bold bg-primary hover:bg-primary/90 text-primary-foreground min-w-[120px]"
           >
-            {isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Save Component"}
+            {isSubmitting ? "Saving..." : isEdit ? "Save Changes" : "Save Item"}
           </Button>
         </div>
       </form>

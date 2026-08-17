@@ -49,6 +49,8 @@ export interface LedgerView {
   grnNo: string | null;
   reason: string | null;
   note: string | null;
+  lotNo: string | null;
+  supplierSlug: string | null;
   createdAt: string;
 }
 
@@ -61,6 +63,7 @@ export interface ComponentStockView {
   damaged: number;
   byWarehouse: { warehouseId: string; code: string; onHand: number }[];
   byVariant: { variantId: string; brandId: string; brandSlug: string; partNo: string | null; onHand: number; available: number }[];
+  byLot: { lotNo: string; partNo: string | null; expiryDate: string | null; unitCost: number | null; onHand: number; value: number }[];
 }
 
 export interface BalanceFilters {
@@ -102,6 +105,11 @@ export const InventoryTxnBody = z
     refType: z.string().max(100).optional(),
     refId: z.string().uuid().optional(),
     grnNo: z.string().max(100).optional(),
+    // Lot capture on inbound movements (IN/RETURN/PRODUCTION). Blank lotNo → auto.
+    lotNo: z.string().max(100).optional(),
+    expiryDate: z.string().optional(), // ISO date (YYYY-MM-DD)
+    unitCost: z.number().nonnegative().optional(),
+    supplierSlug: z.string().max(200).optional(), // inbound: recorded on the lot
   })
   .superRefine((b, ctx) => {
     if (!b.variantId && !(b.genericPN && b.brandSlug)) {
@@ -254,11 +262,13 @@ export async function listLedger(f: LedgerFilters): Promise<LedgerView[]> {
         it.warehouse_id AS "warehouseId", it.location_id AS "locationId",
         it.qty_delta::float8 AS "qtyDelta", it.transfer_group_id AS "transferGroupId",
         it.ref_type AS "refType", it.ref_id AS "refId", it.grn_no AS "grnNo",
-        it.reason, it.note, it.created_at AS "createdAt"
+        it.reason, it.note, il.lot_no AS "lotNo", sup.slug AS "supplierSlug", it.created_at AS "createdAt"
       FROM inventory_transactions it
       JOIN component_brand_variants v ON v.id = it.component_brand_variant_id
       JOIN components c ON c.id = v.component_id
       JOIN brands b ON b.id = v.brand_id
+      LEFT JOIN item_lots il ON il.id = it.lot_id
+      LEFT JOIN suppliers sup ON sup.id = il.supplier_id
       WHERE 1 = 1 ${cond.length ? Prisma.join(cond, " ") : Prisma.empty}
       ORDER BY it.created_at DESC
       LIMIT ${limit}`;
@@ -296,11 +306,62 @@ export async function getComponentStock(idOrPn: string): Promise<ComponentStockV
       WHERE v.component_id = ${comp.id}::uuid AND v.deleted_at IS NULL
       GROUP BY v.id, v.brand_id, b.slug, v.part_no ORDER BY b.slug`;
 
-    return { componentId: comp.id, genericPN: comp.generic_pn, ...tot, byWarehouse, byVariant };
+    // Per-lot on-hand + value, derived from the ledger (FEFO order). Value uses the lot's unit_cost.
+    const byLot = await tx.$queryRaw<ComponentStockView["byLot"]>`
+      SELECT il.lot_no AS "lotNo", v.part_no AS "partNo", il.expiry_date::text AS "expiryDate",
+             il.unit_cost::float8 AS "unitCost",
+             SUM(t.qty_delta)::float8 AS "onHand",
+             (SUM(t.qty_delta) * COALESCE(il.unit_cost, 0))::float8 AS "value"
+      FROM item_lots il
+      JOIN inventory_transactions t ON t.lot_id = il.id
+      JOIN component_brand_variants v ON v.id = il.component_brand_variant_id
+      WHERE v.component_id = ${comp.id}::uuid AND il.deleted_at IS NULL
+      GROUP BY il.id, il.lot_no, v.part_no, il.expiry_date, il.unit_cost
+      HAVING SUM(t.qty_delta) <> 0
+      ORDER BY il.expiry_date NULLS LAST, il.lot_no`;
+
+    return { componentId: comp.id, genericPN: comp.generic_pn, ...tot, byWarehouse, byVariant, byLot };
   });
 }
 
 // ── write path ───────────────────────────────────────────────────────────────
+
+/** Resolve (or create) the lot for an inbound movement. Blank lotNo → auto-generated. */
+async function resolveInboundLot(
+  tx: TxClient,
+  ctx: TenantContext,
+  variantId: string,
+  opts: { lotNo?: string; expiryDate?: string; unitCost?: number; supplierId?: string | null },
+): Promise<string> {
+  let lotNo = (opts.lotNo ?? "").trim();
+  if (!lotNo) lotNo = `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 4).toUpperCase()}`;
+  const found = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM item_lots WHERE company_id = ${ctx.companyId!}::uuid
+      AND component_brand_variant_id = ${variantId}::uuid AND lot_no = ${lotNo} AND deleted_at IS NULL LIMIT 1`;
+  if (found[0]) return found[0].id;
+  const ins = await tx.$queryRaw<{ id: string }[]>`
+    INSERT INTO item_lots (company_id, component_brand_variant_id, lot_no, supplier_id, expiry_date, unit_cost, created_by, updated_by)
+    VALUES (${ctx.companyId!}::uuid, ${variantId}::uuid, ${lotNo}, ${opts.supplierId ?? null}::uuid, ${opts.expiryDate ?? null}::date, ${opts.unitCost ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+    RETURNING id`;
+  return ins[0].id;
+}
+
+/** FEFO lot pick for an outbound move: the lot with positive derived on-hand at
+ *  this location, earliest expiry first (then oldest). null → trigger fallback. */
+export async function pickOutboundLot(tx: TxClient, ctx: TenantContext, variantId: string, locationId: string): Promise<string | null> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT il.id
+    FROM item_lots il
+    JOIN inventory_transactions t ON t.lot_id = il.id
+     AND t.component_brand_variant_id = ${variantId}::uuid AND t.location_id = ${locationId}::uuid
+    WHERE il.company_id = ${ctx.companyId!}::uuid AND il.component_brand_variant_id = ${variantId}::uuid AND il.deleted_at IS NULL
+    GROUP BY il.id, il.expiry_date, il.created_at
+    HAVING SUM(t.qty_delta) > 0
+    ORDER BY il.expiry_date NULLS LAST, il.created_at
+    LIMIT 1`;
+  return rows[0]?.id ?? null;
+}
+
 export async function createInventoryTransaction(input: InventoryTxnInput) {
   return guarded("inventory.create", async (tx, ctx) => {
     const variantId = input.variantId ?? (await resolveVariantByKeys(tx, input.genericPN!, input.brandSlug!));
@@ -339,13 +400,34 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
         const avail = await availableAt(tx, variantId, locationId);
         if (avail < -delta) throw Errors.conflict("Insufficient available stock", { available: avail, requested: -delta });
       }
-      await tx.inventory_transactions.create({
-        data: {
-          ...base, type: input.type, warehouse_id: wh, location_id: locationId, qty_delta: delta,
-          ref_type: input.refType ?? null, ref_id: input.refId ?? null, grn_no: input.grnNo ?? null,
-          reason: input.reason ?? null, note: input.note ?? null,
-        },
-      });
+      if (delta > 0) {
+        // Inbound: capture (or auto-generate) a lot. lot_id must be set in the
+        // INSERT because the ledger is append-only (no post-update allowed).
+        let supplierId: string | null = null;
+        if (input.supplierSlug) {
+          const s = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM suppliers WHERE company_id = ${ctx.companyId!}::uuid AND slug = ${input.supplierSlug} AND deleted_at IS NULL LIMIT 1`;
+          supplierId = s[0]?.id ?? null;
+        }
+        const lotId = await resolveInboundLot(tx, ctx, variantId, {
+          lotNo: input.lotNo, expiryDate: input.expiryDate, unitCost: input.unitCost, supplierId,
+        });
+        await tx.$executeRaw`
+          INSERT INTO inventory_transactions
+            (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
+          VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+                  ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+                  ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+      } else {
+        // Outbound: consume the FEFO lot (earliest expiry) for traceability.
+        const lotId = await pickOutboundLot(tx, ctx, variantId, locationId);
+        await tx.$executeRaw`
+          INSERT INTO inventory_transactions
+            (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
+          VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+                  ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+                  ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+      }
       touched.push({ locationId });
     }
 

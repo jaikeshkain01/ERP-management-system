@@ -109,7 +109,7 @@ export default function ProductionPlannerPage() {
     setCalculated(true)
     setCurrentStep(0)
     if (list.length > 0) {
-      showToast(`Calculation complete — ${list.length} component shortage${list.length > 1 ? "s" : ""} detected!`, "warning")
+      showToast(`Calculation complete — ${list.length} item shortage${list.length > 1 ? "s" : ""} detected!`, "warning")
     } else {
       showToast("MRP requirements calculated successfully — no shortages!")
     }
@@ -138,7 +138,7 @@ export default function ProductionPlannerPage() {
       if (res.ok && body?.data) created.push(body.data.prId)
     }
     if (created.length) {
-      showToast(`Purchase Request${created.length > 1 ? "s" : ""} ${created.join(" and ")} created for shortage components!`)
+      showToast(`Purchase Request${created.length > 1 ? "s" : ""} ${created.join(" and ")} created for shortage items!`)
     } else {
       showToast("Could not create purchase requests.", "warning")
     }
@@ -153,10 +153,10 @@ export default function ProductionPlannerPage() {
   // ─── Wizard step definitions ─────────────────────────────────────────────
   const steps: { key: string; label: string; title: string; desc: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { key: "structure", label: "Structure", title: "Product Structure Allocation", desc: "Audit sub-assembly counts needed for the build target", icon: Layers },
-    { key: "pcb", label: "PCB Breakdown", title: "PCB Breakdown", desc: "Component requirements by sub-assembly board", icon: Cpu },
-    { key: "brand", label: "Brand Alloc.", title: "Brand Allocation", desc: "Allocate raw stock across approved brands", icon: Award },
-    { key: "supplier", label: "Suppliers", title: "Supplier Options", desc: "Distributor channels and brand unit pricing", icon: Truck },
-    { key: "matrix", label: "Matrix", title: "Raw Material Allocation Matrix", desc: "BOM component mapping to active brand stock", icon: Landmark },
+    { key: "pcb", label: "PCB Breakdown", title: "PCB Breakdown", desc: "Item requirements by sub-assembly board", icon: Cpu },
+    { key: "brand", label: "Manufacturer Alloc.", title: "Manufacturer Allocation", desc: "Allocate raw stock across approved manufacturers", icon: Award },
+    { key: "supplier", label: "Suppliers", title: "Supplier Options", desc: "Distributor channels and manufacturer unit pricing", icon: Truck },
+    { key: "matrix", label: "Matrix", title: "Raw Material Allocation Matrix", desc: "BOM item mapping to active manufacturer stock", icon: Landmark },
     { key: "shortage", label: "Shortages", title: "Shortages Found", desc: "Automated shortage audit on the launched batch", icon: ShieldAlert },
     { key: "purchase", label: "Purchase", title: "Purchase Recommendations", desc: "Sourcing suggestions for the missing parts", icon: ShoppingBag },
     { key: "impact", label: "Impact", title: "Inventory Impact", desc: "Estimated stock levels before and after the run", icon: Nut },
@@ -244,7 +244,7 @@ export default function ProductionPlannerPage() {
                       <table className="w-full text-xs text-left text-foreground">
                         <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                           <tr>
-                            <th className="px-3 py-2">Component</th>
+                            <th className="px-3 py-2">Item</th>
                             <th className="px-3 py-2 text-center">Qty / PCB</th>
                             <th className="px-3 py-2 text-right">Required Batch Qty</th>
                           </tr>
@@ -292,7 +292,7 @@ export default function ProductionPlannerPage() {
                 <div key={comp.id} className="space-y-3 border border-border/80 rounded-xl p-4 bg-card shadow-2xs">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-3">
                     <div>
-                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Component Item</span>
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Item</span>
                       <span className="font-extrabold text-foreground text-sm">{comp.name} ({comp.genericPN})</span>
                     </div>
                     <div className="text-right sm:text-left">
@@ -304,7 +304,7 @@ export default function ProductionPlannerPage() {
                     <table className="w-full text-xs text-left text-foreground">
                       <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                         <tr>
-                          <th className="px-4 py-2">Brand / Manufacturer</th>
+                          <th className="px-4 py-2">Manufacturer</th>
                           <th className="px-4 py-2">Part No.</th>
                           <th className="px-4 py-2 text-right">Available Stock</th>
                           <th className="px-4 py-2 text-right">Allocated Qty</th>
@@ -328,7 +328,7 @@ export default function ProductionPlannerPage() {
                         })}
                         {comp.brandVariants.length === 0 && (
                           <tr>
-                            <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground">No brand variants registered.</td>
+                            <td colSpan={4} className="px-4 py-3 text-center text-muted-foreground">No manufacturer variants registered.</td>
                           </tr>
                         )}
                       </tbody>
@@ -353,7 +353,7 @@ export default function ProductionPlannerPage() {
                     <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                       <tr>
                         <th className="px-4 py-2">Supplier</th>
-                        <th className="px-4 py-2">Brand</th>
+                        <th className="px-4 py-2">Manufacturer</th>
                         <th className="px-4 py-2">Lead Time</th>
                         <th className="px-4 py-2 text-right">Unit Price</th>
                       </tr>
@@ -387,7 +387,7 @@ export default function ProductionPlannerPage() {
               <thead className="bg-muted/40 uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                 <tr>
                   <th className="px-4 py-2">PCB Sub-Assembly</th>
-                  <th className="px-4 py-2">Component</th>
+                  <th className="px-4 py-2">Item</th>
                   <th className="px-4 py-2">Generic PN</th>
                   <th className="px-4 py-2 text-right">Required Batch Qty</th>
                   <th className="px-4 py-2 text-right">Stock On Hand</th>
@@ -429,7 +429,7 @@ export default function ProductionPlannerPage() {
             <div className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/10 p-4">
               <ShieldAlert className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
               <div className="text-sm">
-                <p className="font-bold text-destructive">{SHORTAGES.length} component shortage{SHORTAGES.length > 1 ? "s" : ""} will block this batch</p>
+                <p className="font-bold text-destructive">{SHORTAGES.length} item shortage{SHORTAGES.length > 1 ? "s" : ""} will block this batch</p>
                 <p className="text-destructive/80 text-xs mt-0.5">
                   Production cannot proceed until the missing quantities below are procured. Continue to the Purchase step to raise requests.
                 </p>
@@ -439,9 +439,9 @@ export default function ProductionPlannerPage() {
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="bg-destructive/10 uppercase text-xs text-destructive/80 border-b border-destructive/20 font-semibold">
                   <tr>
-                    <th className="px-6 py-2.5">Component Item</th>
+                    <th className="px-6 py-2.5">Item</th>
                     <th className="px-6 py-2.5">Generic P/N</th>
-                    <th className="px-6 py-2.5">Shortage Brand</th>
+                    <th className="px-6 py-2.5">Shortage Manufacturer</th>
                     <th className="px-6 py-2.5 text-right">Missing Quantity</th>
                   </tr>
                 </thead>
@@ -464,7 +464,7 @@ export default function ProductionPlannerPage() {
         ) : (
           <div className="flex items-center gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm">
             <Check className="h-5 w-5 text-emerald-500 shrink-0" />
-            <p className="font-semibold text-emerald-600 dark:text-emerald-400">No shortages — all components are fully stocked for this batch.</p>
+            <p className="font-semibold text-emerald-600 dark:text-emerald-400">No shortages — all items are fully stocked for this batch.</p>
           </div>
         )
 
@@ -493,7 +493,7 @@ export default function ProductionPlannerPage() {
                       <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                         <tr>
                           <th className="px-4 py-2">Supplier</th>
-                          <th className="px-4 py-2">Brand</th>
+                          <th className="px-4 py-2">Manufacturer</th>
                           <th className="px-4 py-2">Lead Time</th>
                           <th className="px-4 py-2 text-right">Unit Price</th>
                           <th className="px-4 py-2 text-right">Total Est. Cost</th>
@@ -511,7 +511,7 @@ export default function ProductionPlannerPage() {
                         ))}
                         {offers.length === 0 && (
                           <tr>
-                            <td colSpan={5} className="px-4 py-3 text-center text-muted-foreground">No active supplier offers for this component.</td>
+                            <td colSpan={5} className="px-4 py-3 text-center text-muted-foreground">No active supplier offers for this item.</td>
                           </tr>
                         )}
                       </tbody>
@@ -522,7 +522,7 @@ export default function ProductionPlannerPage() {
             })}
             {SHORTAGES.length === 0 && (
               <div className="text-center py-8 text-xs text-muted-foreground">
-                No component shortages — no purchase requests required.
+                No item shortages — no purchase requests required.
               </div>
             )}
           </div>
@@ -554,7 +554,7 @@ export default function ProductionPlannerPage() {
                     <table className="w-full text-xs text-left text-foreground">
                       <thead className="bg-muted uppercase text-[10px] text-muted-foreground border-b border-border font-semibold">
                         <tr>
-                          <th className="px-4 py-2">Brand / Manufacturer</th>
+                          <th className="px-4 py-2">Manufacturer</th>
                           <th className="px-4 py-2">Part No.</th>
                           <th className="px-4 py-2 text-right">Stock Before</th>
                           <th className="px-4 py-2 text-right">Est. Stock After</th>
@@ -612,7 +612,7 @@ export default function ProductionPlannerPage() {
         </div>
         <h1 className="text-3xl font-extrabold tracking-tight text-foreground">Production Planner</h1>
         <p className="text-muted-foreground">
-          Simulate Material Requirements Planning (MRP) and allocate brand-specific inventory before launching shop floor orders.
+          Simulate Material Requirements Planning (MRP) and allocate manufacturer-specific inventory before launching shop floor orders.
         </p>
       </div>
 

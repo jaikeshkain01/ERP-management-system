@@ -12,7 +12,9 @@ import type {
   Product,
   ComponentOffer,
   StockStatus,
+  ItemCategory,
 } from "./types"
+import { stockHealth } from "@/lib/stock-status"
 
 export interface DataSet {
   components: Component[]
@@ -20,6 +22,7 @@ export interface DataSet {
   suppliers: Supplier[]
   pcbs: Pcb[]
   products: Product[]
+  itemCategories: ItemCategory[]
 }
 
 export interface PcbBomLine {
@@ -57,7 +60,16 @@ export const formatLeadTime = (days: number): string => `${days} Day${days === 1
 
 /** Build the full selector suite over `data`. Selectors reference each other via closure. */
 export function createSelectors(data: DataSet) {
-  const { components, brands, suppliers, pcbs, products } = data
+  const { components, brands, suppliers, pcbs, products, itemCategories = [] } = data
+
+  const categoryById = new Map(itemCategories.map((c) => [c.id, c]))
+  /** Direct children of a category (or roots when id is null), sorted for display. */
+  const categoryChildren = (parentId: string | null): ItemCategory[] =>
+    itemCategories
+      .filter((c) => c.parentId === parentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+  const getCategory = (id: string | null | undefined): ItemCategory | undefined =>
+    id ? categoryById.get(id) : undefined
 
   const componentById = new Map(components.map((c) => [c.id, c]))
   const brandById = new Map(brands.map((b) => [b.id, b]))
@@ -85,11 +97,7 @@ export function createSelectors(data: DataSet) {
   const isSingleSupplier = (c: Component): boolean => componentSupplierIds(c).length <= 1
   const componentBrandIds = (c: Component): string[] =>
     Array.from(new Set(c.brandVariants.map((v) => v.brandId)))
-  const componentStockStatus = (c: Component): StockStatus => {
-    if (c.stock <= c.minStock * 0.5) return "Critical"
-    if (c.stock < c.minStock) return "Low"
-    return "Healthy"
-  }
+  const componentStockStatus = (c: Component): StockStatus => stockHealth(c.stock, c.minStock)
   const componentStockValue = (c: Component): number => c.stock * bestPrice(c)
 
   // ----- PCB-level -----
@@ -181,8 +189,10 @@ export function createSelectors(data: DataSet) {
   return {
     // raw
     COMPONENTS: components, BRANDS: brands, SUPPLIERS: suppliers, PCBS: pcbs, PRODUCTS: products,
+    ITEM_CATEGORIES: itemCategories,
     // lookups
     getComponent, getBrand, getSupplier, getPcb, getProduct, getBrandName, getSupplierName,
+    getCategory, categoryChildren,
     // formatting (pure, re-exposed for convenience)
     formatINR, formatLeadTime,
     // component

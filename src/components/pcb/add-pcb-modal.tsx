@@ -30,7 +30,7 @@ export function AddPcbModal({ onApply, onClose }: Props) {
             <div>
               <h3 className="text-sm font-bold">Add PCB Manually</h3>
               <p className="text-xs text-muted-foreground">
-                Define a circuit board and its components — search the catalog to link real parts, new ones are created automatically.
+                Define a circuit board and its items — search the catalog to link real parts, new ones are created automatically.
               </p>
             </div>
           </div>

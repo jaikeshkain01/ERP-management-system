@@ -39,6 +39,8 @@ const Body = z.object({
   genericPN: z.string().trim().min(1),
   name: z.string().trim().min(1),
   category: z.string().trim().min(1).optional(),
+  categoryId: z.string().uuid().nullable().optional(),
+  itemType: z.enum(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"]).optional(),
   description: z.string().max(2000).optional(),
   unit: z.string().trim().min(1).optional(),
   solderType: z.enum(["SMD", "DIP"]).optional(),

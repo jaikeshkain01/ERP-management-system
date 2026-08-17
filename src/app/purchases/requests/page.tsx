@@ -150,7 +150,7 @@ function PurchaseRequestsContent() {
                 <AlertCircle className="h-5 w-5 text-amber-500" />
                 <div>
                   <CardTitle className="text-lg font-bold text-foreground">Active Shortage Sourcing</CardTitle>
-                  <CardDescription>Procure missing components below threshold safety limits</CardDescription>
+                  <CardDescription>Procure missing items below threshold safety limits</CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -179,7 +179,7 @@ function PurchaseRequestsContent() {
                     <thead className="bg-muted/40 uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                       <tr>
                         <th className="px-4 py-3">Supplier</th>
-                        <th className="px-4 py-3">Brand</th>
+                        <th className="px-4 py-3">Manufacturer</th>
                         <th className="px-4 py-3">Unit Price</th>
                         <th className="px-4 py-3">Total Cost</th>
                         <th className="px-4 py-3 text-right">Action</th>
@@ -229,7 +229,7 @@ function PurchaseRequestsContent() {
                 <FileText className="h-5 w-5 text-primary" />
                 <div>
                   <CardTitle className="text-lg font-bold">Recent Purchase Requests Log</CardTitle>
-                  <CardDescription>Review and approve component replenishment requests</CardDescription>
+                  <CardDescription>Review and approve item replenishment requests</CardDescription>
                 </div>
               </div>
             </CardHeader>
@@ -239,8 +239,8 @@ function PurchaseRequestsContent() {
                   <thead className="bg-muted/40 uppercase text-xs text-muted-foreground border-b border-border font-semibold">
                     <tr>
                       <th className="px-6 py-3">PR Number</th>
-                      <th className="px-6 py-3">Component</th>
-                      <th className="px-6 py-3">Supplier (Brand)</th>
+                      <th className="px-6 py-3">Item</th>
+                      <th className="px-6 py-3">Supplier (Manufacturer)</th>
                       <th className="px-6 py-3">Quantity</th>
                       <th className="px-6 py-3">Total Cost</th>
                       <th className="px-6 py-3">Status</th>
@@ -258,7 +258,7 @@ function PurchaseRequestsContent() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-semibold text-foreground block">{pr.supplierName}</span>
-                          <span className="text-xs text-muted-foreground">Brand: {pr.brandName}</span>
+                          <span className="text-xs text-muted-foreground">Manufacturer: {pr.brandName}</span>
                         </td>
                         <td className="px-6 py-4 font-mono">{pr.qty.toLocaleString()}</td>
                         <td className="px-6 py-4 font-mono font-bold text-primary">{pr.totalCost}</td>
