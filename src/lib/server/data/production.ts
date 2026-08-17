@@ -338,6 +338,40 @@ export async function completeProductionOrder(orderNo: string): Promise<{ order:
   });
 }
 
+// ── cancel (abort before consumption) ────────────────────────────────────────────
+/**
+ * Cancel a production order. Allowed only before material is consumed (Draft or
+ * Ready) — once In Progress the consumed stock is off the ledger and a cancel
+ * would require reversing entries. Releases any open allocations so reserved
+ * stock is freed (the trigger recomputes reserved), then status → Cancelled.
+ */
+export async function cancelProductionOrder(orderNo: string): Promise<{ order: string; released: number }> {
+  return guarded("production_order.delete", async (tx, ctx) => {
+    const po = await resolveProductionOrder(tx, orderNo);
+    if (po.status === "Cancelled") throw Errors.conflict("Order is already cancelled");
+    if (po.status === "In_Progress" || po.status === "Completed") {
+      throw Errors.conflict(`Order has been consumed and cannot be cancelled (status: ${po.status.replace("_", " ")})`);
+    }
+
+    // Free any open reservations so the stock returns to available.
+    const now = new Date();
+    const open = await tx.production_material_moves.findMany({
+      where: { kind: "allocation", released_at: null, deleted_at: null, production_order_items: { production_order_id: po.id } },
+      select: { id: true },
+    });
+    for (const move of open) {
+      await tx.production_material_moves.update({ where: { id: move.id }, data: { released_at: now, updated_by: ctx.userId } });
+    }
+    // Return allocated items to pending (there is no cancelled item state).
+    await tx.production_order_items.updateMany({
+      where: { production_order_id: po.id, deleted_at: null, status: "allocated" },
+      data: { status: "pending", updated_by: ctx.userId },
+    });
+    await tx.production_orders.update({ where: { id: po.id }, data: { status: "Cancelled", updated_by: ctx.userId } });
+    return { order: orderNo, released: open.length };
+  });
+}
+
 // ── Reports — monthly finished-batch output ──────────────────────────────────────
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 

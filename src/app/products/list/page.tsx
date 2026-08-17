@@ -59,6 +59,56 @@ export default function ProductListPage() {
   /** Product pending delete (confirmation modal), or null. */
   const [deleteTarget, setDeleteTarget] = React.useState<ProductData | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
+  /** Catalog product being edited (header fields), or null. */
+  const [editTarget, setEditTarget] = React.useState<ProductData | null>(null)
+  const [editForm, setEditForm] = React.useState({ name: "", code: "", version: "", description: "", status: "Ready" as "Ready" | "Blocked" | "Limited" })
+  const [isSaving, setIsSaving] = React.useState(false)
+
+  // Prefill the edit form from the catalog record (code/version aren't in the card view model).
+  const openEdit = (product: ProductData) => {
+    const p = d.getProduct(product.id)
+    setEditForm({
+      name: p?.name ?? product.name,
+      code: p?.code ?? "",
+      version: p?.version ?? "",
+      description: p?.description ?? product.description,
+      status: (p?.status ?? product.status) as "Ready" | "Blocked" | "Limited",
+    })
+    setEditTarget(product)
+  }
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editTarget) return
+    if (!editForm.name.trim() || !editForm.code.trim()) {
+      showToast("Name and code are required", "error")
+      return
+    }
+    setIsSaving(true)
+    try {
+      const res = await fetch(`/api/products/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          code: editForm.code.trim(),
+          version: editForm.version.trim() || null,
+          description: editForm.description.trim() || null,
+          status: editForm.status,
+        }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message ?? "Failed to update product", "error")
+        return
+      }
+      await d.reload()
+      showToast(`Product "${editForm.name.trim()}" updated`)
+      setEditTarget(null)
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -439,6 +489,17 @@ export default function ProductListPage() {
                 <span>View Structure</span>
                 <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
               </Button>
+              {!product.imported && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Edit product"
+                  onClick={() => openEdit(product)}
+                  className="border-border text-muted-foreground hover:text-primary hover:border-primary/40 cursor-pointer"
+                >
+                  <PencilRuler className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="icon"
@@ -474,6 +535,64 @@ export default function ProductListPage() {
           onApply={handleApplyManual}
           onClose={() => setIsManualOpen(false)}
         />
+      )}
+
+      {/* Edit product — header fields */}
+      {editTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !isSaving && setEditTarget(null)}
+        >
+          <form
+            onSubmit={handleSaveEdit}
+            className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Edit Product</h3>
+              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setEditTarget(null)} disabled={isSaving}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Name</label>
+                  <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Code</label>
+                  <Input value={editForm.code} onChange={(e) => setEditForm({ ...editForm, code: e.target.value })} required />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Version</label>
+                  <Input value={editForm.version} onChange={(e) => setEditForm({ ...editForm, version: e.target.value })} placeholder="v1" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</label>
+                  <select
+                    value={editForm.status}
+                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value as "Ready" | "Blocked" | "Limited" })}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="Ready">Ready</option>
+                    <option value="Limited">Limited</option>
+                    <option value="Blocked">Blocked</option>
+                  </select>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Description</label>
+                <Input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+              </div>
+              <p className="text-[11px] text-muted-foreground">BOM (PCBs &amp; components) is edited from the product structure, not here.</p>
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-border/50">
+                <Button type="button" variant="outline" onClick={() => setEditTarget(null)} disabled={isSaving}>Cancel</Button>
+                <Button type="submit" disabled={isSaving} className="min-w-[110px]">{isSaving ? "Saving…" : "Save Changes"}</Button>
+              </div>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Delete product — confirmation */}

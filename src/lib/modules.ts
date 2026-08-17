@@ -141,6 +141,7 @@ export const WORKSPACES: Workspace[] = [
     href: "/components/inventory",
     tabs: [
       { title: "Inventory", href: "/components/inventory" },
+      { title: "Warehouses", href: "/components/inventory/warehouses" },
       { title: "Usage Analysis", href: "/components/usage" },
     ],
   },

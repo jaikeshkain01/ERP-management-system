@@ -414,6 +414,55 @@ export async function createCatalogProduct(input: CreateCatalogProductInput): Pr
 // join rows). The PCBs/components themselves are shared entities and are left
 // intact — only the product's ownership of them is removed. Blocked (409) if any
 // live production order still references the product.
+export interface UpdateCatalogProductInput {
+  name?: string;
+  code?: string;
+  version?: string | null;
+  description?: string | null;
+  status?: "Ready" | "Blocked" | "Limited";
+  estimatedCost?: number | null;
+}
+
+/**
+ * Edit a product's header fields (name / code / version / description / status /
+ * estimated cost). BOM edits are a separate flow (bom_versions). `slug` is immutable.
+ * `code` stays unique per tenant among live rows.
+ */
+export async function updateCatalogProduct(idOrSlug: string, patch: UpdateCatalogProductInput): Promise<ProductView> {
+  return guarded("product.edit", async (tx, ctx) => {
+    const existing = await tx.products.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { OR: [{ slug: idOrSlug }, { code: idOrSlug }] }) },
+      select: { id: true, code: true },
+    });
+    if (!existing) throw Errors.notFound("Product");
+
+    if (patch.code !== undefined) {
+      const code = patch.code.trim();
+      if (!code) throw Errors.badRequest("Product code cannot be empty");
+      if (code !== existing.code) {
+        const dupe = await tx.products.findFirst({ where: { code, deleted_at: null, id: { not: existing.id } }, select: { id: true } });
+        if (dupe) throw Errors.conflict("A product with this code already exists", { code });
+      }
+    }
+    if (patch.name !== undefined && !patch.name.trim()) throw Errors.badRequest("Product name cannot be empty");
+
+    await tx.products.update({
+      where: { id: existing.id },
+      data: {
+        updated_by: ctx.userId, updated_at: new Date(),
+        ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+        ...(patch.code !== undefined ? { code: patch.code.trim() } : {}),
+        ...(patch.version !== undefined ? { version: patch.version?.trim() || null } : {}),
+        ...(patch.description !== undefined ? { description: patch.description?.trim() || null } : {}),
+        ...(patch.status !== undefined ? { status: patch.status } : {}),
+        ...(patch.estimatedCost !== undefined ? { estimated_cost: patch.estimatedCost } : {}),
+      },
+    });
+    const [view] = await productAggregate(tx, existing.id);
+    return view;
+  });
+}
+
 export async function deleteCatalogProduct(idOrSlug: string): Promise<{ id: string; slug: string }> {
   return guarded("product.delete", async (tx, ctx) => {
     const product = await tx.products.findFirst({

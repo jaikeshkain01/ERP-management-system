@@ -14,15 +14,15 @@
 | Manufacturers (brands) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Suppliers | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Supplier prices | ✅ (upsert) | ✅ | – | ✅ (upsert) | ❌ |
-| **Warehouses** | ❌ | ✅ | ❌ | ❌ | ❌ |
-| **Storage locations (bins)** | ❌ | ✅ | – | ❌ | ❌ |
+| **Warehouses** | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Storage locations (bins)** | ✅ | ✅ | – | ✅ | ✅ |
 | PCBs | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Products | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Products | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Custom products | ✅ | ✅ | ➖¹ | ✅ | ✅ |
 | Inventory transactions | ✅ | ✅ | – | ➖ (immutable) | ➖ (immutable) |
-| Production orders | ✅ | ✅ | ➖¹ | ➖ (lifecycle) | ❌ (cancel) |
-| Purchase requests | ✅ | ✅ | ❌ | ➖ (approve) | ❌ (reject/cancel) |
-| Purchase orders | ➖ (from PR) | ✅ | ❌ | ➖ (receive) | ❌ (cancel) |
+| Production orders | ✅ | ✅ | ➖¹ | ➖ (lifecycle) | ✅ (cancel) |
+| Purchase requests | ✅ | ✅ | ✅ | ➖ (approve) | ✅ (reject/cancel) |
+| Purchase orders | ➖ (from PR) | ✅ | ✅ | ➖ (receive) | ✅ (cancel) |
 
 ¹ single-read covered by the list/bootstrap + a stock sub-resource — low priority.
 ² lots are auto-created on receipt; they still need read/update/delete.
@@ -59,20 +59,18 @@
    - `DELETE /api/components/[id]/variants/[variantId]` — remove a variant with no stock/price (else block).
    - *Why:* a mistyped MPN or wrong manufacturer is unfixable today.
 
-### 🟠 Medium — setup & document management
+### ✅ Done (2026-08-17) — 🟠 Medium items shipped (backend **and UI**)
 
-4. **Warehouses — create / read-one / update / delete**
-   - `POST /api/warehouses`, `GET/PATCH/DELETE /api/warehouses/[id]`.
-5. **Storage locations (bins) — create / update / delete**
-   - `POST /api/warehouses/[id]/locations`, `PATCH/DELETE /api/warehouses/[id]/locations/[locId]`.
-   - *Why:* warehouses/bins can only be read; setup currently needs seeds/SQL.
-6. **Products — update**
-   - `PATCH /api/products/[id]` — edit name/code/version/description (BOM edits can stay separate).
-7. **Purchase requests / orders — read-one + cancel/reject**
-   - `GET /api/purchase-requests/[id]`, `POST …/reject` (or `/cancel`).
-   - `GET /api/purchase-orders/[id]`, `POST …/cancel`.
-8. **Production orders — cancel**
-   - `POST /api/production-orders/[id]/cancel` (release reservations, guard by status).
+UI: warehouse+bin management page (`/components/inventory/warehouses`, new Inventory tab); product edit modal on `/products/list`; PR/PO cancel buttons on the purchases pages; production-order cancel on the orders kanban.
+
+
+- **Warehouses CRUD** — `POST /api/warehouses`, `GET/PATCH/DELETE /api/warehouses/[id]` (uuid or code). DELETE blocks a warehouse that still holds stock and soft-deletes its empty locations alongside. `warehouse.create/edit/delete`.
+- **Storage locations (bins) CRUD** — `POST /api/warehouses/[id]/locations`, `PATCH/DELETE /api/warehouses/[id]/locations/[locId]`. Code unique per warehouse; parent must be same-warehouse; one default bin per warehouse; DELETE blocks a node with children or stock. `warehouse.*`.
+- **Products update** — `PATCH /api/products/[id]` (header fields: name/code/version/description/status/estimatedCost; code stays unique). `product.edit`. BOM edits remain a separate flow.
+- **PR read-one + cancel** — `GET /api/purchase-requests/[id]`, `POST …/cancel` (blocked once a PO exists or terminal). `purchase_request.view` / `.delete`.
+- **PO read-one + cancel** — `GET /api/purchase-orders/[id]`, `POST …/cancel` (blocked if received fully/partially or cancelled). `purchase_order.view` / `.delete`.
+- **Production-order cancel** — `POST /api/production-orders/[id]/cancel` (Draft/Ready only; releases open allocations so reserved frees; In Progress/Completed blocked). `production_order.delete`.
+- Verified: `tsc` clean + `prisma db execute` SQL probe (new columns / enum casts / joins valid).
 
 ### 🟡 Low — nice to have
 

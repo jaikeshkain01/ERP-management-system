@@ -3,7 +3,7 @@
 import * as React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle, Landmark } from "lucide-react"
+import { Truck, ShoppingCart, Check, ShieldAlert, Award, FileSpreadsheet, PackageCheck, AlertCircle, Landmark, Ban, X } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import type { PurchaseOrderView as PurchaseOrder } from "@/lib/server/data/purchases"
@@ -13,6 +13,8 @@ function PurchaseOrdersContent() {
   const [poList, setPoList] = React.useState<PurchaseOrder[]>([])
   const [mounted, setMounted] = React.useState(false)
   const [toast, setToast] = React.useState<string | null>(null)
+  const [cancelPo, setCancelPo] = React.useState<PurchaseOrder | null>(null)
+  const [cancelling, setCancelling] = React.useState(false)
 
   // Load POs from the backend.
   const loadPos = React.useCallback(async () => {
@@ -44,6 +46,24 @@ function PurchaseOrdersContent() {
     }
     showToast(`Marked Purchase Order ${poId} as Completed — stock received into inventory!`)
     await loadPos()
+  }
+
+  const handleCancelPO = async () => {
+    if (!cancelPo) return
+    setCancelling(true)
+    try {
+      const res = await fetch(`/api/purchase-orders/${cancelPo.poId}/cancel`, { method: "POST" })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message ?? `Failed to cancel ${cancelPo.poId}`)
+        return
+      }
+      showToast(`Purchase Order ${cancelPo.poId} cancelled.`)
+      setCancelPo(null)
+      await loadPos()
+    } finally {
+      setCancelling(false)
+    }
   }
 
   // Calculate statistics
@@ -149,15 +169,26 @@ function PurchaseOrdersContent() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         {po.status !== "Completed" ? (
-                          <Button 
-                            size="sm" 
-                            variant="outline"
-                            className="font-bold gap-1 border-primary/20 hover:bg-primary/5 cursor-pointer"
-                            onClick={() => handleReceiveOrder(po.poId)}
-                          >
-                            <PackageCheck className="h-3.5 w-3.5 text-primary" />
-                            <span>Receive</span>
-                          </Button>
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="font-bold gap-1 border-primary/20 hover:bg-primary/5 cursor-pointer"
+                              onClick={() => handleReceiveOrder(po.poId)}
+                            >
+                              <PackageCheck className="h-3.5 w-3.5 text-primary" />
+                              <span>Receive</span>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="font-bold gap-1 border-destructive/20 text-destructive hover:bg-destructive/5 cursor-pointer"
+                              onClick={() => setCancelPo(po)}
+                            >
+                              <Ban className="h-3.5 w-3.5" />
+                              <span>Cancel</span>
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-xs font-semibold text-muted-foreground/45 font-mono">Received</span>
                         )}
@@ -205,6 +236,32 @@ function PurchaseOrdersContent() {
           </Card>
         </div>
       </div>
+
+      {/* Cancel PO confirm */}
+      {cancelPo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4" onClick={() => setCancelPo(null)}>
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-5 py-4">
+              <h3 className="text-base font-extrabold">Cancel Purchase Order</h3>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full cursor-pointer" onClick={() => setCancelPo(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
+                <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+                <p>Cancel <span className="font-mono">{cancelPo.poId}</span> for {cancelPo.componentName}? A PO that has already received stock can't be cancelled.</p>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" className="font-semibold cursor-pointer" onClick={() => setCancelPo(null)}>Keep Order</Button>
+                <Button type="button" onClick={handleCancelPO} disabled={cancelling} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold min-w-[110px]">
+                  {cancelling ? "Cancelling…" : "Cancel PO"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -138,6 +138,103 @@ export async function listPurchaseOrders(): Promise<PurchaseOrderView[]> {
   });
 }
 
+// ── read-one ───────────────────────────────────────────────────────────────
+
+/** One PR by its number — the flattened item rows (includes cancelled/rejected so a terminal doc is still viewable). */
+export async function getPurchaseRequest(prNo: string): Promise<PurchaseRequestView[]> {
+  return guarded("purchase_request.view", async (tx) => {
+    const pr = await tx.purchase_requests.findFirst({ where: { pr_no: prNo, deleted_at: null }, select: { id: true } });
+    if (!pr) throw Errors.notFound("Purchase request");
+    const rows = await tx.$queryRaw<{
+      status: string; date: Date; qty: number; lineTotal: number | null;
+      genericPN: string; componentName: string; brandSlug: string | null; brandName: string | null;
+      supplierSlug: string | null; supplierName: string | null;
+    }[]>`
+      SELECT pr.status::text AS status, pr.request_date AS date,
+             pri.qty::float8 AS qty, pri.line_total::float8 AS "lineTotal",
+             c.generic_pn AS "genericPN", c.name AS "componentName",
+             b.slug AS "brandSlug", b.name AS "brandName",
+             s.slug AS "supplierSlug", s.name AS "supplierName"
+      FROM purchase_requests pr
+      JOIN purchase_request_items pri ON pri.purchase_request_id = pr.id AND pri.deleted_at IS NULL
+      JOIN components c ON c.id = pri.component_id
+      LEFT JOIN brands b ON b.id = pri.brand_id
+      LEFT JOIN suppliers s ON s.id = pri.supplier_id
+      WHERE pr.id = ${pr.id}::uuid`;
+    return rows.map((r) => ({
+      prId: prNo, componentId: r.genericPN, componentName: r.componentName,
+      brandId: r.brandSlug ?? "", brandName: r.brandName ?? "—",
+      supplierId: r.supplierSlug ?? "", supplierName: r.supplierName ?? "—",
+      qty: r.qty, totalCost: formatINR(r.lineTotal ?? 0),
+      status: prStatusToView(r.status), date: dateOf(r.date),
+    }));
+  });
+}
+
+/** One PO by its number — the flattened item rows (includes cancelled so a terminal doc is still viewable). */
+export async function getPurchaseOrder(poNo: string): Promise<PurchaseOrderView[]> {
+  return guarded("purchase_order.view", async (tx) => {
+    const po = await tx.purchase_orders.findFirst({ where: { po_no: poNo, deleted_at: null }, select: { id: true } });
+    if (!po) throw Errors.notFound("Purchase order");
+    const rows = await tx.$queryRaw<{
+      prNo: string | null; status: string; date: Date; qty: number; lineTotal: number | null;
+      componentName: string; brandName: string | null; supplierName: string;
+    }[]>`
+      SELECT pr.pr_no AS "prNo", po.status::text AS status, po.order_date AS date,
+             poi.qty::float8 AS qty, poi.line_total::float8 AS "lineTotal",
+             c.name AS "componentName", b.name AS "brandName", s.name AS "supplierName"
+      FROM purchase_orders po
+      LEFT JOIN purchase_requests pr ON pr.id = po.pr_id
+      JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND poi.deleted_at IS NULL
+      JOIN components c ON c.id = poi.component_id
+      LEFT JOIN brands b ON b.id = poi.brand_id
+      JOIN suppliers s ON s.id = po.supplier_id
+      WHERE po.id = ${po.id}::uuid`;
+    return rows.map((r) => ({
+      poId: poNo, prId: r.prNo ?? "—", componentName: r.componentName,
+      brandName: r.brandName ?? "—", supplierName: r.supplierName, qty: r.qty,
+      totalCost: formatINR(r.lineTotal ?? 0),
+      status: (r.status === "Draft" ? "Sent" : r.status) as PurchaseOrderView["status"], date: dateOf(r.date),
+    }));
+  });
+}
+
+// ── cancel / reject ──────────────────────────────────────────────────────────
+
+/**
+ * Cancel (or reject) a PR. Blocked once it has spawned a PO (cancel the PO first)
+ * or if already terminal. Sets status → Cancelled.
+ */
+export async function cancelPurchaseRequest(prNo: string): Promise<{ pr: string; status: string }> {
+  return guarded("purchase_request.delete", async (tx, ctx) => {
+    const pr = await tx.purchase_requests.findFirst({ where: { pr_no: prNo, deleted_at: null }, select: { id: true, status: true } });
+    if (!pr) throw Errors.notFound("Purchase request");
+    if (pr.status === "PO_Created") throw Errors.conflict("PR already turned into a PO — cancel the PO instead");
+    if (pr.status === "Cancelled" || pr.status === "Rejected") throw Errors.conflict(`PR is already ${pr.status.toLowerCase()}`);
+    await tx.purchase_requests.update({ where: { id: pr.id }, data: { status: "Cancelled", updated_by: ctx.userId } });
+    return { pr: prNo, status: "Cancelled" };
+  });
+}
+
+/**
+ * Cancel a PO. Blocked once received (Completed) or partially received, or already
+ * cancelled. Sets status → Cancelled.
+ */
+export async function cancelPurchaseOrder(poNo: string): Promise<{ po: string; status: string }> {
+  return guarded("purchase_order.delete", async (tx, ctx) => {
+    const po = await tx.purchase_orders.findFirst({ where: { po_no: poNo, deleted_at: null }, select: { id: true, status: true } });
+    if (!po) throw Errors.notFound("Purchase order");
+    if (po.status === "Completed") throw Errors.conflict("PO already received and cannot be cancelled");
+    if (po.status === "Cancelled") throw Errors.conflict("PO is already cancelled");
+    const received = await tx.purchase_order_items.findFirst({
+      where: { purchase_order_id: po.id, deleted_at: null, received_qty: { gt: 0 } }, select: { id: true },
+    });
+    if (received) throw Errors.conflict("PO has received stock and cannot be cancelled");
+    await tx.purchase_orders.update({ where: { id: po.id }, data: { status: "Cancelled", updated_by: ctx.userId } });
+    return { po: poNo, status: "Cancelled" };
+  });
+}
+
 // ── writes ───────────────────────────────────────────────────────────────────
 
 async function nextDocNo(tx: TxClient, table: "purchase_requests" | "purchase_orders", prefix: string): Promise<string> {

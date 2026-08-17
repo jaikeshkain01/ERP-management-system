@@ -42,10 +42,26 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - **Item categories** — `CategoryCascade` gained a `manage` prop (inline rename/delete of the deepest selected node → `PATCH`/`DELETE /api/item-categories/[id]`); enabled in the item form's Category picker.
 - Verified: `tsc` clean + route-contract match. **UI still to be confirmed by a logged-in user.**
 
+## Medium-tier CRUD done (this session — backend + UI)
+Backend (`warehouses.ts` / `products.ts` / `purchases.ts` / `production.ts`; perms reuse existing `warehouse.*` / `product.edit` / `purchase_*.delete` / `production_order.delete`):
+- **Warehouses CRUD** — `POST /api/warehouses`, `GET/PATCH/DELETE /api/warehouses/[id]`.
+- **Storage-location (bin) CRUD** — `POST /api/warehouses/[id]/locations`, `PATCH/DELETE …/locations/[locId]`.
+- **Products PATCH** — `PATCH /api/products/[id]` (header fields; `updateCatalogProduct`).
+- **PR/PO read-one + cancel** — `GET /api/purchase-{requests,orders}/[id]`, `POST …/cancel`.
+- **Production-order cancel** — `POST /api/production-orders/[id]/cancel` (Draft/Ready only, releases allocations).
+
+UI wired:
+- **Warehouse+bin management** — NEW page `/components/inventory/warehouses` (src/app/components/inventory/warehouses/page.tsx) + "Warehouses" tab in the Inventory workspace (`modules.ts`). Left = warehouse list (add/edit/delete); right = the selected warehouse's zone→rack→bin locations (add/edit/delete, default-bin star). Kind is immutable on location edit.
+- **Product edit** — pencil button on catalog (non-imported) product cards in `/products/list` → header-field modal (name/code/version/status/description).
+- **PR cancel** — Cancel button on Draft/Pending rows in `/purchases/requests` + confirm modal.
+- **PO cancel** — Cancel button on non-Completed rows in `/purchases/orders` + confirm modal.
+- **Production-order cancel** — Ban button on Draft/Ready kanban cards in `/production/orders` + confirm modal.
+- Verified: `tsc` clean + DB SQL probe. **UI to be confirmed by a logged-in user** (login is agent-gated).
+
 ## Open items / next
-1. **CRUD gaps** (see `docs/CRUD-AUDIT.md`) — remaining: 🟠 warehouses/bins CRUD, product PATCH, PR/PO read-one + cancel/reject, production-order cancel.
-2. **Physical rename** (deferred, large/risky): `/components`→`/items` routes + DB tables + `/brands`→`/manufacturers`.
-3. Optional: FEFO already covers production consume; per-lot view done.
+1. **CRUD gaps** — remaining 🟡 Low: supplier-price delete (`DELETE /api/suppliers/[id]/prices/[priceId]`); single-read endpoints as needed.
+3. **Physical rename** (deferred, large/risky): `/components`→`/items` routes + DB tables + `/brands`→`/manufacturers`.
+4. Optional: FEFO already covers production consume; per-lot view done.
 
 ## Key files
 - Spec: `docs/COMPONENTS-IMPROVEMENTS.md` · CRUD gaps: `docs/CRUD-AUDIT.md` · schema: `docs/schema.sql`

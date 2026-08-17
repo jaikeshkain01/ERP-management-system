@@ -4,7 +4,7 @@ import * as React from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ClipboardList, GripVertical, Plus, X, Check, AlertCircle, Loader2, ListTree } from "lucide-react"
+import { ClipboardList, GripVertical, Plus, X, Check, AlertCircle, Loader2, ListTree, Ban } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import type { ProductionOrderView as ProductionOrder } from "@/lib/server/data/production"
 
@@ -41,6 +41,7 @@ export default function ProductionOrdersPage() {
 
   const [showNew, setShowNew] = React.useState(false)
   const [planFor, setPlanFor] = React.useState<string | null>(null)
+  const [cancelFor, setCancelFor] = React.useState<OrderView | null>(null)
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
     setToast({ message, type })
@@ -107,6 +108,26 @@ export default function ProductionOrdersPage() {
         Completed: `${order.id} completed — batch closed.`,
       }
       showToast(msg[target])
+      await loadOrders()
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  // Cancel a Draft/Ready order (releases any reservations on the backend).
+  const handleCancel = async () => {
+    if (!cancelFor) return
+    const id = cancelFor.id
+    setBusyId(id)
+    try {
+      const res = await fetch(`/api/production-orders/${id}/cancel`, { method: "POST" })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(body?.error?.message ?? `Failed to cancel ${id}`, "error")
+        return
+      }
+      showToast(`${id} cancelled${body?.data?.released ? ` — ${body.data.released} reservation(s) released` : ""}.`)
+      setCancelFor(null)
       await loadOrders()
     } finally {
       setBusyId(null)
@@ -208,8 +229,20 @@ export default function ProductionOrdersPage() {
                           <span className="text-[10px] text-muted-foreground/80 font-mono block">Target {order.targetDate}</span>
                         )}
                       </div>
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/40 group-hover:text-muted-foreground/80 transition-colors">
-                        {busyId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <GripVertical className="h-4 w-4" />}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {(order.status === "Draft" || order.status === "Ready") && busyId !== order.id && (
+                          <button
+                            type="button"
+                            title="Cancel order"
+                            onClick={(e) => { e.stopPropagation(); setCancelFor(order) }}
+                            className="hidden group-hover:flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          >
+                            <Ban className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <div className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/40 group-hover:text-muted-foreground/80 transition-colors">
+                          {busyId === order.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <GripVertical className="h-4 w-4" />}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -229,6 +262,32 @@ export default function ProductionOrdersPage() {
 
       {showNew && <NewOrderModal onClose={() => setShowNew(false)} onCreated={loadOrders} showToast={showToast} products={d.PRODUCTS} />}
       {planFor && <PlanModal orderId={planFor} onClose={() => setPlanFor(null)} />}
+
+      {/* Cancel confirm */}
+      {cancelFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4" onClick={() => setCancelFor(null)}>
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-5 py-4">
+              <h3 className="text-base font-extrabold">Cancel Production Order</h3>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full cursor-pointer" onClick={() => setCancelFor(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
+                <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+                <p>Cancelling <span className="font-mono">{cancelFor.id}</span> ({cancelFor.product}) releases any reserved stock. Only Draft/Ready orders can be cancelled.</p>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" className="font-semibold cursor-pointer" onClick={() => setCancelFor(null)}>Keep Order</Button>
+                <Button type="button" onClick={handleCancel} disabled={busyId === cancelFor.id} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold min-w-[110px]">
+                  {busyId === cancelFor.id ? "Cancelling…" : "Cancel Order"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
