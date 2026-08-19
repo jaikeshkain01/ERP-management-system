@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ClipboardList, GripVertical, Plus, X, Check, AlertCircle, Loader2, ListTree, Ban } from "lucide-react"
 import { useData } from "@/lib/data-provider"
+import { extractError } from "@/lib/api-error"
 import type { ProductionOrderView as ProductionOrder } from "@/lib/server/data/production"
 
 type StatusColumn = "Draft" | "Ready" | "In Progress" | "Completed"
@@ -37,15 +38,16 @@ export default function ProductionOrdersPage() {
   const [loaded, setLoaded] = React.useState(false)
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
   const [busyId, setBusyId] = React.useState<string | null>(null)
-  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
 
   const [showNew, setShowNew] = React.useState(false)
   const [planFor, setPlanFor] = React.useState<string | null>(null)
   const [cancelFor, setCancelFor] = React.useState<OrderView | null>(null)
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3500)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const loadOrders = React.useCallback(async () => {
@@ -93,12 +95,15 @@ export default function ProductionOrdersPage() {
       const body = await res.json().catch(() => null)
       if (!res.ok) {
         const shorts = body?.error?.details?.shorts
-        showToast(
-          shorts?.length
-            ? `${order.id}: ${shorts.length} item${shorts.length > 1 ? "s" : ""} short — can't reserve stock.`
-            : body?.error?.message ?? `Failed to advance ${order.id}`,
-          "error",
-        )
+        if (shorts?.length) {
+          const { hint } = extractError(body, "")
+          showToast(
+            { message: `${order.id}: ${shorts.length} item${shorts.length > 1 ? "s" : ""} short — can't reserve stock.`, hint },
+            "error",
+          )
+        } else {
+          showToast(extractError(body, `Failed to advance ${order.id}`), "error")
+        }
         return
       }
       const msg: Record<StatusColumn, string> = {
@@ -123,7 +128,7 @@ export default function ProductionOrdersPage() {
       const res = await fetch(`/api/production-orders/${id}/cancel`, { method: "POST" })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message ?? `Failed to cancel ${id}`, "error")
+        showToast(extractError(body, `Failed to cancel ${id}`), "error")
         return
       }
       showToast(`${id} cancelled${body?.data?.released ? ` — ${body.data.released} reservation(s) released` : ""}.`)
@@ -154,15 +159,18 @@ export default function ProductionOrdersPage() {
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-[60] max-w-sm p-4 rounded-xl shadow-lg border transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+          className={`fixed bottom-5 right-5 z-[70] max-w-md p-4 rounded-xl shadow-lg border transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
             toast.type === "error"
-              ? "bg-destructive/10 border-destructive/25 text-destructive"
-              : "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+              ? "border-destructive/35 text-destructive"
+              : "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
           }`}
         >
-          <div className="flex items-center gap-2">
-            {toast.type === "error" ? <AlertCircle className="h-4 w-4 text-destructive" /> : <Check className="h-4 w-4 text-emerald-500" />}
-            <span className="text-sm font-semibold">{toast.message}</span>
+          <div className="flex items-start gap-2">
+            {toast.type === "error" ? <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" /> : <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">{toast.message}</div>
+              {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+            </div>
           </div>
         </div>
       )}
@@ -301,7 +309,7 @@ function NewOrderModal({
 }: {
   onClose: () => void
   onCreated: () => Promise<void>
-  showToast: (m: string, t?: "success" | "error") => void
+  showToast: (m: string | { message: string; hint?: string }, t?: "success" | "error") => void
   products: { id: string; name: string; code?: string }[]
 }) {
   const [product, setProduct] = React.useState(products[0]?.id ?? "")
@@ -321,7 +329,7 @@ function NewOrderModal({
       })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message ?? "Failed to create production order", "error")
+        showToast(extractError(body, "Failed to create production order"), "error")
         return
       }
       showToast(`Production order ${body?.data?.id ?? ""} created — BOM demand planned.`)

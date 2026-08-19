@@ -502,12 +502,20 @@ export async function deleteComponentVariant(idOrSlug: string, variantId: string
 
     const moved = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM inventory_transactions WHERE component_brand_variant_id = ${variant.id}::uuid LIMIT 1`;
-    if (moved.length) throw Errors.conflict("Variant has stock movements and cannot be deleted");
+    if (moved.length) throw Errors.conflict(
+      "Variant has stock movements and cannot be deleted",
+      undefined,
+      "This manufacturer variant has ledger history — retire it in your notes instead of deleting.",
+    );
 
     const priced = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM supplier_component_prices
       WHERE component_id = ${comp.id}::uuid AND brand_id = ${variant.brand_id}::uuid AND deleted_at IS NULL LIMIT 1`;
-    if (priced.length) throw Errors.conflict("Variant has a supplier price and cannot be deleted");
+    if (priced.length) throw Errors.conflict(
+      "Variant has a supplier price and cannot be deleted",
+      undefined,
+      "Remove the supplier price for this manufacturer variant on the Supplier Details page, then retry.",
+    );
 
     // Its lots carry no movements (guarded above) — soft-delete them alongside.
     await tx.$executeRaw`
@@ -539,7 +547,11 @@ export async function deleteComponent(idOrSlug: string): Promise<{ id: string; g
       JOIN pcbs p ON p.id = pr.pcb_id AND p.deleted_at IS NULL
       WHERE pl.component_id = ${comp.id}::uuid AND pl.deleted_at IS NULL
       LIMIT 1`;
-    if (inUse.length) throw Errors.conflict("Component is used in one or more PCB BOMs and cannot be deleted");
+    if (inUse.length) throw Errors.conflict(
+      "Component is used in one or more PCB BOMs and cannot be deleted",
+      undefined,
+      "Open each PCB structure that lists this item and swap or remove the BOM line, then retry.",
+    );
 
     // The component's brand variants and price book are config owned by the
     // component — soft-delete them alongside so they do not linger and keep the

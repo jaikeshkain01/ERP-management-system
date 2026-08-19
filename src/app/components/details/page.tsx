@@ -10,10 +10,13 @@ import {
   ArrowLeft, Plus, Edit2, Star, Landmark,
   ShieldCheck, AlertCircle, X, Check, Cpu, Package,
   Info, Wrench, BarChart2, Inbox, Trash2,
-  Boxes, Truck, Layers, Gauge, Zap, ShieldAlert, Clock, TrendingDown,
+  Boxes, Truck, Layers, Gauge, Zap, ShieldAlert, Clock, TrendingDown, ArrowUpRight, Lock,
 } from "lucide-react"
 import Link from "next/link"
 import { useData } from "@/lib/data-provider"
+import { useModules } from "@/components/module-provider"
+import { isWorkspaceReachable, workspaceById } from "@/lib/modules"
+import { extractError } from "@/lib/api-error"
 
 interface SupplierOffer {
   manufacturer: string
@@ -155,12 +158,23 @@ function ComponentDetailsContent() {
     d.COMPONENTS[0]?.id ||
     ""
 
+  // Origin workspace hint — e.g. Inventory → Item Details keeps the breadcrumb
+  // and Back button pointing at Inventory instead of the Item List. A hint
+  // whose module is locked is ignored so the Back button never sends the user
+  // to a lock screen.
+  const { isEnabled } = useModules()
+  const fromParam = searchParams.get("from")
+  const from = isWorkspaceReachable(workspaceById(fromParam), isEnabled) ? fromParam : null
+  const back = from === "inventory"
+    ? { href: "/components/inventory", label: "Back to Inventory", crumb: "Inventory" }
+    : { href: "/components/list", label: "Back to List", crumb: "Item List" }
+
   // Component details State
   const [componentsData, setComponentsData] = React.useState<Record<string, ComponentDetailData>>(COMPONENTS_DATA)
   const [activeModal, setActiveModal] = React.useState<'add-supplier' | 'edit-price' | 'set-preferred' | 'add-variant' | 'edit-variant' | 'delete-variant' | 'edit-lot' | 'delete-lot' | 'delete-component' | null>(null)
   
   // Toast notifications State
-  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
 
   // Add Supplier Form State
   const [newSupplierMfg, setNewSupplierMfg] = React.useState("")
@@ -213,9 +227,11 @@ function ComponentDetailsContent() {
     setComponentsData(newData)
   }
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    // Give error toasts (with or without a hint) a longer read time.
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const component = componentsData[componentId] || COMPONENTS_DATA["resistor-10k"]
@@ -244,9 +260,9 @@ function ComponentDetailsContent() {
                 There are no items in the system yet. Add an item to view its details, variants, and supplier offers.
               </p>
             </div>
-            <Button variant="outline" render={<Link href="/components/list" />} className="gap-2 border-border bg-background">
+            <Button variant="outline" render={<Link href={back.href} />} className="gap-2 border-border bg-background">
               <ArrowLeft className="h-4 w-4" />
-              <span>Back to Item List</span>
+              <span>{back.label}</span>
             </Button>
           </CardContent>
         </Card>
@@ -281,7 +297,7 @@ function ComponentDetailsContent() {
     const res = await fetch(`/api/components/${encodeURIComponent(componentId)}`, { method: "DELETE" })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to delete component", "error")
+      showToast(extractError(body, "Failed to delete component"), "error")
       setActiveModal(null)
       return
     }
@@ -297,7 +313,7 @@ function ComponentDetailsContent() {
     setActiveModal(null)
     showToast(`Successfully deleted item ${component.name}!`)
     setTimeout(() => {
-      router.push("/components/list")
+      router.push(back.href)
     }, 1000)
   }
 
@@ -356,7 +372,7 @@ function ComponentDetailsContent() {
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
-      showToast(body?.error?.message || "Failed to save supplier price", "error")
+      showToast(extractError(body, "Failed to save supplier price"), "error")
       return
     }
 
@@ -429,7 +445,7 @@ function ComponentDetailsContent() {
       })
       if (!res.ok) {
         const body = await res.json().catch(() => null)
-        showToast(body?.error?.message || "Failed to update price", "error")
+        showToast(extractError(body, "Failed to update price"), "error")
         return
       }
     }
@@ -516,7 +532,7 @@ function ComponentDetailsContent() {
     })
     const vbody = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(vbody?.error?.message || "Failed to add variant", "error")
+      showToast(extractError(vbody, "Failed to add variant"), "error")
       return
     }
 
@@ -566,7 +582,7 @@ function ComponentDetailsContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to update variant", "error")
+      showToast(extractError(body, "Failed to update variant"), "error")
       return
     }
     setActiveModal(null)
@@ -580,7 +596,7 @@ function ComponentDetailsContent() {
     const res = await fetch(`/api/components/${encodeURIComponent(componentId)}/variants/${editingVariant.variantId}`, { method: "DELETE" })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to delete variant", "error")
+      showToast(extractError(body, "Failed to delete variant"), "error")
       setActiveModal(null)
       return
     }
@@ -637,7 +653,7 @@ function ComponentDetailsContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to update lot", "error")
+      showToast(extractError(body, "Failed to update lot"), "error")
       return
     }
     setActiveModal(null)
@@ -651,7 +667,7 @@ function ComponentDetailsContent() {
     const res = await fetch(`/api/item-lots/${editingLot.id}`, { method: "DELETE" })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to delete lot", "error")
+      showToast(extractError(body, "Failed to delete lot"), "error")
       setActiveModal(null)
       return
     }
@@ -674,13 +690,16 @@ function ComponentDetailsContent() {
     <div className="space-y-8">
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
           toast.type === "success" 
             ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400" 
             : "border-destructive/35 text-destructive"
         }`}>
-          {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4 text-destructive" />}
-          <span className="text-sm font-semibold">{toast.message}</span>
+          {toast.type === "success" ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" /> : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{toast.message}</div>
+            {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+          </div>
         </div>
       )}
 
@@ -688,9 +707,9 @@ function ComponentDetailsContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-border/80 pb-5">
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
-            <span>Items</span>
+            <span>{from === "inventory" ? "Inventory" : "Items"}</span>
             <span>/</span>
-            <Link href="/components/list" className="hover:text-foreground transition-colors font-medium">Item List</Link>
+            <Link href={back.href} className="hover:text-foreground transition-colors font-medium">{back.crumb}</Link>
             <span>/</span>
             <span className="text-foreground font-bold">{component.name}</span>
           </div>
@@ -734,13 +753,13 @@ function ComponentDetailsContent() {
             <span>Delete</span>
           </Button>
           <div className="h-4 w-[1px] bg-border mx-1" />
-          <Button 
-            variant="outline" 
-            render={<Link href="/components/list" />}
+          <Button
+            variant="outline"
+            render={<Link href={back.href} />}
             className="gap-2 border-border bg-background font-bold shadow-xs rounded-lg text-xs"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Back to List</span>
+            <span>{back.label}</span>
           </Button>
         </div>
       </div>
@@ -781,15 +800,25 @@ function ComponentDetailsContent() {
           {lots.length > 0 && (
             <Card className="border border-border shadow-sm overflow-hidden">
               <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
-                <CardTitle className="text-lg font-bold">Lot Inventory</CardTitle>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-lg font-bold">Lot Inventory</CardTitle>
+                  <span className="text-xs font-semibold text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                    {lots.length} lot{lots.length === 1 ? "" : "s"}
+                  </span>
+                </div>
               </CardHeader>
               <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm whitespace-nowrap">
                   <thead className="bg-muted/40 text-muted-foreground text-[11px] uppercase">
                     <tr>
                       <th className="px-4 py-2 text-left font-semibold">Lot / Batch</th>
                       <th className="px-4 py-2 text-left font-semibold">Mfr PN</th>
+                      <th className="px-4 py-2 text-left font-semibold">Supplier</th>
+                      <th className="px-4 py-2 text-left font-semibold">Received</th>
+                      <th className="px-4 py-2 text-left font-semibold">Mfg Date</th>
                       <th className="px-4 py-2 text-left font-semibold">Expiry</th>
+                      <th className="px-4 py-2 text-left font-semibold">Date Code</th>
+                      <th className="px-4 py-2 text-left font-semibold">MSL</th>
                       <th className="px-4 py-2 text-right font-semibold">On Hand</th>
                       <th className="px-4 py-2 text-right font-semibold">Unit Cost</th>
                       <th className="px-4 py-2 text-right font-semibold">Value</th>
@@ -797,11 +826,25 @@ function ComponentDetailsContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {lots.map((l) => (
+                    {lots.map((l) => {
+                      // Days until expiry — flag near-expiry (≤30d) / expired lots.
+                      const days = l.expiryDate ? Math.ceil((new Date(l.expiryDate).getTime() - Date.now()) / 86400000) : null
+                      const expiryTone = days == null ? "" : days < 0 ? "text-destructive font-semibold" : days <= 30 ? "text-amber-600 dark:text-amber-400 font-semibold" : ""
+                      return (
                       <tr key={l.id} className="hover:bg-muted/10">
-                        <td className="px-4 py-2 font-mono font-semibold">{l.lotNo}</td>
+                        <td className="px-4 py-2 font-mono font-semibold" title={l.note ?? undefined}>
+                          {l.lotNo}
+                          {l.note ? <span className="ml-1 text-muted-foreground/60">*</span> : null}
+                        </td>
                         <td className="px-4 py-2 font-mono text-muted-foreground">{l.partNo ?? "—"}</td>
-                        <td className="px-4 py-2">{l.expiryDate ?? "—"}</td>
+                        <td className="px-4 py-2 text-muted-foreground">{l.supplierName ?? "—"}</td>
+                        <td className="px-4 py-2 font-mono">{l.receivedDate ?? "—"}</td>
+                        <td className="px-4 py-2 font-mono">{l.mfgDate ?? "—"}</td>
+                        <td className={`px-4 py-2 font-mono ${expiryTone}`} title={days != null ? (days < 0 ? `Expired ${-days}d ago` : `${days}d left`) : undefined}>
+                          {l.expiryDate ?? "—"}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-muted-foreground">{l.dateCode ?? "—"}</td>
+                        <td className="px-4 py-2 font-mono text-muted-foreground">{l.msl ?? "—"}</td>
                         <td className="px-4 py-2 text-right font-mono">{l.onHand.toLocaleString()}</td>
                         <td className="px-4 py-2 text-right font-mono">{l.unitCost != null ? `₹${l.unitCost}` : "—"}</td>
                         <td className="px-4 py-2 text-right font-mono font-semibold">₹{Math.round(l.value).toLocaleString()}</td>
@@ -816,8 +859,18 @@ function ComponentDetailsContent() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
+                  <tfoot className="border-t-2 border-border bg-muted/20 font-semibold">
+                    <tr>
+                      <td className="px-4 py-2 text-[11px] uppercase text-muted-foreground" colSpan={8}>Total</td>
+                      <td className="px-4 py-2 text-right font-mono">{lots.reduce((s, l) => s + l.onHand, 0).toLocaleString()}</td>
+                      <td className="px-4 py-2" />
+                      <td className="px-4 py-2 text-right font-mono">₹{Math.round(lots.reduce((s, l) => s + l.value, 0)).toLocaleString()}</td>
+                      <td className="px-4 py-2" />
+                    </tr>
+                  </tfoot>
                 </table>
               </CardContent>
             </Card>
@@ -1143,6 +1196,34 @@ function ComponentDetailsContent() {
                     Valued at best available unit price ({cheapestSupplier?.price}).
                   </p>
                 )}
+
+                {/* Cross-workspace jump into Inventory, focused on this item's PN.
+                    Gated on the inventory module licence — if the tenant doesn't
+                    have it, we render a locked chip explaining why instead of a
+                    dangling link into a route the ModuleGate would just lock. */}
+                <div className="pt-3 border-t border-border/50">
+                  {isEnabled("inventory") ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full gap-1.5 border-border bg-background font-semibold text-xs"
+                      render={<Link href={`/components/inventory?item=${encodeURIComponent(component.genericPN)}`} />}
+                    >
+                      <Boxes className="h-3.5 w-3.5" />
+                      <span>Open in Inventory</span>
+                      <ArrowUpRight className="h-3.5 w-3.5 ml-auto" />
+                    </Button>
+                  ) : (
+                    <div
+                      className="flex w-full items-center gap-1.5 rounded-md border border-dashed border-border bg-muted/40 px-3 py-2 text-xs font-semibold text-muted-foreground cursor-not-allowed"
+                      title="The Inventory module is not included in your plan."
+                    >
+                      <Lock className="h-3.5 w-3.5" />
+                      <span>Open in Inventory</span>
+                      <span className="ml-auto text-[10px] uppercase tracking-wider font-bold text-muted-foreground/70">Locked</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -591,10 +591,10 @@ export default function ProductionPlannerPage() {
     <div className="space-y-6 relative">
       {/* Toast alert */}
       {toast && (
-        <div className={`fixed bottom-5 right-5 z-50 max-w-sm p-4 rounded-xl shadow-lg border transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-sm p-4 rounded-xl shadow-lg border transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
           toast.type === "warning"
-            ? "bg-destructive/10 border-destructive/25 text-destructive"
-            : "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+            ? "border-destructive/35 text-destructive"
+            : "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
         }`}>
           <div className="flex items-center gap-2">
             {toast.type === "warning" ? <ShieldAlert className="h-4 w-4 text-destructive" /> : <Check className="h-4 w-4 text-emerald-500" />}

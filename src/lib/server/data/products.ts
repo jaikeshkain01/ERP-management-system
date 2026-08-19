@@ -35,7 +35,22 @@ export interface ProductView {
 export interface ProductDetailView extends ProductView {
   totalParts: number;
   brandCount: number;
-  pcbs: { id: string; slug: string; name: string; qty: number; sequence: number | null; remarks: string | null }[];
+  /**
+   * `linkId` is the `product_pcbs` row uuid — needed to swap the pinned revision.
+   * `pcbRevision` describes which revision this product is pinned to (may differ
+   * from the PCB's currently-Active revision — that's the whole point of the
+   * multi-revision model).
+   */
+  pcbs: {
+    id: string;
+    slug: string;
+    name: string;
+    qty: number;
+    sequence: number | null;
+    remarks: string | null;
+    linkId: string;
+    pcbRevision: { id: string; rev: string; status: string };
+  }[];
 }
 
 export interface ProductBomLineView {
@@ -108,14 +123,25 @@ export async function getProductDetail(idOrSlug: string): Promise<ProductDetailV
         WHERE bv.product_id = ${id}::uuid AND bv.status = 'Active' AND bv.deleted_at IS NULL
       )`;
 
-    const pcbs = await tx.$queryRaw<ProductDetailView["pcbs"]>`
-      SELECT pc.id, pc.slug, pc.name, pp.qty::int AS qty, pp.sequence, pp.remarks
+    const pcbRows = await tx.$queryRaw<{
+      id: string; slug: string; name: string; qty: number; sequence: number | null;
+      remarks: string | null; linkId: string; revisionId: string; rev: string; revStatus: string;
+    }[]>`
+      SELECT pc.id, pc.slug, pc.name, pp.qty::int AS qty, pp.sequence, pp.remarks,
+             pp.id AS "linkId",
+             pr.id AS "revisionId", pr.rev, pr.status::text AS "revStatus"
       FROM bom_versions bv
       JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
       JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
       JOIN pcbs pc ON pc.id = pr.pcb_id AND pc.deleted_at IS NULL
       WHERE bv.product_id = ${id}::uuid AND bv.status = 'Active' AND bv.deleted_at IS NULL
       ORDER BY pp.sequence NULLS LAST, pc.name`;
+
+    const pcbs: ProductDetailView["pcbs"] = pcbRows.map((r) => ({
+      id: r.id, slug: r.slug, name: r.name, qty: r.qty, sequence: r.sequence, remarks: r.remarks,
+      linkId: r.linkId,
+      pcbRevision: { id: r.revisionId, rev: r.rev, status: r.revStatus },
+    }));
 
     return { ...base, totalParts, brandCount, pcbs };
   });
@@ -463,6 +489,64 @@ export async function updateCatalogProduct(idOrSlug: string, patch: UpdateCatalo
   });
 }
 
+/**
+ * Swap the PCB revision this product's `product_pcbs` link pins to. The new
+ * revision must belong to the SAME PCB — you can't repoint a product to a
+ * different PCB via this endpoint (that would be a BOM restructure). Blocked
+ * if the target revision is Obsolete.
+ */
+export async function updateProductPcbRevision(
+  idOrSlug: string,
+  linkId: string,
+  input: { pcbRevisionId: string },
+): Promise<{ linkId: string; pcbRevision: { id: string; rev: string; status: string } }> {
+  return guarded("product.edit", async (tx, ctx) => {
+    if (!isUuid(linkId)) throw Errors.notFound("Product-PCB link");
+    if (!isUuid(input.pcbRevisionId)) throw Errors.badRequest("pcbRevisionId must be a uuid");
+
+    const productId = await resolveProductId(tx, idOrSlug);
+
+    // Confirm the link belongs to this product's active BOM version.
+    const link = await tx.$queryRaw<{ id: string; currentRevisionId: string; currentPcbId: string }[]>`
+      SELECT pp.id, pp.pcb_revision_id AS "currentRevisionId", pr.pcb_id AS "currentPcbId"
+      FROM product_pcbs pp
+      JOIN bom_versions bv ON bv.id = pp.bom_version_id AND bv.deleted_at IS NULL
+      JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
+      WHERE pp.id = ${linkId}::uuid AND pp.deleted_at IS NULL
+        AND bv.product_id = ${productId}::uuid AND bv.status = 'Active'
+      LIMIT 1`;
+    if (!link[0]) throw Errors.notFound("Product-PCB link");
+
+    // The target revision must be a revision of the SAME PCB.
+    const target = await tx.pcb_revisions.findFirst({
+      where: { id: input.pcbRevisionId, deleted_at: null },
+      select: { id: true, pcb_id: true, rev: true, status: true },
+    });
+    if (!target) throw Errors.notFound("Target revision");
+    if (target.pcb_id !== link[0].currentPcbId) {
+      throw Errors.badRequest("Target revision belongs to a different PCB", { targetPcbId: target.pcb_id, currentPcbId: link[0].currentPcbId });
+    }
+    if (target.status === "Obsolete") {
+      throw Errors.conflict(
+        "Target revision is Obsolete and cannot be pinned",
+        undefined,
+        "Pick a Draft, Active, or Superseded revision instead.",
+      );
+    }
+
+    // No-op if the pin is already there.
+    if (target.id === link[0].currentRevisionId) {
+      return { linkId, pcbRevision: { id: target.id, rev: target.rev, status: target.status } };
+    }
+
+    await tx.product_pcbs.update({
+      where: { id: linkId },
+      data: { pcb_revision_id: target.id, updated_by: ctx.userId, updated_at: new Date() },
+    });
+    return { linkId, pcbRevision: { id: target.id, rev: target.rev, status: target.status } };
+  });
+}
+
 export async function deleteCatalogProduct(idOrSlug: string): Promise<{ id: string; slug: string }> {
   return guarded("product.delete", async (tx, ctx) => {
     const product = await tx.products.findFirst({
@@ -475,7 +559,11 @@ export async function deleteCatalogProduct(idOrSlug: string): Promise<{ id: stri
       SELECT 1 AS one FROM production_orders
       WHERE product_id = ${product.id}::uuid AND deleted_at IS NULL
       LIMIT 1`;
-    if (inUse.length) throw Errors.conflict("Product has production orders and cannot be deleted");
+    if (inUse.length) throw Errors.conflict(
+      "Product has production orders and cannot be deleted",
+      undefined,
+      "Cancel or complete every production order for this product first, then retry.",
+    );
 
     const now = new Date();
     // Join rows first, then the BOM versions, then the product itself.

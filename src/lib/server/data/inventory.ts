@@ -110,6 +110,18 @@ export const InventoryTxnBody = z
     expiryDate: z.string().optional(), // ISO date (YYYY-MM-DD)
     unitCost: z.number().nonnegative().optional(),
     supplierSlug: z.string().max(200).optional(), // inbound: recorded on the lot
+    // Outbound override: pin the move to a specific lot instead of the FEFO
+    // default. Ignored on inbound (the lotNo/expiryDate/etc. fields above take
+    // over there). Server validates the lot belongs to the variant and has
+    // sufficient on-hand at the source location.
+    lotId: z.string().uuid().optional(),
+    // Outbound multi-lot allocations: manually split a single stock-out across
+    // several lots. Sum of qtys must equal the top-level `qty`. When set, this
+    // wins over both `lotId` and FEFO — one ledger row per allocation.
+    lotAllocations: z.array(z.object({
+      lotId: z.string().uuid(),
+      qty: z.number().positive(),
+    })).optional(),
   })
   .superRefine((b, ctx) => {
     if (!b.variantId && !(b.genericPN && b.brandSlug)) {
@@ -376,7 +388,11 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
       const toWh = await warehouseForLocation(tx, input.toLocationId!);
       const qty = input.qty!;
       const avail = await availableAt(tx, variantId, input.fromLocationId!);
-      if (avail < qty) throw Errors.conflict("Insufficient available stock at source", { available: avail, requested: qty });
+      if (avail < qty) throw Errors.conflict(
+        "Insufficient available stock at source",
+        { available: avail, requested: qty },
+        `Only ${avail} available at the source location — reduce the transfer qty or transfer from a different location.`,
+      );
       const group = randomUUID();
       await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: fromWh, location_id: input.fromLocationId!, qty_delta: -qty, transfer_group_id: group, note: input.note ?? null } });
       await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: toWh, location_id: input.toLocationId!, qty_delta: qty, transfer_group_id: group, note: input.note ?? null } });
@@ -387,7 +403,11 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
       const delta = input.qtyDelta!;
       if (delta < 0) {
         const avail = await availableAt(tx, variantId, locationId);
-        if (avail < -delta) throw Errors.conflict("Insufficient available stock", { available: avail, requested: -delta });
+        if (avail < -delta) throw Errors.conflict(
+          "Insufficient available stock",
+          { available: avail, requested: -delta },
+          `Only ${avail} available at this location — reduce the quantity or receive more stock first.`,
+        );
       }
       await tx.inventory_transactions.create({ data: { ...base, type: "ADJUSTMENT", warehouse_id: wh, location_id: locationId, qty_delta: delta, reason: input.reason ?? null, note: input.note ?? null } });
       touched.push({ locationId });
@@ -398,7 +418,11 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
       const delta = POSITIVE_TYPES.has(input.type) ? qty : NEGATIVE_TYPES.has(input.type) ? -qty : qty;
       if (delta < 0) {
         const avail = await availableAt(tx, variantId, locationId);
-        if (avail < -delta) throw Errors.conflict("Insufficient available stock", { available: avail, requested: -delta });
+        if (avail < -delta) throw Errors.conflict(
+          "Insufficient available stock",
+          { available: avail, requested: -delta },
+          `Only ${avail} available at this location — reduce the quantity or receive more stock first.`,
+        );
       }
       if (delta > 0) {
         // Inbound: capture (or auto-generate) a lot. lot_id must be set in the
@@ -418,17 +442,94 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
           VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
                   ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
                   ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+      } else if (input.lotAllocations && input.lotAllocations.length > 0) {
+        // Outbound MULTI-LOT: caller manually split across lots. Validate sum
+        // matches qty and each lot has stock at the source location, then emit
+        // one ledger row per allocation. Overrides `lotId`/FEFO.
+        const total = input.lotAllocations.reduce((s, a) => s + a.qty, 0);
+        if (Math.abs(total - input.qty!) > 1e-9) {
+          throw Errors.badRequest(
+            "Sum of lot allocations must equal the total qty",
+            { requestedQty: input.qty, allocated: total },
+            "Adjust the split so each lot's qty adds up to the total, or clear the split to use FEFO.",
+          );
+        }
+        for (const alloc of input.lotAllocations) {
+          const rows = await tx.$queryRaw<{ variantId: string; onHandAtLoc: number }[]>`
+            SELECT il.component_brand_variant_id AS "variantId",
+                   COALESCE((
+                     SELECT SUM(t.qty_delta)::float8 FROM inventory_transactions t
+                     WHERE t.lot_id = il.id AND t.location_id = ${locationId}::uuid
+                   ), 0) AS "onHandAtLoc"
+            FROM item_lots il
+            WHERE il.id = ${alloc.lotId}::uuid AND il.deleted_at IS NULL
+              AND il.company_id = ${ctx.companyId!}::uuid`;
+          if (!rows[0]) throw Errors.notFound("Lot");
+          if (rows[0].variantId !== variantId) {
+            throw Errors.badRequest(
+              "One of the picked lots belongs to a different variant",
+              undefined,
+              "Every allocated lot must belong to the same manufacturer variant.",
+            );
+          }
+          if (rows[0].onHandAtLoc < alloc.qty) {
+            throw Errors.conflict(
+              "One of the picked lots has insufficient stock at this location",
+              { lotId: alloc.lotId, available: rows[0].onHandAtLoc, requested: alloc.qty },
+              `A lot in the split has only ${rows[0].onHandAtLoc} on-hand here — reduce that row or replace the lot.`,
+            );
+          }
+        }
+        for (const alloc of input.lotAllocations) {
+          await tx.$executeRaw`
+            INSERT INTO inventory_transactions
+              (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
+            VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+                    ${-alloc.qty}, ${alloc.lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+                    ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+        }
+        touched.push({ locationId });
       } else {
-        // Outbound: consume the FEFO lot (earliest expiry) for traceability.
-        const lotId = await pickOutboundLot(tx, ctx, variantId, locationId);
+        // Outbound SINGLE-LOT: if the caller pinned a lot, validate + use it;
+        // otherwise FEFO (existing behaviour).
+        let lotId: string | null;
+        if (input.lotId) {
+          const rows = await tx.$queryRaw<{ variantId: string; onHandAtLoc: number }[]>`
+            SELECT il.component_brand_variant_id AS "variantId",
+                   COALESCE((
+                     SELECT SUM(t.qty_delta)::float8 FROM inventory_transactions t
+                     WHERE t.lot_id = il.id AND t.location_id = ${locationId}::uuid
+                   ), 0) AS "onHandAtLoc"
+            FROM item_lots il
+            WHERE il.id = ${input.lotId}::uuid AND il.deleted_at IS NULL
+              AND il.company_id = ${ctx.companyId!}::uuid`;
+          if (!rows[0]) throw Errors.notFound("Lot");
+          if (rows[0].variantId !== variantId) {
+            throw Errors.badRequest(
+              "Selected lot belongs to a different variant of this item",
+              undefined,
+              "Pick a lot from the same manufacturer variant, or leave the lot on 'Auto (FEFO)'.",
+            );
+          }
+          if (rows[0].onHandAtLoc < -delta) {
+            throw Errors.conflict(
+              "Selected lot has insufficient stock at this location",
+              { available: rows[0].onHandAtLoc, requested: -delta },
+              `Only ${rows[0].onHandAtLoc} available on this lot at this location — split the move across lots or reduce the qty.`,
+            );
+          }
+          lotId = input.lotId;
+        } else {
+          lotId = await pickOutboundLot(tx, ctx, variantId, locationId);
+        }
         await tx.$executeRaw`
           INSERT INTO inventory_transactions
             (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
           VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
                   ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
                   ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+        touched.push({ locationId });
       }
-      touched.push({ locationId });
     }
 
     // return the affected balance rows (post-trigger projection)

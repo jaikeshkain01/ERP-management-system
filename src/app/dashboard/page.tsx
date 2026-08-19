@@ -7,7 +7,7 @@ import {
   Package, Cpu, Nut, Truck, Award, Landmark,
   ShieldAlert, AlertCircle, FileText, Activity, Layers, ArrowRight,
   TrendingUp, BarChart2, LayoutDashboard, Factory, ShoppingCart,
-  Zap, Plus, ArrowUpRight,
+  Zap, Plus, ArrowUpRight, Clock,
 } from "lucide-react"
 import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
@@ -42,6 +42,8 @@ export default function Dashboard() {
   const [ops, setOps] = React.useState<DashboardSummary | null>(null)
 
   // Sync state on mount to prevent SSR hydration mismatch
+  const [expiringLotCount, setExpiringLotCount] = React.useState<number | null>(null)
+
   React.useEffect(() => {
     setMounted(true)
       ; (async () => {
@@ -53,6 +55,18 @@ export default function Dashboard() {
           // leave ops null — panels render empty
         }
       })()
+    // Near-expiry lot count — powers the "Expiring ≤30d" dashboard tile.
+    // Fetched independently so it stays fresh even if the main dashboard
+    // aggregate cache doesn't include it yet.
+    ;(async () => {
+      try {
+        const res = await fetch("/api/item-lots?expiringWithinDays=30", { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        setExpiringLotCount(res.ok && Array.isArray(body?.data) ? body.data.length : 0)
+      } catch {
+        setExpiringLotCount(0)
+      }
+    })()
   }, [])
 
   const realValuation = React.useMemo(() => {
@@ -67,6 +81,19 @@ export default function Dashboard() {
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
     { title: "Manufacturers", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
     { title: "Inventory Value", value: compactINR(realValuation), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
+    // Near-expiry alert — only shown when at least one lot is within 30 days
+    // (including already expired). Amber tone so it visually cues "look at me".
+    ...(expiringLotCount != null && expiringLotCount > 0
+      ? [{
+          title: "Expiring ≤30d",
+          value: expiringLotCount.toLocaleString(),
+          desc: expiringLotCount === 1 ? "Lot at or near expiry" : "Lots at or near expiry",
+          icon: Clock,
+          color: "text-amber-600 dark:text-amber-400 bg-amber-500/10",
+          moduleId: "inventory" as ModuleId,
+          href: "/components/inventory",
+        }]
+      : []),
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 

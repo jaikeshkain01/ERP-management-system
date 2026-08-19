@@ -11,6 +11,7 @@ import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { EditPcbModal } from "@/components/pcb/edit-pcb-modal"
+import { PcbRevisionsCard } from "@/components/pcb/pcb-revisions-card"
 
 interface ComponentBrand {
   id: string
@@ -277,6 +278,10 @@ function PCBStructureContent() {
         </div>
       </div>
 
+      {/* Revisions — multi-version management (Active is the primary; each product
+          may pin to a different revision). Reloads the outer page's BOM view on change. */}
+      <PcbRevisionsCard pcbId={pcbEntity.id} pcbName={pcbEntity.name} onChange={reload} />
+
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Left Structure Panel */}
         <Card className="lg:col-span-2 border border-border shadow-sm">
@@ -395,7 +400,7 @@ function PCBStructureContent() {
                               {component.approvedBrands.map(b => (
                                 <Link 
                                   key={b.id}
-                                  href={`/brands/list?brand=${b.id}`}
+                                  href={`/brands/list?brand=${b.id}&from=pcb`}
                                   className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-0.5 font-bold text-secondary-foreground hover:text-primary hover:bg-primary/5 border border-border transition-colors cursor-pointer"
                                 >
                                   <Award className="h-3 w-3 text-primary" />
@@ -787,8 +792,8 @@ function PCBStructureContent() {
                     {selectedComponentDetail.brands.map((b) => (
                       <tr key={b.id} className="hover:bg-muted/5">
                         <td className="px-4 py-2.5">
-                          <Link 
-                            href={`/brands/list?brand=${b.id}`}
+                          <Link
+                            href={`/brands/list?brand=${b.id}&from=pcb`}
                             className="font-bold text-primary hover:underline"
                             onClick={() => setSelectedCompId(null)}
                           >
@@ -827,7 +832,7 @@ function PCBStructureContent() {
                       <tr key={idx} className="hover:bg-muted/5">
                         <td className="px-4 py-2.5">
                           <Link
-                            href={`/suppliers/details?supplier=${s.id}`}
+                            href={`/suppliers/details?supplier=${s.id}&from=pcb`}
                             className="font-bold text-muted-foreground hover:text-foreground hover:underline"
                             onClick={() => setSelectedCompId(null)}
                           >
@@ -848,7 +853,7 @@ function PCBStructureContent() {
               <Button 
                 className="w-full font-bold gap-2 justify-center" 
                 variant="outline"
-                render={<Link href={`/components/details?component=${selectedComponentDetail.id}`} />}
+                render={<Link href={`/components/details?component=${selectedComponentDetail.id}&from=pcb`} />}
                 onClick={() => setSelectedCompId(null)}
               >
                 <span>Open Full Item Dashboard</span>

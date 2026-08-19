@@ -76,6 +76,12 @@ export type NewTransactionInput = {
   /** Inbound only: lot number (blank → auto) + optional expiry (YYYY-MM-DD). */
   lotNo?: string
   expiryDate?: string
+  /** Inbound only: explicit destination bin. Blank → the warehouse's default (bulk) bin. */
+  locationId?: string
+  /** Outbound only: pin the move to a specific lot instead of the FEFO default. */
+  lotId?: string
+  /** Outbound only: split the move across multiple lots. Overrides `lotId`/FEFO. */
+  lotAllocations?: { lotId: string; qty: number }[]
 }
 
 /** Builds a persisted transaction. Runtime only (uses new Date()). */

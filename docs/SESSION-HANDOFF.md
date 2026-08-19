@@ -58,10 +58,12 @@ UI wired:
 - **Production-order cancel** — Ban button on Draft/Ready kanban cards in `/production/orders` + confirm modal.
 - Verified: `tsc` clean + DB SQL probe. **UI to be confirmed by a logged-in user** (login is agent-gated).
 
+## Low-tier CRUD done (this session — backend + UI)
+- **Supplier-price delete** — `DELETE /api/suppliers/[id]/prices/[priceId]` (`deleteSupplierPrice`, `supplier.edit`). `SupplierPriceView` now carries `id` + `brandSlug`. UI: Trash button per price row on `/suppliers/details` + confirm modal; matches rows by `${genericPN}|${brandSlug}` against a live `/prices` fetch. Verified: `tsc` + SQL probe.
+
 ## Open items / next
-1. **CRUD gaps** — remaining 🟡 Low: supplier-price delete (`DELETE /api/suppliers/[id]/prices/[priceId]`); single-read endpoints as needed.
-3. **Physical rename** (deferred, large/risky): `/components`→`/items` routes + DB tables + `/brands`→`/manufacturers`.
-4. Optional: FEFO already covers production consume; per-lot view done.
+1. **CRUD gaps — all tiers closed.** Only optional 🟡 #10 remains: extra single-read endpoints (items/custom-products/production-orders), to add *only if* a page needs a fresh single fetch — no consumer needs it today.
+2. **Physical rename** (deferred, large/risky): `/components`→`/items` routes + DB tables + `/brands`→`/manufacturers`.
 
 ## Key files
 - Spec: `docs/COMPONENTS-IMPROVEMENTS.md` · CRUD gaps: `docs/CRUD-AUDIT.md` · schema: `docs/schema.sql`

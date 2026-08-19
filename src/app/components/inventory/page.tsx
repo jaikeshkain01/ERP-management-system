@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -130,11 +131,20 @@ const formatINR = (n: number) =>
   "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 })
 
 export default function InventoryPage() {
-  const [draftQuery, setDraftQuery] = React.useState("")
-  const [query, setQuery] = React.useState("")
+  const searchParams = useSearchParams()
+  // Deep-link from Item Details: `?item=<generic-pn>` pre-fills the search so the
+  // user lands on that specific SKU without re-typing.
+  const initialItem = searchParams.get("item") ?? ""
+  const [draftQuery, setDraftQuery] = React.useState(initialItem)
+  const [query, setQuery] = React.useState(initialItem)
   const [category, setCategory] = React.useState("All")
   const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
   const [expanded, setExpanded] = React.useState<string | null>(null)
+  // Near-expiry chip filter — when on, the row list is narrowed to items with
+  // at least one lot expiring within 30 days (including already-expired).
+  const [expiringOnly, setExpiringOnly] = React.useState(false)
+  const [expiringItems, setExpiringItems] = React.useState<Set<string>>(new Set())
+  const [expiringCount, setExpiringCount] = React.useState(0)
 
   const d = useData()
   const { transactions, onHandByComponent, onHandByVariant, addTransaction } = useStockLedger()
@@ -145,6 +155,22 @@ export default function InventoryPage() {
     () => buildInventory(d, onHandByComponent, onHandByVariant),
     [d, onHandByComponent, onHandByVariant],
   )
+
+  // Fetch the set of items with lots expiring in ≤30 days once — used by both
+  // the chip filter and the header count badge. Refetched when the ledger
+  // changes (a stock-in/out could add/remove lots from the near-expiry set).
+  React.useEffect(() => {
+    let live = true
+    ;(async () => {
+      const res = await fetch("/api/item-lots?expiringWithinDays=30", { cache: "no-store" })
+      const body = await res.json().catch(() => null)
+      if (!live) return
+      const lots = res.ok && Array.isArray(body?.data) ? body.data as { genericPN: string }[] : []
+      setExpiringItems(new Set(lots.map((l) => l.genericPN)))
+      setExpiringCount(lots.length)
+    })()
+    return () => { live = false }
+  }, [transactions])
   const CATEGORIES = React.useMemo(
     () => ["All", ...Array.from(new Set(d.COMPONENTS.map((c) => c.category)))],
     [d],
@@ -195,9 +221,10 @@ export default function InventoryPage() {
         item.brands.some((b) => b.brand.toLowerCase().includes(q) || b.partNo.toLowerCase().includes(q))
       const matchesCategory = category === "All" || item.category === category
       const matchesStatus = statusFilter === "All" || getStatus(item) === statusFilter
-      return matchesQuery && matchesCategory && matchesStatus
+      const matchesExpiring = !expiringOnly || expiringItems.has(item.genericPN)
+      return matchesQuery && matchesCategory && matchesStatus && matchesExpiring
     })
-  }, [INVENTORY, query, category, statusFilter])
+  }, [INVENTORY, query, category, statusFilter, expiringOnly, expiringItems])
 
   const summaryCards = [
     {
@@ -327,6 +354,30 @@ export default function InventoryPage() {
                 {st}
               </button>
             ))}
+            {/* Near-expiry chip — only shown when there's something to surface,
+                so a healthy tenant never sees an empty toggle. Badge shows the
+                lot count (across items) currently in the ≤30-day window. */}
+            {expiringCount > 0 && (
+              <>
+                <div className="mx-2 h-4 w-px bg-border" />
+                <button
+                  onClick={() => setExpiringOnly((v) => !v)}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
+                    expiringOnly
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
+                  }`}
+                  title="Show only items with a lot expiring in ≤30 days (including already expired)"
+                >
+                  Expiring ≤30d
+                  <span className={`inline-flex items-center justify-center rounded-full px-1.5 text-[10px] font-bold ${
+                    expiringOnly ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"
+                  }`}>
+                    {expiringCount}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
         </CardHeader>
 
@@ -529,7 +580,7 @@ export default function InventoryPage() {
                                   variant="outline"
                                   size="sm"
                                   className="h-8 text-xs font-semibold w-full cursor-pointer"
-                                  render={<Link href={`/components/details?component=${encodeURIComponent(item.id)}`} />}
+                                  render={<Link href={`/components/details?component=${encodeURIComponent(item.id)}&from=inventory`} />}
                                 >
                                   View full item record
                                   <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
@@ -555,7 +606,7 @@ export default function InventoryPage() {
                         <Search className="h-8 w-8 opacity-30" />
                         <span className="text-sm font-medium">No items match your search</span>
                         <span className="text-xs">Try a different term or reset the filters</span>
-                        <Button variant="outline" size="sm" className="mt-2 cursor-pointer" onClick={() => { clearSearch(); setCategory("All"); setStatusFilter("All") }}>
+                        <Button variant="outline" size="sm" className="mt-2 cursor-pointer" onClick={() => { clearSearch(); setCategory("All"); setStatusFilter("All"); setExpiringOnly(false) }}>
                           Reset filters
                         </Button>
                       </div>

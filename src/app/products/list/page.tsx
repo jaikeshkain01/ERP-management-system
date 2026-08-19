@@ -9,14 +9,13 @@ import { Input } from "@/components/ui/input"
 import {
   Cpu, Nut, Package, Search,
   CheckCircle2, ArrowRight, Award, Layers,
-  XCircle, AlertTriangle, RefreshCw, Upload, FileSpreadsheet, Trash2, PencilRuler, GitBranch,
+  XCircle, AlertTriangle, RefreshCw, FileSpreadsheet, Trash2, PencilRuler, GitBranch,
   Check, AlertCircle, X
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { useUserProducts, activeVersionOf } from "@/lib/user-products"
-import { ImportProductBomModal } from "@/components/products/import-product-bom-modal"
+import { extractError } from "@/lib/api-error"
 import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
-import type { ImportedPcb } from "@/lib/bom-import"
 
 interface ProductData {
   id: string
@@ -53,9 +52,8 @@ export default function ProductListPage() {
   const d = useData()
   const router = useRouter()
   const { products: userProducts, removeProduct } = useUserProducts()
-  const [isImportOpen, setIsImportOpen] = React.useState(false)
   const [isManualOpen, setIsManualOpen] = React.useState(false)
-  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
   /** Product pending delete (confirmation modal), or null. */
   const [deleteTarget, setDeleteTarget] = React.useState<ProductData | null>(null)
   const [isDeleting, setIsDeleting] = React.useState(false)
@@ -99,7 +97,7 @@ export default function ProductListPage() {
       })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message ?? "Failed to update product", "error")
+        showToast(extractError(body, "Failed to update product"), "error")
         return
       }
       await d.reload()
@@ -110,9 +108,10 @@ export default function ProductListPage() {
     }
   }
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const PRODUCTS_DATA = React.useMemo(() => {
@@ -138,49 +137,6 @@ export default function ProductListPage() {
     })
     return [...custom, ...catalog]
   }, [d, userProducts])
-
-  const handleApplyImport = async (pcbs: ImportedPcb[], productName: string, fileName: string) => {
-    try {
-      // A multi-sheet BOM creates a REAL catalog product where each selected tab
-      // becomes its own PCB (product → PCB → components), matching the manual
-      // "Add Product" shape. Each line links an existing component by part number
-      // or is created on the fly, so the product feeds the dashboard.
-      const res = await fetch("/api/products", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          name: productName,
-          description: `Imported from ${fileName}`,
-          pcbs: pcbs.map((pcb) => ({
-            name: pcb.name || pcb.sheetName,
-            qty: 1,
-            lines: pcb.lines.map((l) => ({
-              name: l.name || undefined,
-              partNumber: l.partNumber || undefined,
-              type: l.type || undefined,
-              solderType:
-                l.solderType === "SMD" || l.solderType === "DIP" ? l.solderType : undefined,
-              footprint: l.footprint || undefined,
-              qty: l.qty,
-              refDes: l.reference || undefined,
-              manufacturer: l.manufacturer || undefined,
-              supplier: l.supplier || undefined,
-            })),
-          })),
-        }),
-      })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
-      const created = body.data as { slug: string }
-      setIsImportOpen(false)
-      await d.reload() // refetch the catalog so the imported product appears in the list/structure
-      router.push(`/products/structure?product=${created.slug}`)
-    } catch (err) {
-      console.error(err)
-      showToast(err instanceof Error ? err.message : "Failed to save product", "error")
-    }
-  }
 
   const handleApplyManual = async (data: ManualProductData) => {
     try {
@@ -237,7 +193,13 @@ export default function ProductListPage() {
           credentials: "same-origin",
         })
         const body = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(body?.error?.message || `Request failed (${res.status})`)
+        if (!res.ok) {
+          // Surface the server hint (e.g. "Cancel every production order first")
+          // instead of swallowing it in a thrown Error.
+          showToast(extractError(body, `Request failed (${res.status})`), "error")
+          setIsDeleting(false)
+          return
+        }
         await d.reload() // refetch the catalog so the deleted product drops off the list
       }
       showToast(`Product "${deleteTarget.name}" deleted`)
@@ -305,13 +267,18 @@ export default function ProductListPage() {
     <div className="space-y-6 pb-12">
       {/* Toast */}
       {toast && (
-        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
           toast.type === "success"
-            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
-            : "bg-destructive/10 border-destructive/20 text-destructive"
+            ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
+            : "border-destructive/35 text-destructive"
         }`}>
-          {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4" />}
-          <span className="text-sm font-semibold">{toast.message}</span>
+          {toast.type === "success"
+            ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{toast.message}</div>
+            {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+          </div>
         </div>
       )}
 
@@ -340,10 +307,6 @@ export default function ProductListPage() {
           >
             <PencilRuler className="h-4 w-4" />
             <span>Add Manually</span>
-          </Button>
-          <Button render={<Link href="/products/import" />} className="gap-2 font-semibold">
-            <Upload className="h-4 w-4" />
-            <span>Import BOM</span>
           </Button>
         </div>
       </div>
@@ -519,14 +482,6 @@ export default function ProductListPage() {
           </div>
         )}
       </div>
-
-      {/* Add product — import a BOM */}
-      {isImportOpen && (
-        <ImportProductBomModal
-          onApply={handleApplyImport}
-          onClose={() => setIsImportOpen(false)}
-        />
-      )}
 
       {/* Add product — manual entry */}
       {isManualOpen && (

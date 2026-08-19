@@ -2,7 +2,11 @@
  * HTTP response + error conventions shared by every route handler.
  *
  * Success envelope:  { "data": <payload>, "meta"?: {...} }
- * Error envelope:    { "error": { "code": string, "message": string, "details"?: unknown } }
+ * Error envelope:    { "error": { "code": string, "message": string, "hint"?: string, "details"?: unknown } }
+ *
+ * `hint` is an optional one-sentence remediation suggestion shown next to the
+ * message in the UI ("Cancel the PO first, then cancel the PR"). Populate it
+ * on guards where the user needs to know *how to unblock*.
  *
  * Handlers wrap their body in `handle(fn)`; any thrown `ApiError` (or Zod error) is
  * converted to the error envelope with the right status. Unexpected errors become a
@@ -16,16 +20,20 @@ export class ApiError extends Error {
     public readonly code: string,
     message: string,
     public readonly details?: unknown,
+    public readonly hint?: string,
   ) {
     super(message);
     this.name = "ApiError";
   }
 }
 
-/** Common error constructors — use these instead of `new ApiError(...)` inline. */
+/**
+ * Common error constructors — use these instead of `new ApiError(...)` inline.
+ * The optional `hint` becomes a second-line remediation suggestion in the UI.
+ */
 export const Errors = {
-  badRequest: (message = "Bad request", details?: unknown) =>
-    new ApiError(400, "bad_request", message, details),
+  badRequest: (message = "Bad request", details?: unknown, hint?: string) =>
+    new ApiError(400, "bad_request", message, details, hint),
   unauthorized: (message = "Not authenticated") =>
     new ApiError(401, "unauthorized", message),
   forbidden: (permission?: string) =>
@@ -36,10 +44,10 @@ export const Errors = {
       permission ? { permission } : undefined,
     ),
   notFound: (what = "Resource") => new ApiError(404, "not_found", `${what} not found`),
-  conflict: (message = "Conflict", details?: unknown) =>
-    new ApiError(409, "conflict", message, details),
-  unprocessable: (message = "Unprocessable", details?: unknown) =>
-    new ApiError(422, "unprocessable", message, details),
+  conflict: (message = "Conflict", details?: unknown, hint?: string) =>
+    new ApiError(409, "conflict", message, details, hint),
+  unprocessable: (message = "Unprocessable", details?: unknown, hint?: string) =>
+    new ApiError(422, "unprocessable", message, details, hint),
 };
 
 /** Success envelope. `init` lets a handler set status (e.g. 201) or headers. */
@@ -54,7 +62,7 @@ export function created<T>(data: T): Response {
 
 function failure(err: ApiError): Response {
   return Response.json(
-    { error: { code: err.code, message: err.message, details: err.details } },
+    { error: { code: err.code, message: err.message, hint: err.hint, details: err.details } },
     { status: err.status },
   );
 }

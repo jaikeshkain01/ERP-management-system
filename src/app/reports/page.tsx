@@ -201,7 +201,7 @@ export default function ReportsPage() {
     <div className="space-y-6">
       {/* Toast Alert */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400 shadow-lg animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <div className="fixed bottom-5 right-5 z-[70] flex items-center gap-2 rounded-xl border border-emerald-500/35 bg-background px-4 py-3 text-sm font-semibold text-emerald-600 dark:text-emerald-400 shadow-lg animate-in fade-in slide-in-from-bottom-5 duration-300">
           <CheckCircle2 className="h-4 w-4 text-emerald-500" />
           <span>{toast}</span>
         </div>

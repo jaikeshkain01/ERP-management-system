@@ -23,10 +23,12 @@ export interface SupplierView {
 }
 
 export interface SupplierPriceView {
+  id: string;
   componentId: string;
   genericPN: string;
   componentName: string;
   brandId: string;
+  brandSlug: string;
   brandName: string;
   price: number;
   currency: string;
@@ -66,8 +68,8 @@ export async function getSupplierPrices(idOrSlug: string): Promise<SupplierPrice
     });
     if (!supplier) throw Errors.notFound("Supplier");
     return tx.$queryRaw<SupplierPriceView[]>`
-      SELECT c.id AS "componentId", c.generic_pn AS "genericPN", c.name AS "componentName",
-             b.id AS "brandId", b.name AS "brandName",
+      SELECT scp.id, c.id AS "componentId", c.generic_pn AS "genericPN", c.name AS "componentName",
+             b.id AS "brandId", b.slug AS "brandSlug", b.name AS "brandName",
              scp.price::float8 AS price, scp.currency, scp.lead_time_days AS "leadTimeDays"
       FROM supplier_component_prices scp
       JOIN components c ON c.id = scp.component_id AND c.deleted_at IS NULL
@@ -182,7 +184,11 @@ export async function deleteSupplier(idOrSlug: string): Promise<{ id: string; sl
           WHERE pri.supplier_id = ${supplier.id}::uuid AND pri.deleted_at IS NULL
       ) LIMIT 1`;
     if (inUse.length) {
-      throw Errors.conflict("Supplier is referenced by one or more purchase documents and cannot be deleted");
+      throw Errors.conflict(
+        "Supplier is referenced by one or more purchase documents and cannot be deleted",
+        undefined,
+        "Cancel every open PR/PO that names this supplier, or mark the supplier Inactive instead.",
+      );
     }
 
     // The supplier's price book and brand↔supplier links are config owned by the
@@ -232,7 +238,7 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
 
     const brand = await tx.brands.findFirst({
       where: { deleted_at: null, ...(isUuid(input.brand) ? { id: input.brand } : { slug: input.brand }) },
-      select: { id: true, name: true },
+      select: { id: true, slug: true, name: true },
     });
     if (!brand) throw Errors.notFound("Brand");
 
@@ -245,6 +251,7 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
       select: { id: true },
     });
 
+    let priceId: string;
     if (existing) {
       await tx.supplier_component_prices.update({
         where: { id: existing.id },
@@ -256,22 +263,52 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
           ...(input.leadTimeDays !== undefined ? { lead_time_days: input.leadTimeDays } : {}),
         },
       });
+      priceId = existing.id;
     } else {
-      await tx.supplier_component_prices.create({
+      const row = await tx.supplier_component_prices.create({
         data: {
           company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
           supplier_id: supplier.id, component_id: component.id, brand_id: brand.id,
           price: input.price, currency,
           moq: input.moq ?? null, spq: input.spq ?? null, lead_time_days: input.leadTimeDays ?? null,
         },
+        select: { id: true },
       });
+      priceId = row.id;
     }
 
     return {
+      id: priceId,
       componentId: component.generic_pn, genericPN: component.generic_pn, componentName: component.name,
-      brandId: input.brand, brandName: brand.name,
+      brandId: input.brand, brandSlug: brand.slug, brandName: brand.name,
       price: input.price, currency, leadTimeDays: input.leadTimeDays ?? null,
     };
+  });
+}
+
+/**
+ * Soft-delete (close) a price-book row for a supplier. `priceId` must belong to
+ * the supplier. No downstream references — a price row is config, so it's a plain
+ * soft-delete. Guarded by `supplier.edit` (managing the supplier's price book).
+ */
+export async function deleteSupplierPrice(idOrSlug: string, priceId: string): Promise<{ id: string }> {
+  return guarded("supplier.edit", async (tx, ctx) => {
+    if (!isUuid(priceId)) throw Errors.notFound("Price");
+    const supplier = await tx.suppliers.findFirst({
+      where: { deleted_at: null, ...(isUuid(idOrSlug) ? { id: idOrSlug } : { slug: idOrSlug }) },
+      select: { id: true },
+    });
+    if (!supplier) throw Errors.notFound("Supplier");
+    const price = await tx.supplier_component_prices.findFirst({
+      where: { id: priceId, supplier_id: supplier.id, deleted_at: null },
+      select: { id: true },
+    });
+    if (!price) throw Errors.notFound("Price");
+    await tx.supplier_component_prices.update({
+      where: { id: price.id },
+      data: { deleted_at: new Date(), updated_by: ctx.userId },
+    });
+    return { id: price.id };
   });
 }
 

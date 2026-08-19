@@ -88,7 +88,7 @@ export default function ProductionReadinessPage() {
     <div className="space-y-6">
       {/* Toast / Alert Notification */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300">
+        <div className="fixed bottom-5 right-5 z-[70] max-w-md bg-background border border-emerald-500/35 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300">
           <div className="flex items-start gap-3">
             <Check className="h-5 w-5 text-emerald-500 mt-0.5 shrink-0" />
             <div className="space-y-1">

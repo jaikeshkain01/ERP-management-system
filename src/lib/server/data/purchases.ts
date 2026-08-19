@@ -209,7 +209,11 @@ export async function cancelPurchaseRequest(prNo: string): Promise<{ pr: string;
   return guarded("purchase_request.delete", async (tx, ctx) => {
     const pr = await tx.purchase_requests.findFirst({ where: { pr_no: prNo, deleted_at: null }, select: { id: true, status: true } });
     if (!pr) throw Errors.notFound("Purchase request");
-    if (pr.status === "PO_Created") throw Errors.conflict("PR already turned into a PO — cancel the PO instead");
+    if (pr.status === "PO_Created") throw Errors.conflict(
+      "PR already turned into a PO — cancel the PO instead",
+      undefined,
+      "Open the corresponding Purchase Order and cancel it there; the PR will follow.",
+    );
     if (pr.status === "Cancelled" || pr.status === "Rejected") throw Errors.conflict(`PR is already ${pr.status.toLowerCase()}`);
     await tx.purchase_requests.update({ where: { id: pr.id }, data: { status: "Cancelled", updated_by: ctx.userId } });
     return { pr: prNo, status: "Cancelled" };
@@ -224,12 +228,20 @@ export async function cancelPurchaseOrder(poNo: string): Promise<{ po: string; s
   return guarded("purchase_order.delete", async (tx, ctx) => {
     const po = await tx.purchase_orders.findFirst({ where: { po_no: poNo, deleted_at: null }, select: { id: true, status: true } });
     if (!po) throw Errors.notFound("Purchase order");
-    if (po.status === "Completed") throw Errors.conflict("PO already received and cannot be cancelled");
+    if (po.status === "Completed") throw Errors.conflict(
+      "PO already received and cannot be cancelled",
+      undefined,
+      "Received stock is on the ledger — post a reversing stock-out or return instead.",
+    );
     if (po.status === "Cancelled") throw Errors.conflict("PO is already cancelled");
     const received = await tx.purchase_order_items.findFirst({
       where: { purchase_order_id: po.id, deleted_at: null, received_qty: { gt: 0 } }, select: { id: true },
     });
-    if (received) throw Errors.conflict("PO has received stock and cannot be cancelled");
+    if (received) throw Errors.conflict(
+      "PO has received stock and cannot be cancelled",
+      undefined,
+      "Partial receipts are already on the ledger — post a reversing stock-out for the received quantity, then retry.",
+    );
     await tx.purchase_orders.update({ where: { id: po.id }, data: { status: "Cancelled", updated_by: ctx.userId } });
     return { po: poNo, status: "Cancelled" };
   });

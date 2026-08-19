@@ -119,6 +119,19 @@ export function useStockLedger(): StockLedger {
         payload.genericPN = input.componentId
         payload.brandSlug = input.brandId
       }
+      // An explicit destination bin (inbound picker) overrides the auto/existing
+      // location; blank keeps the default-bin / existing-balance behaviour.
+      if (input.direction === "in" && input.locationId) {
+        payload.locationId = input.locationId
+      }
+      // Outbound overrides: pin to a specific lot (skips FEFO) or split across
+      // multiple lots (overrides both `lotId` and FEFO — server writes one
+      // ledger row per allocation).
+      if (input.direction === "out" && input.lotAllocations?.length) {
+        payload.lotAllocations = input.lotAllocations
+      } else if (input.direction === "out" && input.lotId) {
+        payload.lotId = input.lotId
+      }
 
       const res = await fetch("/api/inventory/transactions", {
         method: "POST",

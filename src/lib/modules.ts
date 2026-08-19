@@ -219,6 +219,27 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(prefix + "/")
 }
 
+/** Look up a workspace by its id. Null if the id isn't a known workspace. */
+export function workspaceById(id: string | null | undefined): Workspace | null {
+  if (!id) return null
+  return WORKSPACES.find((w) => w.id === id) ?? null
+}
+
+/**
+ * A workspace is "reachable" when the caller has the license for it. Non-module
+ * workspaces are always reachable. Use this before honouring a `?from=` origin
+ * hint or rendering a link into a workspace — a locked origin should degrade
+ * gracefully rather than surface tabs / Back buttons that dead-end at the lock
+ * screen.
+ */
+export function isWorkspaceReachable(
+  workspace: Workspace | null | undefined,
+  isEnabled: (id: ModuleId) => boolean,
+): boolean {
+  if (!workspace) return false
+  return !workspace.moduleId || isEnabled(workspace.moduleId)
+}
+
 /** Resolves the workspace a path belongs to, or null (home, settings, unknown). */
 export function workspaceForPath(pathname: string): Workspace | null {
   for (const { href, workspace } of WORKSPACE_TAB_INDEX) {

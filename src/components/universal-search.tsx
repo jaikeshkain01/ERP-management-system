@@ -3,10 +3,10 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { 
-  Search, X, Sparkles, Cpu, Package, Layers, 
-  Award, Landmark, CornerDownLeft, ShieldCheck, 
-  DollarSign, Activity, FileText, ArrowRight
+import {
+  Search, X, Sparkles, Cpu, Package, Layers,
+  Award, Landmark, CornerDownLeft, ShieldCheck,
+  DollarSign, Activity, FileText, ArrowRight, Boxes, Lock
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -257,6 +257,17 @@ export function UniversalSearch() {
     } else if (item.type === "supplier") {
       router.push(`/suppliers/details?supplier=${item.data.name.toLowerCase().replace(/\s+/g, "-")}`)
     }
+  }
+
+  /**
+   * Cross-workspace jump: component result → Inventory page focused on that PN.
+   * Only fires when the Inventory module is licensed (the caller checks
+   * `isEnabled("inventory")`). The Inventory page reads `?item=<pn>` and
+   * pre-fills its search so the user lands on the matching row.
+   */
+  const openInInventory = (genericPN: string) => {
+    setIsOpen(false)
+    router.push(`/components/inventory?item=${encodeURIComponent(genericPN)}`)
   }
 
   // Get currently selected item for right pane preview
@@ -564,14 +575,37 @@ export function UniversalSearch() {
                           </span>
                         </div>
 
-                        {/* Launch Action */}
-                        <button 
-                          onClick={() => selectItem(selectedItem)}
-                          className="bg-primary hover:bg-primary/95 text-primary-foreground p-2 rounded-lg transition-all shadow-xs group"
-                          title="Navigate to Details Page"
-                        >
-                          <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
-                        </button>
+                        {/* Launch Action(s) — for component results the user can
+                            open Items *or* Inventory; other types keep the single arrow. */}
+                        <div className="flex items-center gap-2">
+                          {selectedItem.type === "component" && (
+                            isEnabled("inventory") ? (
+                              <button
+                                onClick={() => openInInventory(selectedItem.data.genericPN)}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-bold text-foreground hover:border-primary/40 hover:bg-primary/5 transition-all shadow-xs"
+                                title="Open this item in Inventory"
+                              >
+                                <Boxes className="h-3.5 w-3.5 text-primary" />
+                                <span>Inventory</span>
+                              </button>
+                            ) : (
+                              <div
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border bg-muted/40 px-2.5 py-1.5 text-[11px] font-bold text-muted-foreground cursor-not-allowed"
+                                title="The Inventory module is not included in your plan."
+                              >
+                                <Lock className="h-3.5 w-3.5" />
+                                <span>Inventory</span>
+                              </div>
+                            )
+                          )}
+                          <button
+                            onClick={() => selectItem(selectedItem)}
+                            className="bg-primary hover:bg-primary/95 text-primary-foreground p-2 rounded-lg transition-all shadow-xs group"
+                            title={selectedItem.type === "component" ? "Open in Items (details)" : "Navigate to Details Page"}
+                          >
+                            <ArrowRight className="h-4 w-4 group-hover:translate-x-0.5 transition-transform" />
+                          </button>
+                        </div>
                       </div>
 
                       {/* Dynamic Render based on result type */}

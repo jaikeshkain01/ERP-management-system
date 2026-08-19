@@ -151,7 +151,11 @@ export async function deleteWarehouse(idOrCode: string): Promise<{ id: string; c
     const stocked = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM inventory_balances
       WHERE warehouse_id = ${wh.id}::uuid AND on_hand <> 0 AND deleted_at IS NULL LIMIT 1`;
-    if (stocked.length) throw Errors.conflict("Warehouse still holds stock and cannot be deleted");
+    if (stocked.length) throw Errors.conflict(
+      "Warehouse still holds stock and cannot be deleted",
+      undefined,
+      "Transfer or stock out every item in this warehouse first, then retry the delete.",
+    );
     await tx.$executeRaw`
       UPDATE storage_locations SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
       WHERE warehouse_id = ${wh.id}::uuid AND deleted_at IS NULL`;
@@ -292,12 +296,20 @@ export async function deleteLocation(warehouseIdOrCode: string, locId: string): 
     const child = await tx.storage_locations.findFirst({
       where: { parent_id: locId, deleted_at: null }, select: { id: true },
     });
-    if (child) throw Errors.conflict("Location has child locations and cannot be deleted");
+    if (child) throw Errors.conflict(
+      "Location has child locations and cannot be deleted",
+      undefined,
+      "Delete or reparent the child locations first (a bin inside a rack must go before the rack).",
+    );
 
     const stocked = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM inventory_balances
       WHERE location_id = ${locId}::uuid AND on_hand <> 0 AND deleted_at IS NULL LIMIT 1`;
-    if (stocked.length) throw Errors.conflict("Location still holds stock and cannot be deleted");
+    if (stocked.length) throw Errors.conflict(
+      "Location still holds stock and cannot be deleted",
+      undefined,
+      "Transfer the stock in this bin to another location first, then retry the delete.",
+    );
 
     await tx.storage_locations.update({ where: { id: locId }, data: { deleted_at: new Date(), updated_by: ctx.userId } });
     return { id: existing.id, code: existing.code };

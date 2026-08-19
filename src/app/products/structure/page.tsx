@@ -9,6 +9,7 @@ import { Cpu, ListTree, Nut, Package, ArrowLeft, Layers, Truck, Calculator, X, A
 import Link from "next/link"
 import { exportToExcel } from "@/lib/export-excel"
 import { useData } from "@/lib/data-provider"
+import { ProductPcbRevisionSelector } from "@/components/pcb/product-pcb-revision-selector"
 import type { Component as MComponent } from "@/lib/catalog"
 import { ImportBomModal } from "@/components/products/import-bom-modal"
 import { AddProductModal, type ManualProductData } from "@/components/products/add-product-modal"
@@ -103,6 +104,29 @@ function ProductStructureContent() {
     componentBrands, componentStockStatus, bestPrice, productUniqueComponents,
     productTotalParts, formatINR: fmtINR, formatLeadTime, reload,
   } = useData()
+
+  // Detail fetch — carries the per-PCB `linkId` and pinned-revision info that
+  // aren't in the bootstrap-cached model. Keyed by PCB name (unique within a
+  // product's active BOM version) so the revision selector can find its context
+  // when we render the PCB nodes below.
+  type PcbLinkInfo = { pcbId: string; linkId: string; pcbRevision: { id: string; rev: string; status: string } }
+  const [pcbLinkByName, setPcbLinkByName] = React.useState<Map<string, PcbLinkInfo>>(new Map())
+  const [productSlug, setProductSlug] = React.useState<string>(productId)
+  React.useEffect(() => {
+    let live = true
+    ;(async () => {
+      const res = await fetch(`/api/products/${encodeURIComponent(productId)}`, { cache: "no-store" })
+      const body = await res.json().catch(() => null)
+      if (!live || !res.ok || !body?.data) return
+      setProductSlug(body.data.slug ?? productId)
+      const map = new Map<string, PcbLinkInfo>()
+      for (const p of body.data.pcbs ?? []) {
+        map.set(p.name, { pcbId: p.slug ?? p.id, linkId: p.linkId, pcbRevision: p.pcbRevision })
+      }
+      setPcbLinkByName(map)
+    })()
+    return () => { live = false }
+  }, [productId])
 
   const [buildQty, setBuildQty] = React.useState(1)
   const [selectedCompId, setSelectedCompId] = React.useState<string | null>(null)
@@ -710,6 +734,21 @@ function ProductStructureContent() {
                           × {pcb.qty}
                         </span>
                       )}
+                      {/* Revision pin — lets the user swap which revision of this
+                          PCB the product uses without touching the PCB itself. */}
+                      {(() => {
+                        const link = pcbLinkByName.get(pcb.name)
+                        if (!link) return null
+                        return (
+                          <ProductPcbRevisionSelector
+                            productId={productSlug}
+                            pcbId={link.pcbId}
+                            linkId={link.linkId}
+                            currentRevision={link.pcbRevision}
+                            onChanged={() => reload()}
+                          />
+                        )
+                      })()}
                     </div>
 
                     {/* PCB Child Component Nodes */}
@@ -1146,8 +1185,8 @@ function ProductStructureContent() {
                     {selectedComponentDetail.brands.map((b) => (
                       <tr key={b.id} className="hover:bg-muted/5">
                         <td className="px-4 py-2.5">
-                          <Link 
-                            href={`/brands/list?brand=${b.id}`}
+                          <Link
+                            href={`/brands/list?brand=${b.id}&from=products`}
                             className="font-bold text-primary hover:underline"
                             onClick={() => setSelectedCompId(null)}
                           >
@@ -1186,7 +1225,7 @@ function ProductStructureContent() {
                       <tr key={idx} className="hover:bg-muted/5">
                         <td className="px-4 py-2.5">
                           <Link
-                            href={`/suppliers/details?supplier=${s.id}`}
+                            href={`/suppliers/details?supplier=${s.id}&from=products`}
                             className="font-bold text-muted-foreground hover:text-foreground hover:underline"
                             onClick={() => setSelectedCompId(null)}
                           >
@@ -1207,7 +1246,7 @@ function ProductStructureContent() {
               <Button 
                 className="w-full font-bold gap-2 justify-center" 
                 variant="outline"
-                render={<Link href={`/components/details?component=${selectedComponentDetail.id}`} />}
+                render={<Link href={`/components/details?component=${selectedComponentDetail.id}&from=products`} />}
                 onClick={() => setSelectedCompId(null)}
               >
                 <span>Open Full Item Dashboard</span>

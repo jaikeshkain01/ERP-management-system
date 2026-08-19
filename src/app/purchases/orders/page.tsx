@@ -8,11 +8,12 @@ import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import type { PurchaseOrderView as PurchaseOrder } from "@/lib/server/data/purchases"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
+import { extractError } from "@/lib/api-error"
 
 function PurchaseOrdersContent() {
   const [poList, setPoList] = React.useState<PurchaseOrder[]>([])
   const [mounted, setMounted] = React.useState(false)
-  const [toast, setToast] = React.useState<string | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
   const [cancelPo, setCancelPo] = React.useState<PurchaseOrder | null>(null)
   const [cancelling, setCancelling] = React.useState(false)
 
@@ -31,9 +32,10 @@ function PurchaseOrdersContent() {
     loadPos()
   }, [loadPos])
 
-  const showToast = (message: string) => {
-    setToast(message)
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   // Goods-in: appends inventory IN ledger rows server-side, PO → Completed.
@@ -41,7 +43,7 @@ function PurchaseOrdersContent() {
     const res = await fetch(`/api/purchase-orders/${poId}/receive`, { method: "POST" })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message ?? `Failed to receive ${poId}`)
+      showToast(extractError(body, `Failed to receive ${poId}`), "error")
       return
     }
     showToast(`Marked Purchase Order ${poId} as Completed — stock received into inventory!`)
@@ -55,7 +57,7 @@ function PurchaseOrdersContent() {
       const res = await fetch(`/api/purchase-orders/${cancelPo.poId}/cancel`, { method: "POST" })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message ?? `Failed to cancel ${cancelPo.poId}`)
+        showToast(extractError(body, `Failed to cancel ${cancelPo.poId}`), "error")
         return
       }
       showToast(`Purchase Order ${cancelPo.poId} cancelled.`)
@@ -87,10 +89,19 @@ function PurchaseOrdersContent() {
     <div className="space-y-6">
       {/* Toast Alert */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="flex items-center gap-2">
-            <Check className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm font-semibold">{toast}</span>
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md p-4 rounded-xl border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
+          toast.type === "success"
+            ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
+            : "border-destructive/35 text-destructive"
+        }`}>
+          <div className="flex items-start gap-2">
+            {toast.type === "success"
+              ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+              : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">{toast.message}</div>
+              {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+            </div>
           </div>
         </div>
       )}

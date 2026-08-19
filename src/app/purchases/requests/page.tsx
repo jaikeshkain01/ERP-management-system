@@ -13,12 +13,13 @@ import type {
   SourcingRecommendation,
   RecommendationsView,
 } from "@/lib/server/data/purchases"
+import { extractError } from "@/lib/api-error"
 
 function PurchaseRequestsContent() {
   const [recData, setRecData] = React.useState<RecommendationsView | null>(null)
   const [prList, setPrList] = React.useState<PurchaseRequest[]>([])
   const [mounted, setMounted] = React.useState(false)
-  const [toast, setToast] = React.useState<string | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
   const [cancelPr, setCancelPr] = React.useState<PurchaseRequest | null>(null)
   const [cancelling, setCancelling] = React.useState(false)
 
@@ -55,9 +56,10 @@ function PurchaseRequestsContent() {
     })()
   }, [])
 
-  const showToast = (message: string) => {
-    setToast(message)
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const handleGeneratePR = async (rec: SourcingRecommendation) => {
@@ -73,7 +75,7 @@ function PurchaseRequestsContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message ?? "Failed to create Purchase Request")
+      showToast(extractError(body, "Failed to create Purchase Request"), "error")
       return
     }
     setPrList((prev) => [body.data, ...prev])
@@ -84,7 +86,7 @@ function PurchaseRequestsContent() {
     const res = await fetch(`/api/purchase-requests/${prId}/approve`, { method: "POST" })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message ?? `Failed to approve ${prId}`)
+      showToast(extractError(body, `Failed to approve ${prId}`), "error")
       return
     }
     showToast(`Approved Purchase Request ${prId} — Purchase Order ${body.data.po} created!`)
@@ -98,7 +100,7 @@ function PurchaseRequestsContent() {
       const res = await fetch(`/api/purchase-requests/${cancelPr.prId}/cancel`, { method: "POST" })
       const body = await res.json().catch(() => null)
       if (!res.ok) {
-        showToast(body?.error?.message ?? `Failed to cancel ${cancelPr.prId}`)
+        showToast(extractError(body, `Failed to cancel ${cancelPr.prId}`), "error")
         return
       }
       showToast(`Purchase Request ${cancelPr.prId} cancelled.`)
@@ -129,10 +131,17 @@ function PurchaseRequestsContent() {
     <div className="space-y-6">
       {/* Toast Alert */}
       {toast && (
-        <div className="fixed bottom-5 right-5 z-50 max-w-sm bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300">
-          <div className="flex items-center gap-2">
-            <Check className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm font-semibold">{toast}</span>
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 p-4 rounded-xl border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
+          toast.type === "success"
+            ? "border-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+            : "border-destructive/25 text-destructive"
+        }`}>
+          {toast.type === "success"
+            ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{toast.message}</div>
+            {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
           </div>
         </div>
       )}
@@ -179,7 +188,7 @@ function PurchaseRequestsContent() {
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-500 block">Shortage Item</span>
                   <Link
-                    href={`/components/details?component=${shortPN}`}
+                    href={`/components/details?component=${shortPN}&from=purchasing`}
                     className="text-lg font-extrabold text-foreground hover:underline mt-1 block"
                   >
                     {shortName}
@@ -212,12 +221,12 @@ function PurchaseRequestsContent() {
                         return (
                           <tr key={idx} className="hover:bg-muted/10 transition-colors">
                             <td className="px-4 py-3.5 font-bold">
-                              <Link href={`/suppliers/details?supplier=${rec.supplierId}`} className="hover:text-primary hover:underline">
+                              <Link href={`/suppliers/details?supplier=${rec.supplierId}&from=purchasing`} className="hover:text-primary hover:underline">
                                 {rec.supplierName}
                               </Link>
                             </td>
                             <td className="px-4 py-3.5 font-semibold text-muted-foreground">
-                              <Link href={`/brands/list?brand=${rec.brandId}`} className="hover:text-primary hover:underline">
+                              <Link href={`/brands/list?brand=${rec.brandId}&from=purchasing`} className="hover:text-primary hover:underline">
                                 {rec.brandName}
                               </Link>
                             </td>
@@ -272,7 +281,7 @@ function PurchaseRequestsContent() {
                       <tr key={pr.prId} className="hover:bg-muted/10 transition-colors">
                         <td className="px-6 py-4 font-mono font-bold text-primary">{pr.prId}</td>
                         <td className="px-6 py-4">
-                          <Link href={`/components/details?component=${pr.componentId}`} className="font-semibold hover:underline">
+                          <Link href={`/components/details?component=${pr.componentId}&from=purchasing`} className="font-semibold hover:underline">
                             {pr.componentName}
                           </Link>
                         </td>

@@ -195,11 +195,19 @@ export async function deleteItemCategory(id: string): Promise<{ id: string; path
 
     const kids = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM item_categories WHERE parent_id = ${id}::uuid AND deleted_at IS NULL LIMIT 1`;
-    if (kids.length) throw Errors.conflict("Category has sub-categories and cannot be deleted");
+    if (kids.length) throw Errors.conflict(
+      "Category has sub-categories and cannot be deleted",
+      undefined,
+      "Delete the sub-categories (or move them to another parent) first — the tree must be a leaf to delete.",
+    );
 
     const items = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM components WHERE category_id = ${id}::uuid AND deleted_at IS NULL LIMIT 1`;
-    if (items.length) throw Errors.conflict("Category has items assigned and cannot be deleted");
+    if (items.length) throw Errors.conflict(
+      "Category has items assigned and cannot be deleted",
+      undefined,
+      "Re-assign each item on the Items list to a different category, then retry.",
+    );
 
     await tx.$executeRaw`
       UPDATE item_categories SET deleted_at = now(), updated_by = ${ctx.userId}::uuid WHERE id = ${id}::uuid`;

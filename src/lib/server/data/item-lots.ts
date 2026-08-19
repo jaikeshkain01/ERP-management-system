@@ -45,6 +45,12 @@ export interface LotFilters {
   variantId?: string;
   /** Component uuid OR generic_pn (the client model keys items by generic_pn). */
   componentId?: string;
+  /**
+   * When set (e.g. 30), returns only lots with a non-null expiry within `N` days
+   * from today AND positive on-hand. Includes already-expired lots (negative
+   * days-until-expiry) so the same query drives "expiring soon" + "expired" reports.
+   */
+  expiringWithinDays?: number;
 }
 
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
@@ -84,6 +90,15 @@ export async function listLots(f: LotFilters): Promise<LotView[]> {
     const cond: Prisma.Sql[] = [];
     if (f.variantId && isUuid(f.variantId)) cond.push(Prisma.sql`AND il.component_brand_variant_id = ${f.variantId}::uuid`);
     if (f.componentId) cond.push(Prisma.sql`AND (v.component_id::text = ${f.componentId} OR c.generic_pn = ${f.componentId})`);
+    if (f.expiringWithinDays != null) {
+      // Only lots with an expiry set + positive on-hand. Negative days
+      // (already expired) are included so the filter also surfaces expired lots.
+      const days = Math.max(0, Math.round(f.expiringWithinDays));
+      cond.push(Prisma.sql`
+        AND il.expiry_date IS NOT NULL
+        AND il.expiry_date <= (CURRENT_DATE + ${days} * INTERVAL '1 day')
+        AND (SELECT COALESCE(SUM(t.qty_delta), 0) FROM inventory_transactions t WHERE t.lot_id = il.id) > 0`);
+    }
     return tx.$queryRaw<LotView[]>(lotSelect(cond.length ? Prisma.join(cond, " ") : Prisma.empty));
   });
 }
@@ -176,7 +191,11 @@ export async function deleteLot(id: string): Promise<{ id: string; lotNo: string
 
     const inUse = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one FROM inventory_transactions WHERE lot_id = ${id}::uuid LIMIT 1`;
-    if (inUse.length) throw Errors.conflict("Lot has stock movements and cannot be deleted");
+    if (inUse.length) throw Errors.conflict(
+      "Lot has stock movements and cannot be deleted",
+      undefined,
+      "Stock out or transfer everything from this lot first — a lot with any ledger movement cannot be soft-deleted.",
+    );
 
     await tx.$executeRaw`
       UPDATE item_lots SET deleted_at = now(), updated_by = ${ctx.userId}::uuid WHERE id = ${id}::uuid`;

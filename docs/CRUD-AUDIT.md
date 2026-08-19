@@ -13,7 +13,7 @@
 | **Item lots** | ➖² | ✅ | ✅ | ✅ | ✅ |
 | Manufacturers (brands) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Suppliers | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Supplier prices | ✅ (upsert) | ✅ | – | ✅ (upsert) | ❌ |
+| Supplier prices | ✅ (upsert) | ✅ | – | ✅ (upsert) | ✅ |
 | **Warehouses** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Storage locations (bins)** | ✅ | ✅ | – | ✅ | ✅ |
 | PCBs | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -72,10 +72,13 @@ UI: warehouse+bin management page (`/components/inventory/warehouses`, new Inven
 - **Production-order cancel** — `POST /api/production-orders/[id]/cancel` (Draft/Ready only; releases open allocations so reserved frees; In Progress/Completed blocked). `production_order.delete`.
 - Verified: `tsc` clean + `prisma db execute` SQL probe (new columns / enum casts / joins valid).
 
-### 🟡 Low — nice to have
+### ✅ Done (2026-08-17) — 🟡 Low items shipped (backend **and UI**)
 
-9. **Supplier prices — delete** — `DELETE /api/suppliers/[id]/prices/[priceId]` (close/remove a price-book row).
-10. **Single-read endpoints** where only list exists (items, custom-products, production-orders) — mostly covered by bootstrap; add only if a page needs a fresh single fetch.
+- **Supplier-price delete** — `DELETE /api/suppliers/[id]/prices/[priceId]` (`deleteSupplierPrice`, `supplier.edit`; soft-delete, verifies the row belongs to the supplier). `SupplierPriceView` gained `id` + `brandSlug` so callers can target a row. UI: Trash button per row on `/suppliers/details` (matches live price rows to the bootstrap-derived table by `${genericPN}|${brandSlug}`), confirm modal, re-derives via `d.reload()`.
+
+### 🟡 Low — remaining (optional)
+
+10. **Single-read endpoints** where only list exists (items, custom-products, production-orders) — mostly covered by bootstrap; add only if a page needs a fresh single fetch. **Not built** (no consumer needs it yet).
 
 ---
 

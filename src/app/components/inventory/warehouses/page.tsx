@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Warehouse, MapPin, Plus, Pencil, Trash2, X, Check, AlertCircle, Star, Boxes } from "lucide-react"
+import { extractError } from "@/lib/api-error"
 
 interface WarehouseRow {
   id: string
@@ -41,11 +42,12 @@ export default function WarehousesPage() {
   const [loaded, setLoaded] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [modal, setModal] = React.useState<Modal>(null)
-  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3200)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const loadWarehouses = React.useCallback(async () => {
@@ -82,7 +84,7 @@ export default function WarehousesPage() {
         body: JSON.stringify(payload),
       })
       const body = await res.json().catch(() => null)
-      if (!res.ok) { showToast(body?.error?.message ?? "Failed to save warehouse", "error"); return }
+      if (!res.ok) { showToast(extractError(body, "Failed to save warehouse"), "error"); return }
       setModal(null)
       await loadWarehouses()
       if (!id && body?.data?.id) setSelected(body.data.id)
@@ -95,7 +97,7 @@ export default function WarehousesPage() {
     try {
       const res = await fetch(`/api/warehouses/${wh.id}`, { method: "DELETE" })
       const body = await res.json().catch(() => null)
-      if (!res.ok) { showToast(body?.error?.message ?? "Failed to delete warehouse", "error"); return }
+      if (!res.ok) { showToast(extractError(body, "Failed to delete warehouse"), "error"); return }
       setModal(null)
       if (selected === wh.id) setSelected(null)
       await loadWarehouses()
@@ -113,7 +115,7 @@ export default function WarehousesPage() {
         { method: locId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
       )
       const body = await res.json().catch(() => null)
-      if (!res.ok) { showToast(body?.error?.message ?? "Failed to save location", "error"); return }
+      if (!res.ok) { showToast(extractError(body, "Failed to save location"), "error"); return }
       setModal(null)
       await loadLocations(selected)
       showToast(locId ? "Location updated" : "Location added")
@@ -126,7 +128,7 @@ export default function WarehousesPage() {
     try {
       const res = await fetch(`/api/warehouses/${selected}/locations/${loc.id}`, { method: "DELETE" })
       const body = await res.json().catch(() => null)
-      if (!res.ok) { showToast(body?.error?.message ?? "Failed to delete location", "error"); return }
+      if (!res.ok) { showToast(extractError(body, "Failed to delete location"), "error"); return }
       setModal(null)
       await loadLocations(selected)
       showToast(`Location ${loc.code} deleted`)
@@ -140,11 +142,14 @@ export default function WarehousesPage() {
   return (
     <div className="space-y-6">
       {toast && (
-        <div className={`fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg bg-background animate-in fade-in slide-in-from-bottom-5 ${
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg bg-background animate-in fade-in slide-in-from-bottom-5 ${
           toast.type === "success" ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400" : "border-destructive/35 text-destructive"
         }`}>
-          {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4 text-destructive" />}
-          <span className="text-sm font-semibold">{toast.message}</span>
+          {toast.type === "success" ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" /> : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0 text-destructive" />}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{toast.message}</div>
+            {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+          </div>
         </div>
       )}
 

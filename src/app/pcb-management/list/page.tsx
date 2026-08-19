@@ -7,7 +7,7 @@ import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
-  Cpu, Nut, Plus, Search, Layers, ArrowRight,
+  Cpu, Nut, Plus, Search, Layers, ArrowRight, Upload,
   CircuitBoard, Boxes, CheckCircle2, FlaskConical,
   Archive, RefreshCw, Pencil, Trash2, AlertCircle, X
 } from "lucide-react"
@@ -157,13 +157,23 @@ export default function PCBListPage() {
           </p>
         </div>
 
-        <Button
-          onClick={() => setIsManualOpen(true)}
-          className="gap-2 font-semibold self-start md:self-auto"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add PCB</span>
-        </Button>
+        <div className="flex items-center gap-2 self-start md:self-auto">
+          <Button
+            variant="outline"
+            className="gap-2 font-semibold border-border bg-background"
+            render={<Link href="/pcb-management/import" />}
+          >
+            <Upload className="h-4 w-4" />
+            <span>Import BOM</span>
+          </Button>
+          <Button
+            onClick={() => setIsManualOpen(true)}
+            className="gap-2 font-semibold"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add PCB</span>
+          </Button>
+        </div>
       </div>
 
       {/* Summary — instrument readout strip */}

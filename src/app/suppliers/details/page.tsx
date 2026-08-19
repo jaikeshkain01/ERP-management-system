@@ -5,10 +5,13 @@ import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award, Layers, Star, Plus, X, Check, AlertCircle } from "lucide-react"
+import { Truck, ArrowLeft, Mail, Phone, MapPin, ShoppingBag, PackageOpen, Award, Layers, Star, Plus, X, Check, AlertCircle, Trash2 } from "lucide-react"
 import Link from "next/link"
 import { StatStrip } from "@/components/stat-strip"
 import { useData } from "@/lib/data-provider"
+import { useModules } from "@/components/module-provider"
+import { isWorkspaceReachable, workspaceById } from "@/lib/modules"
+import { extractError } from "@/lib/api-error"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 interface SupplyItem {
@@ -87,13 +90,46 @@ function SupplierDetailsContent() {
   const searchParams = useSearchParams()
   const supplierId = searchParams.get("supplier") || "abc-electronics"
 
+  // Origin workspace hint — keeps the breadcrumb + Back button pointing at the
+  // page the user came from (Purchases, Products, PCB Structure) rather than
+  // silently sending them to the Supplier List. A hint whose module is locked
+  // (e.g. `from=purchasing` after the user loses that license) is ignored so
+  // the Back button never dead-ends on a lock screen.
+  const { isEnabled } = useModules()
+  const fromParam = searchParams.get("from")
+  const from = isWorkspaceReachable(workspaceById(fromParam), isEnabled) ? fromParam : null
+  const back = (() => {
+    switch (from) {
+      case "purchasing": return { href: "/purchases/requests", label: "Back to Purchase Requests", crumb: "Purchases", crumbLabel: "Purchase Requests" }
+      case "products":   return { href: "/products/structure", label: "Back to Product Structure", crumb: "Products", crumbLabel: "Product Structure" }
+      case "pcb":        return { href: "/pcb-management/structure", label: "Back to PCB Structure", crumb: "PCB Management", crumbLabel: "PCB Structure" }
+      default:           return { href: "/suppliers/list", label: "Back to Supplier List", crumb: "Suppliers", crumbLabel: "Supplier List" }
+    }
+  })()
+
   const d = useData()
   const DEFAULT_SUPPLIERS = React.useMemo(() => buildDefaultSuppliers(d), [d])
 
   const [suppliers, setSuppliers] = React.useState<Record<string, SupplierData>>(DEFAULT_SUPPLIERS)
   const [mounted, setMounted] = React.useState(false)
   const [showAddModal, setShowAddModal] = React.useState(false)
-  const [toast, setToast] = React.useState<{ message: string; type: "success" | "error" } | null>(null)
+  const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" } | null>(null)
+  // Live price-book row ids, keyed `${genericPN}|${brandSlug}` — needed to delete a row.
+  const [priceIds, setPriceIds] = React.useState<Map<string, string>>(new Map())
+  const [deletePart, setDeletePart] = React.useState<SupplyItem | null>(null)
+  const [deletingPrice, setDeletingPrice] = React.useState(false)
+
+  const loadPriceIds = React.useCallback(async (sid: string) => {
+    const res = await fetch(`/api/suppliers/${sid}/prices`, { cache: "no-store" })
+    const body = await res.json().catch(() => null)
+    const map = new Map<string, string>()
+    if (res.ok && Array.isArray(body?.data)) {
+      for (const p of body.data as { id: string; genericPN: string; brandSlug: string }[]) {
+        map.set(`${p.genericPN}|${p.brandSlug}`, p.id)
+      }
+    }
+    setPriceIds(map)
+  }, [])
 
   // Map Component Form State
   const [newPartId, setNewPartId] = React.useState("resistor-10k")
@@ -110,14 +146,19 @@ function SupplierDetailsContent() {
     setMounted(true)
   }, [])
 
+  React.useEffect(() => {
+    if (supplierId) loadPriceIds(supplierId)
+  }, [supplierId, loadPriceIds])
+
   // Keep the local view model in sync with the backend data (re-derives after d.reload()).
   React.useEffect(() => {
     setSuppliers(DEFAULT_SUPPLIERS)
   }, [DEFAULT_SUPPLIERS])
 
-  const showToast = (message: string, type: "success" | "error" = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
+  const showToast = (msgOrInfo: string | { message: string; hint?: string }, type: "success" | "error" = "success") => {
+    const info = typeof msgOrInfo === "string" ? { message: msgOrInfo } : msgOrInfo
+    setToast({ ...info, type })
+    setTimeout(() => setToast(null), type === "error" ? 6000 : 3000)
   }
 
   const supplier = suppliers[supplierId] || suppliers["abc-electronics"] || DEFAULT_SUPPLIERS["abc-electronics"]
@@ -146,9 +187,9 @@ function SupplierDetailsContent() {
                 There are no suppliers in the system yet. Add a supplier to view its profile and price agreements.
               </p>
             </div>
-            <Button variant="outline" render={<Link href="/suppliers/list" />} className="gap-2 border-border bg-background">
+            <Button variant="outline" render={<Link href={back.href} />} className="gap-2 border-border bg-background">
               <ArrowLeft className="h-4 w-4" />
-              <span>Back to Supplier List</span>
+              <span>{back.label}</span>
             </Button>
           </CardContent>
         </Card>
@@ -188,7 +229,7 @@ function SupplierDetailsContent() {
     })
     const body = await res.json().catch(() => null)
     if (!res.ok) {
-      showToast(body?.error?.message || "Failed to save price", "error")
+      showToast(extractError(body, "Failed to save price"), "error")
       return
     }
 
@@ -208,6 +249,32 @@ function SupplierDetailsContent() {
     setNewLeadTime("")
     setShowAddModal(false)
     showToast(`Successfully registered ${newPart.partName} (${newPart.brandName})!`)
+    loadPriceIds(supplier.id) // pick up the new row's id so it becomes deletable
+  }
+
+  const handleDeletePrice = async () => {
+    if (!deletePart) return
+    const priceId = priceIds.get(`${deletePart.partId}|${deletePart.brandId}`)
+    if (!priceId) {
+      showToast("Couldn't resolve this price row — refresh and try again", "error")
+      setDeletePart(null)
+      return
+    }
+    setDeletingPrice(true)
+    try {
+      const res = await fetch(`/api/suppliers/${supplier.id}/prices/${priceId}`, { method: "DELETE" })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) {
+        showToast(extractError(body, "Failed to remove price"), "error")
+        return
+      }
+      setDeletePart(null)
+      await d.reload() // re-derive the parts table from the catalog offers
+      await loadPriceIds(supplier.id)
+      showToast(`Removed ${deletePart.partName} (${deletePart.brandName}) from the price book`)
+    } finally {
+      setDeletingPrice(false)
+    }
   }
 
   if (!mounted) {
@@ -222,13 +289,18 @@ function SupplierDetailsContent() {
     <div className="space-y-6">
       {/* Toast Notification */}
       {toast && (
-        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 ${
-          toast.type === "success" 
-            ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400" 
-            : "bg-destructive/10 border-destructive/20 text-destructive"
+        <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg transition-all animate-in fade-in slide-in-from-bottom-5 duration-300 bg-background ${
+          toast.type === "success"
+            ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
+            : "border-destructive/35 text-destructive"
         }`}>
-          {toast.type === "success" ? <Check className="h-4 w-4 text-emerald-500" /> : <AlertCircle className="h-4 w-4" />}
-          <span className="text-sm font-semibold">{toast.message}</span>
+          {toast.type === "success"
+            ? <Check className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            : <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />}
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{toast.message}</div>
+            {toast.hint && <div className="mt-1 text-xs font-medium text-muted-foreground">{toast.hint}</div>}
+          </div>
         </div>
       )}
 
@@ -236,9 +308,9 @@ function SupplierDetailsContent() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-2">
           <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <span>Suppliers</span>
+            <span>{back.crumb}</span>
             <span>/</span>
-            <span>Supplier List</span>
+            <Link href={back.href} className="hover:text-foreground transition-colors">{back.crumbLabel}</Link>
             <span>/</span>
             <span className="text-foreground font-medium">Details</span>
           </div>
@@ -247,13 +319,13 @@ function SupplierDetailsContent() {
             Vendor catalog price points and contact logistics.
           </p>
         </div>
-        <Button 
-          variant="outline" 
-          render={<Link href="/suppliers/list" />}
+        <Button
+          variant="outline"
+          render={<Link href={back.href} />}
           className="gap-2 self-start sm:self-auto border-border bg-background cursor-pointer"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span>Back to List</span>
+          <span>{back.label}</span>
         </Button>
       </div>
 
@@ -299,21 +371,22 @@ function SupplierDetailsContent() {
                     <th scope="col" className="px-6 py-3 font-semibold">Manufacturer</th>
                     <th scope="col" className="px-6 py-3 font-semibold">Price</th>
                     <th scope="col" className="px-6 py-3 text-right">Lead Time</th>
+                    <th scope="col" className="px-6 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {supplier.parts.map((part, idx) => (
                     <tr key={idx} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-4">
-                        <Link 
-                          href={`/components/details?component=${part.partId}`}
+                        <Link
+                          href={`/components/details?component=${part.partId}&from=suppliers`}
                           className="font-semibold text-primary hover:underline"
                         >
                           {part.partName}
                         </Link>
                       </td>
                       <td className="px-6 py-4">
-                        <Link 
+                        <Link
                           href={`/brands/list?brand=${part.brandId}`}
                           className="font-semibold text-muted-foreground hover:text-foreground hover:underline"
                         >
@@ -322,11 +395,26 @@ function SupplierDetailsContent() {
                       </td>
                       <td className="px-6 py-4 font-mono font-bold text-primary">{part.price}</td>
                       <td className="px-6 py-4 font-mono text-right text-muted-foreground">{part.leadTime}</td>
+                      <td className="px-6 py-4 text-right">
+                        {priceIds.has(`${part.partId}|${part.brandId}`) ? (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            title="Remove price"
+                            onClick={() => setDeletePart(part)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground/50">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {supplier.parts.length === 0 && (
                     <tr>
-                      <td colSpan={4} className="px-6 py-8 text-center text-muted-foreground">
+                      <td colSpan={5} className="px-6 py-8 text-center text-muted-foreground">
                         No active items supplied by this vendor.
                       </td>
                     </tr>
@@ -397,8 +485,37 @@ function SupplierDetailsContent() {
       </div>
 
       {/* Map Component Modal */}
+      {/* Remove price confirm */}
+      {deletePart && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => !deletingPrice && setDeletePart(null)}
+        >
+          <div className="w-full max-w-md bg-card border border-border rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-border bg-muted/20 px-6 py-4">
+              <h3 className="text-lg font-bold text-foreground">Remove Price</h3>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full text-muted-foreground hover:text-foreground" onClick={() => setDeletePart(null)} disabled={deletingPrice}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3 bg-destructive/10 border border-destructive/25 p-3 rounded-xl text-destructive text-xs leading-relaxed font-semibold">
+                <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+                <p>Remove the price for <strong>{deletePart.partName} ({deletePart.brandName})</strong> from this supplier's price book?</p>
+              </div>
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-border/50">
+                <Button type="button" variant="outline" onClick={() => setDeletePart(null)} disabled={deletingPrice}>Cancel</Button>
+                <Button type="button" onClick={handleDeletePrice} disabled={deletingPrice} className="bg-destructive hover:bg-destructive/90 text-destructive-foreground font-bold min-w-[110px]">
+                  {deletingPrice ? "Removing…" : "Remove Price"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAddModal && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
           onClick={() => setShowAddModal(false)}
         >

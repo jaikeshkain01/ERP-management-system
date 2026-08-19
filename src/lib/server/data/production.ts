@@ -243,7 +243,11 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
     }
 
     if (shorts.length) {
-      throw Errors.conflict("Insufficient stock to allocate this batch", { shorts });
+      throw Errors.conflict(
+        "Insufficient stock to allocate this batch",
+        { shorts },
+        "One or more BOM items are short — receive more stock or create purchase requests for the shortages, then retry allocation.",
+      );
     }
 
     const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
@@ -350,7 +354,11 @@ export async function cancelProductionOrder(orderNo: string): Promise<{ order: s
     const po = await resolveProductionOrder(tx, orderNo);
     if (po.status === "Cancelled") throw Errors.conflict("Order is already cancelled");
     if (po.status === "In_Progress" || po.status === "Completed") {
-      throw Errors.conflict(`Order has been consumed and cannot be cancelled (status: ${po.status.replace("_", " ")})`);
+      throw Errors.conflict(
+        `Order has been consumed and cannot be cancelled (status: ${po.status.replace("_", " ")})`,
+        undefined,
+        "Consumed stock is already off the ledger — post reversing stock-in transactions for any returned material instead.",
+      );
     }
 
     // Free any open reservations so the stock returns to available.

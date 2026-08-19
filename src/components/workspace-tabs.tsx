@@ -1,14 +1,23 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { useModules } from "@/components/module-provider"
-import { workspaceForPath, activeTabHref } from "@/lib/modules"
+import { workspaceForPath, workspaceById, isWorkspaceReachable, activeTabHref } from "@/lib/modules"
 
 export function WorkspaceTabs() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const { isEnabled } = useModules()
-  const workspace = workspaceForPath(pathname)
+  // A `?from=<workspace-id>` query param overrides path-based resolution so
+  // deep-links from another workspace (e.g. Inventory → Item Details) keep the
+  // originating workspace's nav highlighted and its tab bar visible. If that
+  // origin workspace is locked (module disabled), the hint is dropped and we
+  // fall back to path-based resolution — otherwise the tabs would vanish
+  // entirely, leaving the page with no nav context.
+  const fromCandidate = workspaceById(searchParams.get("from"))
+  const fromWorkspace = isWorkspaceReachable(fromCandidate, isEnabled) ? fromCandidate : null
+  const workspace = fromWorkspace ?? workspaceForPath(pathname)
 
   if (!workspace || workspace.tabs.length === 0) return null
 
