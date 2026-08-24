@@ -26,6 +26,10 @@ export const PERMISSION_MATRIX = {
   product: CRUD,
   pcb: CRUD,
   component: CRUD,
+  // F5.2: `item.*` guards the universal-item API (see items.ts). Every role
+  // that had a matching `component.*` grant was mirrored at migration time,
+  // so no role loses access when items.ts flips its guards over.
+  item: CRUD,
   brand: CRUD,
   supplier: CRUD,
   warehouse: CRUD,

@@ -63,7 +63,7 @@ export const BASE_AREAS: Array<{
   icon: React.ComponentType<{ className?: string }>
   href: string
 }> = [
-  { label: "Items", description: "Raw parts catalog and datasheets.", icon: Nut, href: "/components/list" },
+  { label: "Items", description: "Every item — parts, sub-assemblies, products, assets.", icon: Nut, href: "/items/list" },
   { label: "Products", description: "Finished goods catalog.", icon: Package, href: "/products/list" },
   { label: "PCB Management", description: "Board variations library.", icon: Cpu, href: "/pcb-management/list" },
   { label: "Suppliers & Manufacturers", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
@@ -126,11 +126,15 @@ export const WORKSPACES: Workspace[] = [
     id: "components",
     label: "Items",
     icon: Nut,
-    href: "/components/list",
+    href: "/items/list",
     tabs: [
-      { title: "Item List", href: "/components/list" },
-      { title: "Item Details", href: "/components/details" },
-      { title: "Add Item", href: "/components/add" },
+      // Item List + Add Item point at the universal /items/* pages.
+      // The old "Item Details" tab was redundant — the list has a detail
+      // panel that opens on row click. Direct links to /components/details
+      // still resolve for now (rich legacy page); a proper /items/details
+      // cutover is a later slice (see project_transformation_plan).
+      { title: "Item List", href: "/items/list" },
+      { title: "Add Item", href: "/items/add" },
     ],
   },
   {
@@ -210,7 +214,7 @@ export const WORKSPACES: Workspace[] = [
 ]
 
 // All (workspace, tab) pairs, most-specific href first, so /components/inventory
-// resolves to the Inventory workspace while /components/list resolves to Components.
+// resolves to the Inventory workspace while /items/list resolves to Items.
 const WORKSPACE_TAB_INDEX: Array<{ href: string; workspace: Workspace }> = WORKSPACES.flatMap(
   (w) => w.tabs.map((t) => ({ href: t.href, workspace: w })),
 ).sort((a, b) => b.href.length - a.href.length)

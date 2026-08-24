@@ -853,7 +853,7 @@ function PCBStructureContent() {
               <Button 
                 className="w-full font-bold gap-2 justify-center" 
                 variant="outline"
-                render={<Link href={`/components/details?component=${selectedComponentDetail.id}&from=pcb`} />}
+                render={<Link href={`/items/details/${selectedComponentDetail.id}?from=pcb`} />}
                 onClick={() => setSelectedCompId(null)}
               >
                 <span>Open Full Item Dashboard</span>

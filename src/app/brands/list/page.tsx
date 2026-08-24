@@ -768,7 +768,7 @@ function BrandDashboardContent() {
                             variant="ghost" 
                             size="sm" 
                             className="h-7 px-2.5 font-semibold text-xs border border-border bg-background hover:bg-muted"
-                            render={<Link href={`/components/details?component=${comp.id}&from=suppliers`} />}
+                            render={<Link href={`/items/details/${comp.id}?from=suppliers`} />}
                           >
                             <span>Details</span>
                           </Button>

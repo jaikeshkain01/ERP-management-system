@@ -1246,7 +1246,7 @@ function ProductStructureContent() {
               <Button 
                 className="w-full font-bold gap-2 justify-center" 
                 variant="outline"
-                render={<Link href={`/components/details?component=${selectedComponentDetail.id}&from=products`} />}
+                render={<Link href={`/items/details/${selectedComponentDetail.id}?from=products`} />}
                 onClick={() => setSelectedCompId(null)}
               >
                 <span>Open Full Item Dashboard</span>

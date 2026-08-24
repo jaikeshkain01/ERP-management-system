@@ -246,7 +246,7 @@ export function UniversalSearch() {
   const selectItem = (item: SearchResultItem) => {
     setIsOpen(false)
     if (item.type === "component") {
-      router.push(`/components/details?component=${item.data.id}`)
+      router.push(`/items/details/${item.data.id}`)
     } else if (item.type === "product") {
       // Structure pages belong to the BOM module — fall back to the base list when disabled
       router.push(isEnabled("bom") ? `/products/structure?product=${item.data.id}` : "/products/list")

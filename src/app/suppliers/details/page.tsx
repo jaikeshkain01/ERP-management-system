@@ -379,7 +379,7 @@ function SupplierDetailsContent() {
                     <tr key={idx} className="hover:bg-muted/10 transition-colors">
                       <td className="px-6 py-4">
                         <Link
-                          href={`/components/details?component=${part.partId}&from=suppliers`}
+                          href={`/items/details/${part.partId}?from=suppliers`}
                           className="font-semibold text-primary hover:underline"
                         >
                           {part.partName}

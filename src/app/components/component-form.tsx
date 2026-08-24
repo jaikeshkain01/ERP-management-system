@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ArrowLeft, Plus, Trash2, CheckCircle2, AlertCircle, Cpu, Award, Lock } from "lucide-react"
+import { ArrowLeft, Plus, Trash2, CheckCircle2, AlertCircle, Cpu, Award, Lock, Warehouse } from "lucide-react"
+import { extractError } from "@/lib/api-error"
 import Link from "next/link"
 import { useData } from "@/lib/data-provider"
 import { CategoryCascade } from "@/components/category-cascade"
@@ -163,6 +164,89 @@ export function ComponentForm({
     }
   }
 
+  // ── Opening-stock location (Section 3 add-mode only) ──────────────────────
+  // Loaded once when the user first enters any opening quantity. Empty tenants
+  // (no warehouse) trigger the inline "Create warehouse + default bin" mini-form
+  // so a fresh workspace can seed itself without leaving this page.
+  interface BinOption { id: string; code: string; name: string | null; warehouseId: string; warehouseCode: string; warehouseName: string; isDefault: boolean }
+  const [bins, setBins] = React.useState<BinOption[]>([])
+  const [openingLocationId, setOpeningLocationId] = React.useState<string>("")
+  const [binsLoaded, setBinsLoaded] = React.useState(false)
+  const [binsLoading, setBinsLoading] = React.useState(false)
+  const [showCreateWh, setShowCreateWh] = React.useState(false)
+  const [creatingWh, setCreatingWh] = React.useState(false)
+  const [newWh, setNewWh] = React.useState({ code: "", name: "", location: "", binCode: "MAIN-BIN", binName: "Default Bin" })
+
+  /** Flatten every live warehouse's bins into one option list. Selected default:
+   *  a bin flagged `is_default`, else the first bin available. */
+  const loadBins = React.useCallback(async () => {
+    setBinsLoading(true)
+    try {
+      const whRes = await fetch("/api/warehouses", { cache: "no-store" })
+      const whBody = await whRes.json().catch(() => null)
+      if (!whRes.ok) { showToast(extractError(whBody, "Failed to load warehouses").message, "error"); return }
+      const warehouses: { id: string; code: string; name: string }[] = whBody?.data ?? []
+      const collected: BinOption[] = []
+      for (const w of warehouses) {
+        const locRes = await fetch(`/api/warehouses/${w.id}/locations`, { cache: "no-store" })
+        const locBody = await locRes.json().catch(() => null)
+        if (!locRes.ok) continue
+        for (const loc of (locBody?.data ?? []) as { id: string; code: string; name: string | null; kind: string; isDefault: boolean }[]) {
+          if (loc.kind === "bin") collected.push({ id: loc.id, code: loc.code, name: loc.name, warehouseId: w.id, warehouseCode: w.code, warehouseName: w.name, isDefault: loc.isDefault })
+        }
+      }
+      collected.sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0) || a.warehouseCode.localeCompare(b.warehouseCode) || a.code.localeCompare(b.code))
+      setBins(collected)
+      // Preselect the default bin (or the first) so the picker is never blank.
+      const preferred = collected.find((b) => b.isDefault) ?? collected[0]
+      if (preferred && !openingLocationId) setOpeningLocationId(preferred.id)
+      setBinsLoaded(true)
+    } finally {
+      setBinsLoading(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Any variant asks for opening stock → we need a bin. Lazy-load once.
+  const openingRequested = React.useMemo(
+    () => brandVariants.some((v) => !v.existing && v.stock.trim() !== "" && Number(v.stock) > 0),
+    [brandVariants],
+  )
+  React.useEffect(() => {
+    if (openingRequested && !binsLoaded && !binsLoading) void loadBins()
+  }, [openingRequested, binsLoaded, binsLoading, loadBins])
+
+  const handleCreateWarehouse = async () => {
+    const code = newWh.code.trim()
+    const name = newWh.name.trim()
+    const binCode = newWh.binCode.trim() || "MAIN-BIN"
+    if (!code || !name) return showToast("Warehouse code and name are required", "error")
+    setCreatingWh(true)
+    try {
+      const wRes = await fetch("/api/warehouses", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, name, location: newWh.location.trim() || undefined }),
+      })
+      const wBody = await wRes.json().catch(() => null)
+      if (!wRes.ok) return showToast(extractError(wBody, "Failed to create warehouse").message, "error")
+      const whId = wBody?.data?.id as string
+      const bRes = await fetch(`/api/warehouses/${whId}/locations`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "bin", code: binCode, name: newWh.binName.trim() || null, isDefault: true }),
+      })
+      const bBody = await bRes.json().catch(() => null)
+      if (!bRes.ok) return showToast(extractError(bBody, "Warehouse created but default bin failed").message, "error")
+      showToast(`Created ${code} + default bin`, "success")
+      // Re-fetch bins fresh so the new one is preselected via the default flag.
+      setBinsLoaded(false)
+      await loadBins()
+      setShowCreateWh(false)
+      setNewWh({ code: "", name: "", location: "", binCode: "MAIN-BIN", binName: "Default Bin" })
+    } finally {
+      setCreatingWh(false)
+    }
+  }
+
   // Brand Variants handlers
   const handleAddBrandVariant = () => setBrandVariants([...brandVariants, { brand: "", partNo: "", stock: "" }])
   const handleUpdateBrandVariant = (index: number, field: keyof BrandVariant, val: string) => {
@@ -181,8 +265,8 @@ export function ComponentForm({
   }
   const handleRemoveSpecification = (index: number) => setSpecifications(specifications.filter((_, i) => i !== index))
 
-  const detailsHref = componentId ? `/components/details?component=${encodeURIComponent(componentId)}` : "/components/list"
-  const cancelHref = isEdit ? detailsHref : "/components/list"
+  const detailsHref = componentId ? `/items/details/${encodeURIComponent(componentId)}` : "/items/list"
+  const cancelHref = isEdit ? detailsHref : "/items/list"
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -217,12 +301,15 @@ export function ComponentForm({
             variants: brandVariants
               .filter((v) => v.brand.trim() && v.partNo.trim())
               .map((v) => ({ brand: v.brand.trim(), partNo: v.partNo.trim(), stock: v.stock ? parseInt(v.stock, 10) : undefined })),
+            // Only forward the location when opening stock is actually being seeded — otherwise the
+            // server never touches storage_locations and an unset picker would be misleading.
+            ...(openingRequested && openingLocationId ? { openingLocationId } : {}),
           }),
         })
         const body = await res.json().catch(() => null)
         if (!res.ok) return showToast(body?.error?.message ?? "Failed to register item", "error")
         showToast("Item registered successfully!", "success")
-        setTimeout(() => router.push("/components/list"), 1000)
+        setTimeout(() => router.push("/items/list"), 1000)
         return
       }
 
@@ -256,7 +343,11 @@ export function ComponentForm({
         const vr = await fetch(`/api/components/${encodeURIComponent(componentId!)}/variants`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ brand: v.brand.trim(), partNo: v.partNo.trim(), stock: v.stock ? parseInt(v.stock, 10) : undefined }),
+          body: JSON.stringify({
+            brand: v.brand.trim(), partNo: v.partNo.trim(),
+            stock: v.stock ? parseInt(v.stock, 10) : undefined,
+            ...(v.stock && Number(v.stock) > 0 && openingLocationId ? { openingLocationId } : {}),
+          }),
         })
         if (!vr.ok) {
           const vb = await vr.json().catch(() => null)
@@ -304,7 +395,7 @@ export function ComponentForm({
         <div className="text-sm text-muted-foreground flex items-center gap-2">
           <span>Items</span>
           <span>/</span>
-          <Link href="/components/list" className="hover:text-foreground transition-colors font-medium">
+          <Link href="/items/list" className="hover:text-foreground transition-colors font-medium">
             Item List
           </Link>
           <span>/</span>
@@ -515,7 +606,93 @@ export function ComponentForm({
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="p-6">
+          <CardContent className="p-6 space-y-4">
+            {/* Opening-stock location picker — visible only when a variant has
+                a positive stock value, since that's the only case the server
+                writes to storage_locations. */}
+            {openingRequested && (
+              <div className="rounded-lg border border-primary/25 bg-primary/5 p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <Warehouse className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-bold text-foreground">Opening stock destination</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Where should the initial quantities land? Every variant with a non-zero opening quantity goes into this bin.
+                    </p>
+                  </div>
+                </div>
+
+                {binsLoading && (
+                  <div className="text-[11px] text-muted-foreground italic">Loading warehouses…</div>
+                )}
+
+                {!binsLoading && bins.length > 0 && !showCreateWh && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={openingLocationId}
+                      onChange={(e) => setOpeningLocationId(e.target.value)}
+                      className="flex-1 min-w-[240px] h-9 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {bins.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.warehouseCode} · {b.code}
+                          {b.name ? ` — ${b.name}` : ""}
+                          {b.isDefault ? "  (default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setShowCreateWh(true)} className="gap-1.5">
+                      <Plus className="h-3.5 w-3.5" /> New warehouse
+                    </Button>
+                  </div>
+                )}
+
+                {!binsLoading && binsLoaded && bins.length === 0 && !showCreateWh && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                    <div className="text-xs text-amber-700 dark:text-amber-400 font-semibold">
+                      No warehouse in this workspace yet.
+                    </div>
+                    <Button type="button" size="sm" onClick={() => setShowCreateWh(true)} className="gap-1.5">
+                      <Plus className="h-3.5 w-3.5" /> Create warehouse + bin
+                    </Button>
+                  </div>
+                )}
+
+                {showCreateWh && (
+                  <div className="rounded-md border border-border bg-background p-3 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Warehouse code</label>
+                        <Input value={newWh.code} onChange={(e) => setNewWh({ ...newWh, code: e.target.value })} placeholder="e.g. MAIN" className="h-8 text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Warehouse name</label>
+                        <Input value={newWh.name} onChange={(e) => setNewWh({ ...newWh, name: e.target.value })} placeholder="e.g. Main Warehouse" className="h-8 text-sm" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Location (optional)</label>
+                        <Input value={newWh.location} onChange={(e) => setNewWh({ ...newWh, location: e.target.value })} placeholder="e.g. Bengaluru" className="h-8 text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Default bin code</label>
+                        <Input value={newWh.binCode} onChange={(e) => setNewWh({ ...newWh, binCode: e.target.value })} placeholder="MAIN-BIN" className="h-8 text-sm" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Default bin name</label>
+                        <Input value={newWh.binName} onChange={(e) => setNewWh({ ...newWh, binName: e.target.value })} placeholder="Default Bin" className="h-8 text-sm" />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <Button type="button" size="sm" variant="outline" onClick={() => setShowCreateWh(false)} disabled={creatingWh}>Cancel</Button>
+                      <Button type="button" size="sm" onClick={handleCreateWarehouse} disabled={creatingWh} className="gap-1.5">
+                        {creatingWh ? "Creating…" : (<><Plus className="h-3.5 w-3.5" /> Create</>)}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="overflow-x-auto border border-border rounded-lg">
               <table className="w-full text-sm text-left text-foreground">
                 <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">

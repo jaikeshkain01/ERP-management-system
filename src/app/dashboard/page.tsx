@@ -77,7 +77,7 @@ export default function Dashboard() {
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
     { title: "Products", value: totalProducts.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
     { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
-    { title: "Items", value: d.COMPONENTS.length.toLocaleString(), desc: "Active raw parts catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/components/list" },
+    { title: "Items", value: d.COMPONENTS.length.toLocaleString(), desc: "Active items catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/items/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
     { title: "Manufacturers", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
     { title: "Inventory Value", value: compactINR(realValuation), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
@@ -197,8 +197,8 @@ export default function Dashboard() {
   const effectiveTab: TabId = tabs.some((tab) => tab.id === activeTab) ? activeTab : "overview"
 
   const allQuickLinks: { label: string; desc: string; href: string; icon: React.ComponentType<{ className?: string }>; accent: string; moduleId?: ModuleId }[] = [
-    { label: "Add Item", desc: "Register a new raw part", href: "/components/add", icon: Plus, accent: "text-emerald-600 bg-emerald-500/10" },
-    { label: "Item List", desc: "Browse parts catalog", href: "/components/list", icon: Nut, accent: "text-primary bg-primary/10" },
+    { label: "Add Item", desc: "Register any item — part, product, asset", href: "/items/add", icon: Plus, accent: "text-emerald-600 bg-emerald-500/10" },
+    { label: "Item List", desc: "Browse the items catalog", href: "/items/list", icon: Nut, accent: "text-primary bg-primary/10" },
     { label: "Inventory", desc: "Stock & valuation", href: "/components/inventory", icon: Package, accent: "text-primary bg-primary/10", moduleId: "inventory" },
     { label: "Production Planner", desc: "Schedule builds", href: "/production/planner", icon: Factory, accent: "text-primary bg-primary/10", moduleId: "production" },
     { label: "Purchase Requests", desc: "Raise & approve PRs", href: "/purchases/requests", icon: ShoppingCart, accent: "text-primary bg-primary/10", moduleId: "purchasing" },
@@ -341,7 +341,7 @@ export default function Dashboard() {
               {lowStock.map((item, idx) => (
                 <tr key={idx} className="hover:bg-muted/10 transition-colors">
                   <td className="px-6 py-3.5 font-bold">
-                    <Link href={`/components/list?component=${encodeURIComponent(item.componentId)}`} className="text-primary hover:underline">{item.component}</Link>
+                    <Link href={`/items/list?id=${encodeURIComponent(item.componentId)}`} className="text-primary hover:underline">{item.component}</Link>
                   </td>
                   <td className="px-6 py-3.5 font-mono text-destructive font-bold">{item.current.toLocaleString()}</td>
                   <td className="px-6 py-3.5 font-mono text-muted-foreground">{item.minimum.toLocaleString()}</td>
@@ -461,7 +461,7 @@ export default function Dashboard() {
                   {singleSupplierComponents.map((s, idx) => (
                     <tr key={idx} className="hover:bg-muted/5">
                       <td className="px-4 py-2.5 font-bold">
-                        <Link href={`/components/list?component=${encodeURIComponent(s.componentId)}`} className="text-primary hover:underline">{s.component}</Link>
+                        <Link href={`/items/list?id=${encodeURIComponent(s.componentId)}`} className="text-primary hover:underline">{s.component}</Link>
                       </td>
                       <td className="px-4 py-2.5 text-right font-semibold text-muted-foreground">{s.supplier}</td>
                     </tr>

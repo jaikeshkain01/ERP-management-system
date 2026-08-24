@@ -405,7 +405,11 @@ export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; 
       where: { kind: "bin", is_default: true, deleted_at: null },
       select: { id: true, warehouse_id: true },
     });
-    if (!bin) throw Errors.conflict("No default bin configured for goods-in");
+    if (!bin) throw Errors.conflict(
+      "No default bin configured for goods-in",
+      undefined,
+      "Open Inventory → Warehouses in this workspace and mark one bin as the default (or create a warehouse + default bin) before receiving stock.",
+    );
 
     let received = 0;
     for (const item of items) {

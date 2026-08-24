@@ -188,7 +188,7 @@ function PurchaseRequestsContent() {
                 <div>
                   <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-500 block">Shortage Item</span>
                   <Link
-                    href={`/components/details?component=${shortPN}&from=purchasing`}
+                    href={`/items/details/${shortPN}?from=purchasing`}
                     className="text-lg font-extrabold text-foreground hover:underline mt-1 block"
                   >
                     {shortName}
@@ -281,7 +281,7 @@ function PurchaseRequestsContent() {
                       <tr key={pr.prId} className="hover:bg-muted/10 transition-colors">
                         <td className="px-6 py-4 font-mono font-bold text-primary">{pr.prId}</td>
                         <td className="px-6 py-4">
-                          <Link href={`/components/details?component=${pr.componentId}&from=purchasing`} className="font-semibold hover:underline">
+                          <Link href={`/items/details/${pr.componentId}?from=purchasing`} className="font-semibold hover:underline">
                             {pr.componentName}
                           </Link>
                         </td>

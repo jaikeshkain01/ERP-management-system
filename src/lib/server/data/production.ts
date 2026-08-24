@@ -77,10 +77,12 @@ function orderStatusToView(s: string): ProductionOrderView["status"] {
 async function resolveProductionOrder(tx: TxClient, orderNo: string) {
   const po = await tx.production_orders.findFirst({
     where: { order_no: orderNo, deleted_at: null },
-    select: { id: true, status: true, order_no: true },
+    // product_id + qty are needed by STAGE 4 (F7 finished-goods receipt);
+    // cheap to always select and harmless to the other stages.
+    select: { id: true, status: true, order_no: true, product_id: true, qty: true },
   });
   if (!po) throw Errors.notFound("Production order");
-  return po;
+  return { ...po, productId: po.product_id };
 }
 
 async function nextOrderNo(tx: TxClient): Promise<string> {
@@ -327,18 +329,74 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
   });
 }
 
-// ── STAGE 4 — complete (close the batch) ─────────────────────────────────────────
-export async function completeProductionOrder(orderNo: string): Promise<{ order: string }> {
+// ── STAGE 4 — complete (close the batch + receive finished goods) ─────────────────
+/**
+ * Close the batch AND book the finished units into stock (F7).
+ *
+ * The product is a universal item (F2 mirrored products → items) with a single
+ * manufactured variant (source_kind='manufactured', no brand). F5.4 opened the
+ * ledger to manufactured items — component_brand_variant_id is nullable and
+ * balances key on item_variant_id — so we can now append a PRODUCTION row
+ * (qty_delta = +order.qty) against that variant. The consumed components were
+ * already taken off the ledger in STAGE 3, so completing a batch nets:
+ * finished-good on_hand +qty, raw components already −consumed.
+ *
+ * Returns the produced qty + the variant it landed against so the caller can
+ * surface a meaningful toast.
+ */
+export async function completeProductionOrder(orderNo: string): Promise<{ order: string; produced: number; itemVariantId: string }> {
   return guarded("production_order.edit", async (tx, ctx) => {
+    await assertPermission(tx, ctx, "inventory.create"); // finished-goods receipt writes the ledger
+
     const po = await resolveProductionOrder(tx, orderNo);
     if (po.status !== "In_Progress") {
       throw Errors.conflict(`Order is not In Progress (status: ${po.status.replace("_", " ")})`);
     }
-    // Finished-goods stock for the product is not modelled: the inventory ledger is
-    // keyed on component brand variants, and a product is not a component. Closing the
-    // batch = status → Completed; the consumed components are already off the ledger.
+
+    // The product's manufactured variant is where finished units land.
+    const [variant] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM item_variants
+      WHERE item_id = ${po.productId}::uuid
+        AND source_kind = 'manufactured'
+        AND deleted_at IS NULL
+      LIMIT 1`;
+    if (!variant) {
+      throw Errors.conflict(
+        "This product has no manufactured variant to receive finished units into",
+        { productId: po.productId },
+        "The universal-item backfill (F2) creates one automatically; if it is missing, re-run the items backfill before completing this batch.",
+      );
+    }
+
+    // Destination bin: prefer a finished-goods warehouse's default bin, else the
+    // tenant default bin (same fallback shape as opening stock / goods-in).
+    const [bin] = await tx.$queryRaw<{ id: string; warehouse_id: string }[]>`
+      SELECT sl.id, sl.warehouse_id
+      FROM storage_locations sl
+      JOIN warehouses w ON w.id = sl.warehouse_id AND w.deleted_at IS NULL
+      WHERE sl.kind = 'bin' AND sl.is_default = true AND sl.deleted_at IS NULL
+      ORDER BY w.is_finished_goods DESC, w.code
+      LIMIT 1`;
+    if (!bin) {
+      throw Errors.conflict(
+        "No default bin configured to receive finished goods",
+        undefined,
+        "Open Inventory → Warehouses and mark one bin as the default (ideally in a finished-goods warehouse) before completing the batch.",
+      );
+    }
+
+    // Append the finished-goods PRODUCTION row. Only item_variant_id is set —
+    // manufactured variants have no CBV, and the sync trigger leaves it NULL.
+    // The default-lot + projection triggers handle lot assignment and balances.
+    await tx.$executeRaw`
+      INSERT INTO inventory_transactions
+        (company_id, type, item_variant_id, warehouse_id, location_id, qty_delta, ref_type, ref_id, reason, created_by)
+      VALUES (${ctx.companyId!}::uuid, 'PRODUCTION'::inventory_txn_type, ${variant.id}::uuid,
+              ${bin.warehouse_id}::uuid, ${bin.id}::uuid, ${Number(po.qty)},
+              'production_order', ${po.id}::uuid, ${`Produced by ${orderNo}`}, ${ctx.userId}::uuid)`;
+
     await tx.production_orders.update({ where: { id: po.id }, data: { status: "Completed", updated_by: ctx.userId } });
-    return { order: orderNo };
+    return { order: orderNo, produced: Number(po.qty), itemVariantId: variant.id };
   });
 }
 

@@ -125,10 +125,42 @@ export interface CreateComponentInput {
   reorderQty?: number; // the form's MOQ maps here
   specs?: { key: string; value: string }[];
   variants?: CreateComponentVariantInput[];
+  /** Where to land opening stock. Optional — when omitted we look up the
+   *  tenant's default bin (the pre-existing behaviour). Any live bin in the
+   *  current tenant is accepted; must be `kind='bin'`. */
+  openingLocationId?: string | null;
 }
 
 const slugify = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** Resolve where opening stock should land. Priority:
+ *    1. Caller-supplied `openingLocationId` (verified to be a live bin in the
+ *       current tenant — RLS already scopes the query to the caller's company).
+ *    2. Tenant default bin (any warehouse's `is_default=true` bin).
+ *  Returns null if neither is available — the caller decides how to surface. */
+async function resolveOpeningBin(
+  tx: TxClient,
+  openingLocationId?: string | null,
+): Promise<{ id: string; warehouse_id: string } | null> {
+  if (openingLocationId) {
+    if (!isUuid(openingLocationId)) throw Errors.badRequest("Invalid openingLocationId");
+    const chosen = await tx.storage_locations.findFirst({
+      where: { id: openingLocationId, kind: "bin", deleted_at: null },
+      select: { id: true, warehouse_id: true },
+    });
+    if (!chosen) throw Errors.badRequest(
+      "Selected location is not a valid bin in this workspace",
+      { openingLocationId },
+      "Pick a different bin, or leave it blank to use the workspace's default bin.",
+    );
+    return chosen;
+  }
+  return await tx.storage_locations.findFirst({
+    where: { kind: "bin", is_default: true, deleted_at: null },
+    select: { id: true, warehouse_id: true },
+  });
+}
 
 async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) => Promise<T>): Promise<T> {
   const ctx = await requireSession();
@@ -139,7 +171,7 @@ async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) =
 }
 
 /** Resolve a brand by name (case-insensitive), creating one if it doesn't exist. */
-async function resolveOrCreateBrand(tx: TxClient, ctx: TenantContext, name: string): Promise<string> {
+export async function resolveOrCreateBrand(tx: TxClient, ctx: TenantContext, name: string): Promise<string> {
   const existing = await tx.brands.findFirst({
     where: { deleted_at: null, name: { equals: name, mode: "insensitive" } },
     select: { id: true },
@@ -195,11 +227,12 @@ export async function createComponent(input: CreateComponentInput): Promise<Comp
     let bin: { id: string; warehouse_id: string } | null = null;
     if (openingRows.length) {
       await assertPermission(tx, ctx, "inventory.create"); // opening stock writes the ledger
-      bin = await tx.storage_locations.findFirst({
-        where: { kind: "bin", is_default: true, deleted_at: null },
-        select: { id: true, warehouse_id: true },
-      });
-      if (!bin) throw Errors.conflict("No default bin configured for opening stock");
+      bin = await resolveOpeningBin(tx, input.openingLocationId);
+      if (!bin) throw Errors.conflict(
+        "No default bin configured for opening stock",
+        undefined,
+        "Open Inventory → Warehouses in this workspace and create a warehouse with a default bin, or add the item without an opening quantity and receive it via a Stock In later.",
+      );
     }
 
     let onHand = 0;
@@ -365,6 +398,9 @@ export interface AddVariantInput {
   brand: string; // brand name (resolved / created)
   partNo: string;
   stock?: number; // opening stock → IN ledger row
+  /** Optional bin to receive the opening stock into; falls back to the tenant
+   *  default bin (mirrors CreateComponentInput.openingLocationId). */
+  openingLocationId?: string | null;
 }
 
 export interface VariantView {
@@ -400,11 +436,12 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
     const qty = input.stock ?? 0;
     if (qty > 0) {
       await assertPermission(tx, ctx, "inventory.create"); // opening stock writes the ledger
-      const bin = await tx.storage_locations.findFirst({
-        where: { kind: "bin", is_default: true, deleted_at: null },
-        select: { id: true, warehouse_id: true },
-      });
-      if (!bin) throw Errors.conflict("No default bin configured for opening stock");
+      const bin = await resolveOpeningBin(tx, input.openingLocationId);
+      if (!bin) throw Errors.conflict(
+        "No default bin configured for opening stock",
+        undefined,
+        "Open Inventory → Warehouses in this workspace and create a warehouse with a default bin, or add the item without an opening quantity and receive it via a Stock In later.",
+      );
       await tx.inventory_transactions.create({
         data: {
           company_id: ctx.companyId!, type: "IN",

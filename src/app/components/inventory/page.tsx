@@ -1,289 +1,193 @@
 "use client"
 
+/**
+ * Inventory — rebuilt on the universal `items` master.
+ *
+ * Shows EVERY item that can hold stock (legacy components AND universally-created
+ * items alike — F2 backfilled all legacy rows into `items`, so one list covers
+ * both). On-hand, valuation, and status come from `/api/items` (F5.5 rollup).
+ * Stock In/Out goes through the universal `ItemStockMoveDialog` (posts
+ * item_variant_id). Expanding a row lazily loads its stock breakdown + movement
+ * history from `/api/items/[id]/stock` and `/api/items/[id]/ledger`.
+ *
+ * Replaces the legacy CBV/component-scoped inventory page.
+ */
 import * as React from "react"
 import Link from "next/link"
-import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { StatStrip } from "@/components/stat-strip"
 import {
-  AlertCircle, AlertTriangle, ChevronDown, DollarSign,
-  Landmark, Layers, MapPin, Nut, Package, Search, ShieldAlert, X,
-  Boxes, ArrowUpRight, Truck, Tag, ArrowDownToLine, ArrowUpFromLine, CheckCircle2,
+  Search, X, ChevronDown, Package, Landmark, Boxes, AlertTriangle, ShieldAlert,
+  ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Nut, Cpu, Laptop, Wrench, CheckCircle2, History, Layers,
 } from "lucide-react"
-import { useData } from "@/lib/data-provider"
-import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-import type { StockDirection } from "@/lib/catalog"
-import { useStockLedger } from "@/lib/use-stock-ledger"
-import type { BrandStock, NewTransactionInput } from "@/lib/stock-ledger"
-import { StockMoveModal } from "@/components/inventory/stock-move-modal"
-import { TransactionHistoryTable } from "@/components/inventory/transaction-history-table"
-import { stockStatus, type StockStatus } from "@/lib/stock-status"
+import { formatINR } from "@/lib/catalog"
+import { extractError } from "@/lib/api-error"
+import { ItemStockMoveDialog, type StockMoveItem } from "@/components/inventory/item-stock-move-dialog"
 
-interface BrandVariant {
-  brand: string
-  partNo: string
-  stock: number
+type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+type ItemStatus = "active" | "inactive" | "discontinued"
+type StockStatus = "Healthy" | "Low" | "Out of Stock"
+
+interface Variant {
+  id: string; sourceKind: "purchased" | "manufactured"; brandSlug: string | null; partNo: string | null; isDefault: boolean
+}
+interface Item {
+  id: string; code: string; genericPn: string | null; name: string
+  itemType: ItemType; baseUom: string; categoryPath: string | null
+  minStock: number; reorderQty: number; status: ItemStatus
+  onHand: number; stockValue: number; lastMovementAt: string | null
+  variants: Variant[]
 }
 
-interface SupplierOffer {
-  supplier: string
-  brand: string
-  price: string
-  leadTime: string
+const TYPE_ICON: Record<ItemType, React.ComponentType<{ className?: string }>> = {
+  raw: Nut, semi_assembled: Cpu, assembled: Package, consumable: Boxes, asset: Laptop, packaging: Wrench,
+}
+const TYPE_META: Record<ItemType, { label: string; tone: string }> = {
+  raw:            { label: "Raw",          tone: "bg-primary/10 text-primary border-primary/20" },
+  semi_assembled: { label: "Sub-assembly", tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  assembled:      { label: "Finished",     tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  consumable:     { label: "Consumable",   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  asset:          { label: "Asset",        tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
+  packaging:      { label: "Packaging",    tone: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
 }
 
-interface InventoryItem {
-  id: string
-  name: string
-  genericPN: string
-  category: string
-  stock: number
-  minStock: number
-  reorderQty: number
-  unit: string
-  unitCost: number
-  bin: string
-  solderType: "SMD" | "DIP"
-  footprint: string
-  lastCount: string
-  brands: BrandVariant[]
-  suppliers: SupplierOffer[]
-  usedIn: string[]
+/** Relative "time ago" for the last-movement column. */
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—"
+  const d = new Date(iso).getTime()
+  if (Number.isNaN(d)) return "—"
+  const days = Math.floor((Date.now() - d) / 86_400_000)
+  if (days <= 0) return "today"
+  if (days === 1) return "1d ago"
+  if (days < 30) return `${days}d ago`
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`
+  return `${Math.floor(days / 365)}y ago`
 }
 
-// --- Inventory view model derived from the centralized component store ---
-// Stock/brand quantities come from the authoritative `inventory_balances`
-// projection (via useStockLedger), keyed by genericPN and genericPN|brandSlug,
-// so recording a stock-in/out reflects the DB's true on-hand — not a truncated
-// client-side replay of the ledger.
-
-/** Authoritative per-brand on-hand for a component, from the balances maps. */
-function brandStocksFor(
-  c: ReturnType<typeof useData>["COMPONENTS"][number],
-  onHandByVariant: Map<string, number>,
-): BrandStock[] {
-  return c.brandVariants.map((v) => ({
-    brandId: v.brandId,
-    partNo: v.partNo,
-    stock: onHandByVariant.get(`${c.genericPN}|${v.brandId}`) ?? 0,
-  }))
+const STATUS_STYLE: Record<StockStatus, { pill: string; dot: string; bar: string }> = {
+  Healthy:        { pill: "border-emerald-500/30 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10", dot: "bg-emerald-500", bar: "bg-emerald-500" },
+  Low:            { pill: "border-amber-500/30 text-amber-700 dark:text-amber-400 bg-amber-500/10",         dot: "bg-amber-500",   bar: "bg-amber-500" },
+  "Out of Stock": { pill: "border-destructive/30 text-destructive bg-destructive/10",                       dot: "bg-destructive", bar: "bg-destructive" },
 }
 
-function buildInventory(
-  d: ReturnType<typeof useData>,
-  onHandByComponent: Map<string, number>,
-  onHandByVariant: Map<string, number>,
-): InventoryItem[] {
-  return d.COMPONENTS.map((c) => ({
-    id: c.id,
-    name: c.name,
-    genericPN: c.genericPN,
-    category: c.category,
-    stock: onHandByComponent.get(c.genericPN) ?? 0,
-    minStock: c.minStock,
-    reorderQty: c.reorderQty,
-    unit: c.unit,
-    unitCost: d.bestPrice(c),
-    bin: c.bin,
-    solderType: c.solderType,
-    footprint: c.footprint,
-    lastCount: c.lastCount,
-    brands: brandStocksFor(c, onHandByVariant).map((b) => ({
-      brand: d.getBrandName(b.brandId),
-      partNo: b.partNo ?? "—",
-      stock: b.stock,
-    })),
-    suppliers: c.offers.map((o) => ({
-      supplier: d.getSupplierName(o.supplierId),
-      brand: d.getBrandName(o.brandId),
-      price: d.formatINR(o.price),
-      leadTime: d.formatLeadTime(o.leadTimeDays),
-    })),
-    usedIn: d.productsUsingComponent(c.id).map((p) => p.name),
-  }))
+function stockStatus(it: Item): StockStatus {
+  if (it.onHand <= 0) return "Out of Stock"
+  if (it.minStock > 0 && it.onHand < it.minStock) return "Low"
+  return "Healthy"
 }
 
-// --- Helpers ---
-const getStatus = (item: InventoryItem): StockStatus => stockStatus(item.stock, item.minStock)
-
-const STATUS_STYLES: Record<StockStatus, { pill: string; bar: string; dot: string }> = {
-  Healthy: {
-    pill: "bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400",
-    bar: "bg-emerald-500", dot: "bg-emerald-500",
-  },
-  Low: {
-    pill: "bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400",
-    bar: "bg-amber-500", dot: "bg-amber-500",
-  },
-  Critical: {
-    pill: "bg-orange-500/10 border-orange-500/20 text-orange-600 dark:text-orange-400",
-    bar: "bg-orange-500", dot: "bg-orange-500",
-  },
-  "Out of Stock": {
-    pill: "bg-destructive/10 border-destructive/20 text-destructive",
-    bar: "bg-destructive", dot: "bg-destructive",
-  },
+// ── expanded-row payloads (lazy) ──
+interface StockBreakdown {
+  byWarehouse: { warehouseId: string; code: string; onHand: number }[]
+  byLot: { lotNo: string; brandSlug: string | null; supplierName: string | null; receivedDate: string | null; expiryDate: string | null; onHand: number; value: number }[]
 }
-
-const formatINR = (n: number) =>
-  "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 0 })
+interface LedgerRow {
+  id: string; type: string; qtyDelta: number; warehouseCode: string | null; locationCode: string | null
+  lotNo: string | null; supplierName: string | null; reason: string | null; createdAt: string
+}
 
 export default function InventoryPage() {
-  const searchParams = useSearchParams()
-  // Deep-link from Item Details: `?item=<generic-pn>` pre-fills the search so the
-  // user lands on that specific SKU without re-typing.
-  const initialItem = searchParams.get("item") ?? ""
-  const [draftQuery, setDraftQuery] = React.useState(initialItem)
-  const [query, setQuery] = React.useState(initialItem)
-  const [category, setCategory] = React.useState("All")
+  const [items, setItems] = React.useState<Item[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+  const [query, setQuery] = React.useState("")
+  const [typeFilter, setTypeFilter] = React.useState<ItemType | "all">("all")
   const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
   const [expanded, setExpanded] = React.useState<string | null>(null)
-  // Near-expiry chip filter — when on, the row list is narrowed to items with
-  // at least one lot expiring within 30 days (including already-expired).
-  const [expiringOnly, setExpiringOnly] = React.useState(false)
-  const [expiringItems, setExpiringItems] = React.useState<Set<string>>(new Set())
-  const [expiringCount, setExpiringCount] = React.useState(0)
-
-  const d = useData()
-  const { transactions, onHandByComponent, onHandByVariant, addTransaction } = useStockLedger()
-  const [move, setMove] = React.useState<{ componentId: string; mode: StockDirection } | null>(null)
+  const [breakdown, setBreakdown] = React.useState<Record<string, { stock: StockBreakdown; ledger: LedgerRow[] } | "loading">>({})
+  const [move, setMove] = React.useState<{ item: StockMoveItem; mode: "in" | "out" } | null>(null)
   const [toast, setToast] = React.useState<string | null>(null)
 
-  const INVENTORY = React.useMemo(
-    () => buildInventory(d, onHandByComponent, onHandByVariant),
-    [d, onHandByComponent, onHandByVariant],
-  )
+  const showToast = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 3000) }
 
-  // Fetch the set of items with lots expiring in ≤30 days once — used by both
-  // the chip filter and the header count badge. Refetched when the ledger
-  // changes (a stock-in/out could add/remove lots from the near-expiry set).
-  React.useEffect(() => {
-    let live = true
-    ;(async () => {
-      const res = await fetch("/api/item-lots?expiringWithinDays=30", { cache: "no-store" })
-      const body = await res.json().catch(() => null)
-      if (!live) return
-      const lots = res.ok && Array.isArray(body?.data) ? body.data as { genericPN: string }[] : []
-      setExpiringItems(new Set(lots.map((l) => l.genericPN)))
-      setExpiringCount(lots.length)
-    })()
-    return () => { live = false }
-  }, [transactions])
-  const CATEGORIES = React.useMemo(
-    () => ["All", ...Array.from(new Set(d.COMPONENTS.map((c) => c.category)))],
-    [d],
-  )
+  const load = React.useCallback(async () => {
+    setLoading(true); setError(null)
+    try {
+      const res = await fetch("/api/items", { cache: "no-store" })
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
+      const body = await res.json() as { data: Item[] }
+      setItems(body.data ?? [])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load inventory")
+    } finally { setLoading(false) }
+  }, [])
+  React.useEffect(() => { void load() }, [load])
 
-  const submitSearch = () => setQuery(draftQuery.trim())
-  const clearSearch = () => {
-    setDraftQuery("")
-    setQuery("")
-  }
-
-  const handleMoveSubmit = async (input: NewTransactionInput) => {
-    const result = await addTransaction(input)
-    if (result.ok) {
-      d.reload()
-      const verb = input.direction === "in" ? "Stocked in" : "Stocked out"
-      setToast(`${verb} ${input.qty.toLocaleString()} × ${d.getBrandName(input.brandId)}`)
-    } else {
-      setToast(result.error ?? "Move failed")
+  const loadBreakdown = React.useCallback(async (id: string) => {
+    setBreakdown((p) => ({ ...p, [id]: "loading" }))
+    try {
+      const [sRes, lRes] = await Promise.all([
+        fetch(`/api/items/${id}/stock`, { cache: "no-store" }),
+        fetch(`/api/items/${id}/ledger`, { cache: "no-store" }),
+      ])
+      const sBody = sRes.ok ? await sRes.json() : null
+      const lBody = lRes.ok ? await lRes.json() : null
+      setBreakdown((p) => ({ ...p, [id]: { stock: sBody?.data ?? { byWarehouse: [], byLot: [] }, ledger: lBody?.data ?? [] } }))
+    } catch {
+      setBreakdown((p) => ({ ...p, [id]: { stock: { byWarehouse: [], byLot: [] }, ledger: [] } }))
     }
-    setMove(null)
-    setTimeout(() => setToast(null), 3000)
+  }, [])
+
+  const toggleRow = (id: string) => {
+    const next = expanded === id ? null : id
+    setExpanded(next)
+    if (next && !breakdown[next]) void loadBreakdown(next)
   }
 
-  // --- Derived stats (over the whole dataset, not filtered) ---
   const stats = React.useMemo(() => {
-    const totalValue = INVENTORY.reduce((sum, i) => sum + i.stock * i.unitCost, 0)
-    const counts = INVENTORY.reduce(
-      (acc, i) => {
-        acc[getStatus(i)]++
-        return acc
-      },
-      { Healthy: 0, Low: 0, Critical: 0, "Out of Stock": 0 } as Record<StockStatus, number>
-    )
-    return { totalValue, counts, skuCount: INVENTORY.length }
-  }, [INVENTORY])
+    let value = 0, low = 0, out = 0
+    for (const it of items) {
+      value += it.stockValue
+      const s = stockStatus(it)
+      if (s === "Low") low++
+      else if (s === "Out of Stock") out++
+    }
+    return { value, low, out, skus: items.length }
+  }, [items])
 
-  // --- Filtered rows ---
   const rows = React.useMemo(() => {
-    const q = query.toLowerCase()
-    return INVENTORY.filter((item) => {
-      const matchesQuery =
-        !q ||
-        item.name.toLowerCase().includes(q) ||
-        item.genericPN.toLowerCase().includes(q) ||
-        item.category.toLowerCase().includes(q) ||
-        item.bin.toLowerCase().includes(q) ||
-        item.brands.some((b) => b.brand.toLowerCase().includes(q) || b.partNo.toLowerCase().includes(q))
-      const matchesCategory = category === "All" || item.category === category
-      const matchesStatus = statusFilter === "All" || getStatus(item) === statusFilter
-      const matchesExpiring = !expiringOnly || expiringItems.has(item.genericPN)
-      return matchesQuery && matchesCategory && matchesStatus && matchesExpiring
+    const q = query.trim().toLowerCase()
+    return items.filter((it) => {
+      if (typeFilter !== "all" && it.itemType !== typeFilter) return false
+      if (statusFilter !== "All" && stockStatus(it) !== statusFilter) return false
+      if (q) {
+        const hay = `${it.code} ${it.genericPn ?? ""} ${it.name} ${it.categoryPath ?? ""} ${it.variants.map((v) => `${v.brandSlug ?? ""} ${v.partNo ?? ""}`).join(" ")}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
     })
-  }, [INVENTORY, query, category, statusFilter, expiringOnly, expiringItems])
+  }, [items, query, typeFilter, statusFilter])
 
-  const summaryCards = [
-    {
-      title: "Inventory Value", value: formatINR(stats.totalValue), desc: "On-hand valuation at unit cost",
-      icon: Landmark, accent: "text-emerald-600 bg-emerald-500/10", border: "border-border",
-    },
-    {
-      title: "Active SKUs", value: String(stats.skuCount), desc: "Distinct catalog line items",
-      icon: Boxes, accent: "text-primary bg-primary/10", border: "border-border",
-    },
-    {
-      title: "Low / Critical", value: String(stats.counts.Low + stats.counts.Critical), desc: "Below safety stock level",
-      icon: AlertTriangle, accent: "text-amber-500 bg-amber-500/10",
-      border: "border-amber-500/20 bg-amber-500/[0.03]",
-    },
-    {
-      title: "Out of Stock", value: String(stats.counts["Out of Stock"]), desc: "Depleted, blocks production",
-      icon: ShieldAlert, accent: "text-destructive bg-destructive/10",
-      border: "border-destructive/20 bg-destructive/[0.03]",
-    },
-  ]
+  const toMoveItem = (it: Item): StockMoveItem => ({
+    id: it.id, code: it.code, name: it.name, baseUom: it.baseUom,
+    variants: it.variants.map((v) => ({ id: v.id, sourceKind: v.sourceKind, brandSlug: v.brandSlug, partNo: v.partNo, isDefault: v.isDefault })),
+  })
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-2">
         <div className="text-sm text-muted-foreground flex items-center gap-2">
-          <span>Items</span>
-          <span>/</span>
-          <span className="text-foreground font-medium">Inventory</span>
+          <span>Items</span><span>/</span><span className="text-foreground font-medium">Inventory</span>
         </div>
-        <div className="flex flex-col gap-1 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight">Inventory</h1>
-            <p className="text-muted-foreground mt-1">
-              Stock levels, valuation, bin allocation, and supplier coverage across the item catalog.
-            </p>
-          </div>
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-tight">Inventory</h1>
+          <p className="text-muted-foreground mt-1">On-hand stock, valuation, and movements across every item — raw parts, sub-assemblies, finished goods, assets, and consumables.</p>
         </div>
       </div>
 
-      {/* Summary — instrument readout strip */}
-      <StatStrip
-        items={summaryCards.map((c) => ({
-          label: c.title,
-          value: c.value,
-          desc: c.desc,
-          icon: c.icon,
-          tone: c.accent.includes("emerald")
-            ? "success"
-            : c.accent.includes("amber")
-            ? "warning"
-            : c.accent.includes("destructive")
-            ? "danger"
-            : "default",
-        }))}
-      />
+      {/* Stats */}
+      <StatStrip items={[
+        { label: "Inventory Value", value: formatINR(stats.value), desc: "On-hand valuation at lot cost", icon: Landmark, tone: "success" },
+        { label: "Active SKUs", value: String(stats.skus), desc: "Items in the master", icon: Boxes, tone: "default" },
+        { label: "Low Stock", value: String(stats.low), desc: "Below minimum level", icon: AlertTriangle, tone: "warning" },
+        { label: "Out of Stock", value: String(stats.out), desc: "Nothing on hand", icon: ShieldAlert, tone: "danger" },
+      ]} />
 
-      {/* Ledger */}
       <Card className="border border-border shadow-sm overflow-hidden">
         <CardHeader className="border-b border-border bg-muted/20 px-6 py-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -291,372 +195,225 @@ export default function InventoryPage() {
               <Package className="h-5 w-5 text-primary" />
               <div>
                 <CardTitle className="text-lg font-bold">Physical Stock Ledger</CardTitle>
-                <CardDescription>On-hand quantities, valuation, and warehouse allocation</CardDescription>
+                <CardDescription>Every item that can hold stock — expand a row for lots, movements, and stock actions</CardDescription>
               </div>
             </div>
-
-            {/* Search + filters */}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-                <Input
-                  value={draftQuery}
-                  onChange={(e) => setDraftQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && submitSearch()}
-                  placeholder="Search part, P/N, manufacturer, bin…"
-                  className="h-9 w-full pl-8 pr-8 sm:w-72"
-                />
-                {draftQuery && (
-                  <button
-                    onClick={clearSearch}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    aria-label="Clear search"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
+                <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search code, P/N, name, category…" className="h-9 w-full pl-8 pr-8 sm:w-72" />
+                {query && <button onClick={() => setQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>}
               </div>
-              <Button size="sm" onClick={submitSearch} className="h-9 font-semibold cursor-pointer">
-                <Search className="h-3.5 w-3.5 mr-1.5" />
-                Search
-              </Button>
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StockStatus | "All")}
+                className="h-9 rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-primary">
+                <option value="All">All statuses</option>
+                <option value="Healthy">Healthy</option>
+                <option value="Low">Low</option>
+                <option value="Out of Stock">Out of Stock</option>
+              </select>
             </div>
           </div>
-
-          {/* Category + status filter chips */}
-          <div className="flex flex-wrap items-center gap-1.5 pt-4">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">Category</span>
-            {CATEGORIES.map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setCategory(cat)}
-                className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
-                  category === cat
-                    ? "border-primary/30 bg-primary/10 text-primary"
-                    : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-            <div className="mx-2 h-4 w-px bg-border" />
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">Status</span>
-            {(["All", "Healthy", "Low", "Critical", "Out of Stock"] as const).map((st) => (
-              <button
-                key={st}
-                onClick={() => setStatusFilter(st)}
-                className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
-                  statusFilter === st
-                    ? "border-foreground/20 bg-foreground/5 text-foreground"
-                    : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
-                }`}
-              >
-                {st}
-              </button>
-            ))}
-            {/* Near-expiry chip — only shown when there's something to surface,
-                so a healthy tenant never sees an empty toggle. Badge shows the
-                lot count (across items) currently in the ≤30-day window. */}
-            {expiringCount > 0 && (
-              <>
-                <div className="mx-2 h-4 w-px bg-border" />
-                <button
-                  onClick={() => setExpiringOnly((v) => !v)}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors cursor-pointer ${
-                    expiringOnly
-                      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      : "border-border bg-transparent text-muted-foreground hover:bg-muted/50"
-                  }`}
-                  title="Show only items with a lot expiring in ≤30 days (including already expired)"
-                >
-                  Expiring ≤30d
-                  <span className={`inline-flex items-center justify-center rounded-full px-1.5 text-[10px] font-bold ${
-                    expiringOnly ? "bg-amber-500 text-white" : "bg-muted text-muted-foreground"
-                  }`}>
-                    {expiringCount}
-                  </span>
+          {/* Type chips */}
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {(["all", "raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"] as const).map((t) => {
+              const active = typeFilter === t
+              const label = t === "all" ? "All types" : t === "semi_assembled" ? "Sub-assembly" : t === "assembled" ? "Finished" : t[0].toUpperCase() + t.slice(1)
+              return (
+                <button key={t} onClick={() => setTypeFilter(t)}
+                  className={`px-2.5 py-1 text-xs rounded-full border font-semibold transition-all ${active ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted/50"}`}>
+                  {label}
                 </button>
-              </>
-            )}
+              )
+            })}
           </div>
         </CardHeader>
-
         <CardContent className="p-0">
           <DragScrollArea className="overflow-x-auto">
-            <table className="w-full text-sm text-left text-foreground">
-              <thead className="text-[11px] uppercase bg-muted/40 text-muted-foreground border-b border-border tracking-wide">
+            <table className="w-full text-sm text-left">
+              <thead className="text-[10px] uppercase bg-muted/30 text-muted-foreground border-b border-border">
                 <tr>
                   <th className="px-6 py-3 font-semibold">Item</th>
-                  <th className="px-6 py-3 font-semibold">Category</th>
-                  <th className="px-6 py-3 font-semibold w-[200px]">Stock Level</th>
-                  <th className="px-6 py-3 font-semibold text-right">Value</th>
-                  <th className="px-6 py-3 font-semibold">Location</th>
-                  <th className="px-6 py-3 font-semibold text-right">Status</th>
-                  <th className="px-4 py-3 font-semibold text-center w-10"></th>
+                  <th className="px-4 py-3 font-semibold w-32">Type</th>
+                  <th className="px-4 py-3 font-semibold">Generic PN</th>
+                  <th className="px-4 py-3 font-semibold">Category</th>
+                  <th className="px-6 py-3 font-semibold w-52">On hand</th>
+                  <th className="px-4 py-3 font-semibold text-right w-24">Reorder</th>
+                  <th className="px-3 py-3 font-semibold text-center w-16">UOM</th>
+                  <th className="px-6 py-3 font-semibold text-right w-32">Value</th>
+                  <th className="px-4 py-3 font-semibold text-right w-28">Last move</th>
+                  <th className="px-6 py-3 font-semibold text-right w-32">Status</th>
+                  <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {rows.map((item) => {
-                  const status = getStatus(item)
-                  const style = STATUS_STYLES[status]
-                  const pct = Math.min(100, Math.round((item.stock / Math.max(item.minStock, 1)) * 100))
-                  const isOpen = expanded === item.id
+                {loading && Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={i}>{Array.from({ length: 11 }).map((__, j) => <td key={j} className="px-4 py-4"><Skeleton className="h-4 w-full" /></td>)}</tr>
+                ))}
+                {!loading && rows.map((it) => {
+                  const status = stockStatus(it)
+                  const style = STATUS_STYLE[status]
+                  const pct = it.minStock > 0 ? Math.min(100, Math.round((it.onHand / it.minStock) * 100)) : (it.onHand > 0 ? 100 : 0)
+                  const isOpen = expanded === it.id
+                  const Icon = TYPE_ICON[it.itemType]
+                  const bd = breakdown[it.id]
                   return (
-                    <React.Fragment key={item.id}>
-                      <tr
-                        className="hover:bg-muted/20 transition-colors cursor-pointer"
-                        onClick={() => setExpanded(isOpen ? null : item.id)}
-                      >
+                    <React.Fragment key={it.id}>
+                      <tr className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => toggleRow(it.id)}>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                              <Nut className="h-4 w-4" />
-                            </div>
+                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="h-4 w-4" /></div>
                             <div className="flex flex-col min-w-0">
-                              <span className="font-semibold leading-tight">{item.name}</span>
-                              <span className="text-[11px] font-mono text-muted-foreground">{item.genericPN}</span>
+                              <span className="font-semibold leading-tight">{it.name}</span>
+                              <span className="text-[11px] font-mono text-muted-foreground">{it.code}</span>
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                            <Tag className="h-3 w-3" />
-                            {item.category}
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-bold border ${TYPE_META[it.itemType].tone}`}>
+                            <Icon className="h-3 w-3" />{TYPE_META[it.itemType].label}
                           </span>
                         </td>
+                        <td className="px-4 py-4 font-mono text-xs text-muted-foreground">{it.genericPn ?? "—"}</td>
+                        <td className="px-4 py-4 text-xs text-muted-foreground">{it.categoryPath ?? "—"}</td>
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-between text-xs mb-1.5">
-                            <span className="font-mono font-bold text-foreground">{item.stock.toLocaleString()}</span>
-                            <span className="font-mono text-muted-foreground">min {item.minStock.toLocaleString()}</span>
+                            <span className="font-mono font-bold">{it.onHand.toLocaleString()} <span className="text-muted-foreground font-normal">{it.baseUom}</span></span>
+                            <span className="font-mono text-muted-foreground">min {it.minStock.toLocaleString()}</span>
                           </div>
-                          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                            <div className={`h-full rounded-full ${style.bar}`} style={{ width: `${pct}%` }} />
-                          </div>
+                          <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden"><div className={`h-full rounded-full ${style.bar}`} style={{ width: `${pct}%` }} /></div>
                         </td>
-                        <td className="px-6 py-4 text-right font-mono font-semibold">
-                          {formatINR(item.stock * item.unitCost)}
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center gap-1.5 font-mono text-xs">
-                            <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
-                            {item.bin}
-                          </span>
-                        </td>
+                        <td className="px-4 py-4 text-right font-mono text-xs text-muted-foreground">{it.reorderQty > 0 ? it.reorderQty.toLocaleString() : "—"}</td>
+                        <td className="px-3 py-4 text-center font-mono text-xs text-muted-foreground">{it.baseUom}</td>
+                        <td className="px-6 py-4 text-right font-mono font-semibold">{it.stockValue > 0 ? formatINR(it.stockValue) : "—"}</td>
+                        <td className="px-4 py-4 text-right text-xs text-muted-foreground whitespace-nowrap" title={it.lastMovementAt ? new Date(it.lastMovementAt).toLocaleString() : "No movements yet"}>{timeAgo(it.lastMovementAt)}</td>
                         <td className="px-6 py-4 text-right">
                           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold ${style.pill}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-                            {status}
+                            <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />{status}
                           </span>
                         </td>
-                        <td className="px-4 py-4 text-center">
-                          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
-                        </td>
+                        <td className="px-4 py-4 text-center"><ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} /></td>
                       </tr>
 
-                      {/* Expanded detail */}
                       {isOpen && (
                         <tr className="bg-muted/10">
-                          <td colSpan={7} className="px-6 py-5">
-                            {/* Stock action header */}
-                            <div className="mb-5 flex items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
+                          <td colSpan={11} className="px-6 py-5">
+                            {/* Action bar */}
+                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
                               <div className="flex items-center gap-2 text-sm">
                                 <Boxes className="h-4 w-4 text-primary" />
-                                <span className="font-semibold">Stock Ledger</span>
-                                <span className="text-muted-foreground">— record a movement for {item.name}</span>
+                                <span className="font-semibold">Stock actions</span>
+                                <span className="text-muted-foreground">— record a movement for {it.name}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-                                  onClick={(e) => { e.stopPropagation(); setMove({ componentId: item.id, mode: "in" }) }}
-                                >
+                                <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                                  disabled={it.variants.length === 0}
+                                  onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "in" }) }}>
                                   <ArrowDownToLine className="h-3.5 w-3.5" /> Stock In
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                                  onClick={(e) => { e.stopPropagation(); setMove({ componentId: item.id, mode: "out" }) }}
-                                >
+                                <Button size="sm" variant="outline" className="h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                  disabled={it.variants.length === 0 || it.onHand <= 0}
+                                  onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "out" }) }}>
                                   <ArrowUpFromLine className="h-3.5 w-3.5" /> Stock Out
+                                </Button>
+                                <Button size="sm" variant="outline" className="h-8 text-xs font-semibold"
+                                  render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=inventory`} />}>
+                                  Full record <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
                                 </Button>
                               </div>
                             </div>
 
-                            <div className="grid gap-6 lg:grid-cols-3">
-                              {/* Specs / meta */}
-                              <div className="space-y-3">
-                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                  <Layers className="h-3.5 w-3.5" /> Specifications
-                                </h4>
-                                <dl className="space-y-1.5 text-xs">
-                                  {[
-                                    ["Solder Type", item.solderType],
-                                    ["Footprint", item.footprint],
-                                    ["Unit Cost", `₹${item.unitCost.toFixed(2)}`],
-                                    ["Reorder Qty", `${item.reorderQty.toLocaleString()} ${item.unit}`],
-                                    ["Last Counted", item.lastCount],
-                                  ].map(([k, v]) => (
-                                    <div key={k} className="flex justify-between gap-4 border-b border-border/50 pb-1.5">
-                                      <dt className="text-muted-foreground">{k}</dt>
-                                      <dd className="font-medium font-mono text-right">{v}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                                <div className="pt-1">
-                                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Used In</span>
-                                  <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                    {item.usedIn.map((p) => (
-                                      <span key={p} className="rounded-md border border-border bg-background px-2 py-0.5 text-[11px] font-medium">
-                                        {p}
-                                      </span>
+                            {bd === "loading" || !bd ? (
+                              <div className="grid gap-4 md:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>
+                            ) : (
+                              <div className="grid gap-6 lg:grid-cols-3">
+                                {/* By warehouse */}
+                                <div className="space-y-2">
+                                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Boxes className="h-3.5 w-3.5" /> Stock by warehouse</h4>
+                                  <div className="rounded-lg border border-border bg-background divide-y divide-border text-xs">
+                                    {bd.stock.byWarehouse.length === 0 && <div className="px-3 py-2 text-muted-foreground italic">No stock</div>}
+                                    {bd.stock.byWarehouse.map((w) => (
+                                      <div key={w.warehouseId} className="flex items-center justify-between px-3 py-2"><span className="font-semibold">{w.code}</span><span className="font-mono">{w.onHand.toLocaleString()}</span></div>
+                                    ))}
+                                  </div>
+                                </div>
+                                {/* Lots */}
+                                <div className="space-y-2">
+                                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><Layers className="h-3.5 w-3.5" /> Lots (FEFO)</h4>
+                                  <div className="rounded-lg border border-border bg-background divide-y divide-border text-xs max-h-48 overflow-y-auto">
+                                    {bd.stock.byLot.length === 0 && <div className="px-3 py-2 text-muted-foreground italic">No lots</div>}
+                                    {bd.stock.byLot.map((l, i) => (
+                                      <div key={i} className="px-3 py-2 space-y-0.5">
+                                        <div className="flex items-center justify-between"><span className="font-mono font-semibold truncate">{l.lotNo}</span><span className="font-mono">{l.onHand.toLocaleString()}</span></div>
+                                        <div className="text-[10px] text-muted-foreground flex items-center justify-between gap-2">
+                                          <span className="truncate">{[l.brandSlug, l.supplierName].filter(Boolean).join(" · ") || "—"}</span>
+                                          <span>{l.receivedDate ?? "—"}{l.expiryDate ? ` → ${l.expiryDate}` : ""}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                                {/* History */}
+                                <div className="space-y-2">
+                                  <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5"><History className="h-3.5 w-3.5" /> Movement history</h4>
+                                  <div className="rounded-lg border border-border bg-background divide-y divide-border text-xs max-h-48 overflow-y-auto">
+                                    {bd.ledger.length === 0 && <div className="px-3 py-2 text-muted-foreground italic">No movements</div>}
+                                    {bd.ledger.map((m) => (
+                                      <div key={m.id} className="px-3 py-2 flex items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <span className={`font-bold ${m.qtyDelta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>{m.type}</span>
+                                          <span className="text-muted-foreground ml-1.5">{m.warehouseCode ?? ""}{m.locationCode ? `·${m.locationCode}` : ""}</span>
+                                          {m.lotNo && <div className="text-[10px] font-mono text-muted-foreground truncate">{m.lotNo}{m.supplierName ? ` · ${m.supplierName}` : ""}</div>}
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <span className={`font-mono font-semibold ${m.qtyDelta > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>{m.qtyDelta > 0 ? "+" : ""}{m.qtyDelta.toLocaleString()}</span>
+                                          <div className="text-[10px] text-muted-foreground">{new Date(m.createdAt).toLocaleDateString()}</div>
+                                        </div>
+                                      </div>
                                     ))}
                                   </div>
                                 </div>
                               </div>
-
-                              {/* Brand variants */}
-                              <div className="space-y-3">
-                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                  <Tag className="h-3.5 w-3.5" /> Manufacturer Variants
-                                </h4>
-                                <div className="rounded-lg border border-border overflow-hidden bg-background">
-                                  <table className="w-full text-xs">
-                                    <thead className="bg-muted/40 text-muted-foreground">
-                                      <tr>
-                                        <th className="px-3 py-2 text-left font-semibold">Manufacturer</th>
-                                        <th className="px-3 py-2 text-left font-semibold">Part No.</th>
-                                        <th className="px-3 py-2 text-right font-semibold">Stock</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-border">
-                                      {item.brands.map((b) => (
-                                        <tr key={b.partNo}>
-                                          <td className="px-3 py-2 font-semibold">{b.brand}</td>
-                                          <td className="px-3 py-2 font-mono text-muted-foreground">{b.partNo}</td>
-                                          <td className="px-3 py-2 text-right font-mono">{b.stock.toLocaleString()}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-
-                              {/* Suppliers */}
-                              <div className="space-y-3">
-                                <h4 className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                                  <Truck className="h-3.5 w-3.5" /> Supplier Coverage
-                                </h4>
-                                <div className="rounded-lg border border-border overflow-hidden bg-background">
-                                  <table className="w-full text-xs">
-                                    <thead className="bg-muted/40 text-muted-foreground">
-                                      <tr>
-                                        <th className="px-3 py-2 text-left font-semibold">Supplier</th>
-                                        <th className="px-3 py-2 text-right font-semibold">Price</th>
-                                        <th className="px-3 py-2 text-right font-semibold">Lead</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-border">
-                                      {item.suppliers.map((s) => (
-                                        <tr key={s.supplier}>
-                                          <td className="px-3 py-2">
-                                            <span className="font-semibold block">{s.supplier}</span>
-                                            <span className="text-muted-foreground">{s.brand}</span>
-                                          </td>
-                                          <td className="px-3 py-2 text-right font-mono font-semibold text-primary">{s.price}</td>
-                                          <td className="px-3 py-2 text-right font-mono text-muted-foreground">{s.leadTime}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                                {item.suppliers.length === 1 && (
-                                  <div className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400 font-medium">
-                                    <AlertCircle className="h-3.5 w-3.5" />
-                                    Single supplier — sourcing risk
-                                  </div>
-                                )}
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-xs font-semibold w-full cursor-pointer"
-                                  render={<Link href={`/components/details?component=${encodeURIComponent(item.id)}&from=inventory`} />}
-                                >
-                                  View full item record
-                                  <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
-                                </Button>
-                              </div>
-                            </div>
-
-                            {/* Transaction history */}
-                            <div className="mt-6">
-                              <TransactionHistoryTable componentId={item.genericPN} transactions={transactions} />
-                            </div>
+                            )}
                           </td>
                         </tr>
                       )}
                     </React.Fragment>
                   )
                 })}
-
-                {rows.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-16 text-center">
-                      <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                        <Search className="h-8 w-8 opacity-30" />
-                        <span className="text-sm font-medium">No items match your search</span>
-                        <span className="text-xs">Try a different term or reset the filters</span>
-                        <Button variant="outline" size="sm" className="mt-2 cursor-pointer" onClick={() => { clearSearch(); setCategory("All"); setStatusFilter("All"); setExpiringOnly(false) }}>
-                          Reset filters
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
+                {!loading && rows.length === 0 && (
+                  <tr><td colSpan={11} className="px-6 py-16 text-center">
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <Search className="h-8 w-8 opacity-30" />
+                      <span className="text-sm font-medium">{error ? "Failed to load inventory" : "No items match your search"}</span>
+                      {error && <span className="text-xs font-mono">{error}</span>}
+                      {!error && <Button variant="outline" size="sm" className="mt-2" onClick={() => { setQuery(""); setTypeFilter("all"); setStatusFilter("All") }}>Reset filters</Button>}
+                    </div>
+                  </td></tr>
                 )}
               </tbody>
             </table>
           </DragScrollArea>
-
-          {/* Footer summary */}
-          {rows.length > 0 && (
+          {!loading && rows.length > 0 && (
             <div className="flex flex-col gap-2 border-t border-border bg-muted/20 px-6 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-              <span>
-                Showing <strong className="text-foreground font-mono">{rows.length}</strong> of{" "}
-                <strong className="text-foreground font-mono">{INVENTORY.length}</strong> items
-              </span>
-              <span className="flex items-center gap-1.5">
-                <DollarSign className="h-3.5 w-3.5" />
-                Filtered value:{" "}
-                <strong className="text-foreground font-mono">
-                  {formatINR(rows.reduce((s, i) => s + i.stock * i.unitCost, 0))}
-                </strong>
-              </span>
+              <span>Showing <strong className="text-foreground font-mono">{rows.length}</strong> of <strong className="text-foreground font-mono">{items.length}</strong> items</span>
+              <span>Filtered value: <strong className="text-foreground font-mono">{formatINR(rows.reduce((s, i) => s + i.stockValue, 0))}</strong></span>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Stock in/out modal */}
-      {move && (() => {
-        const comp = d.getComponent(move.componentId)
-        if (!comp) return null
-        return (
-          <StockMoveModal
-            mode={move.mode}
-            componentId={comp.genericPN}
-            componentName={comp.name}
-            brandStocks={brandStocksFor(comp, onHandByVariant)}
-            onSubmit={handleMoveSubmit}
-            onClose={() => setMove(null)}
-          />
-        )
-      })()}
+      {move && (
+        <ItemStockMoveDialog
+          mode={move.mode}
+          item={move.item}
+          onClose={() => setMove(null)}
+          onDone={(msg) => { setMove(null); showToast(msg); void load(); if (expanded) void loadBreakdown(expanded) }}
+        />
+      )}
 
-      {/* Toast */}
       {toast && (
         <div className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-2.5 text-sm font-medium shadow-lg animate-in fade-in slide-in-from-bottom-2">
-          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-          {toast}
+          <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />{toast}
         </div>
       )}
     </div>

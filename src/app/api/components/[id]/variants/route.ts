@@ -14,6 +14,7 @@ const Body = z.object({
   brand: z.string().trim().min(1),
   partNo: z.string().trim().min(1),
   stock: z.number().nonnegative().optional(),
+  openingLocationId: z.string().uuid().nullable().optional(),
 });
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {

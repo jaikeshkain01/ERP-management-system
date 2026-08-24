@@ -150,23 +150,29 @@ async function guarded<T>(perm: string, fn: (tx: TxClient, ctx: TenantContext) =
   });
 }
 
+// Balances now key on item_variant_id (the universal stock key populated for
+// every row by F3/F5.4), sourcing identity from `items` — so universally-created
+// items appear alongside legacy component-backed ones. Field names in the
+// SELECT are kept as `componentId`/`genericPN`/`componentName` so the Inventory
+// UI (BalanceView) needs no change; they now come from `items`. Brand is
+// LEFT-joined (manufactured variants have no brand).
 function balanceSelect(where: Prisma.Sql) {
   return Prisma.sql`
-    SELECT ib.component_brand_variant_id AS "variantId",
-      c.id AS "componentId", c.generic_pn AS "genericPN", c.name AS "componentName",
-      b.id AS "brandId", b.slug AS "brandSlug", v.part_no AS "partNo",
+    SELECT ib.item_variant_id AS "variantId",
+      i.id AS "componentId", COALESCE(i.generic_pn, i.code) AS "genericPN", i.name AS "componentName",
+      iv.brand_id AS "brandId", COALESCE(b.slug, '') AS "brandSlug", iv.part_no AS "partNo",
       ib.warehouse_id AS "warehouseId", w.code AS "warehouseCode",
       ib.location_id AS "locationId", sl.code AS "locationCode",
       ib.on_hand::float8 AS "onHand", ib.reserved::float8 AS reserved,
       ib.available::float8 AS available, ib.damaged::float8 AS damaged
     FROM inventory_balances ib
-    JOIN component_brand_variants v ON v.id = ib.component_brand_variant_id
-    JOIN components c ON c.id = v.component_id
-    JOIN brands b ON b.id = v.brand_id
+    JOIN item_variants iv ON iv.id = ib.item_variant_id
+    JOIN items i ON i.id = iv.item_id
+    LEFT JOIN brands b ON b.id = iv.brand_id
     JOIN warehouses w ON w.id = ib.warehouse_id
     JOIN storage_locations sl ON sl.id = ib.location_id
     WHERE ib.deleted_at IS NULL ${where}
-    ORDER BY c.name, b.slug`;
+    ORDER BY i.name, b.slug NULLS FIRST`;
 }
 
 /** Resolve a variant UUID from its business keys (generic P/N + brand slug/id/name), creating variant if missing. */
@@ -239,9 +245,11 @@ async function warehouseForLocation(tx: TxClient, locationId: string): Promise<s
 }
 
 async function availableAt(tx: TxClient, variantId: string, locationId: string): Promise<number> {
+  // `variantId` here is the item_variant_id (universal stock key). Balances are
+  // keyed on it (F5.4), so this resolves for both legacy and universal items.
   const rows = await tx.$queryRaw<{ available: number }[]>`
     SELECT available::float8 AS available FROM inventory_balances
-    WHERE component_brand_variant_id = ${variantId}::uuid AND location_id = ${locationId}::uuid AND deleted_at IS NULL`;
+    WHERE item_variant_id = ${variantId}::uuid AND location_id = ${locationId}::uuid AND deleted_at IS NULL`;
   return rows[0]?.available ?? 0;
 }
 
@@ -249,8 +257,10 @@ async function availableAt(tx: TxClient, variantId: string, locationId: string):
 export async function listBalances(f: BalanceFilters): Promise<BalanceView[]> {
   return guarded("inventory.view", async (tx) => {
     const cond: Prisma.Sql[] = [];
-    if (f.componentId && isUuid(f.componentId)) cond.push(Prisma.sql`AND c.id = ${f.componentId}::uuid`);
-    if (f.variantId) cond.push(Prisma.sql`AND ib.component_brand_variant_id = ${f.variantId}::uuid`);
+    // `componentId` filter now matches the item id (item.id == component.id for
+    // backfilled items, so legacy callers still resolve correctly).
+    if (f.componentId && isUuid(f.componentId)) cond.push(Prisma.sql`AND i.id = ${f.componentId}::uuid`);
+    if (f.variantId) cond.push(Prisma.sql`AND ib.item_variant_id = ${f.variantId}::uuid`);
     if (f.warehouseId) cond.push(Prisma.sql`AND ib.warehouse_id = ${f.warehouseId}::uuid`);
     if (f.locationId) cond.push(Prisma.sql`AND ib.location_id = ${f.locationId}::uuid`);
     return tx.$queryRaw<BalanceView[]>(balanceSelect(cond.length ? Prisma.join(cond, " ") : Prisma.empty));
@@ -260,25 +270,26 @@ export async function listBalances(f: BalanceFilters): Promise<BalanceView[]> {
 export async function listLedger(f: LedgerFilters): Promise<LedgerView[]> {
   return guarded("inventory.view", async (tx) => {
     const cond: Prisma.Sql[] = [];
-    if (f.variantId) cond.push(Prisma.sql`AND it.component_brand_variant_id = ${f.variantId}::uuid`);
+    if (f.variantId) cond.push(Prisma.sql`AND it.item_variant_id = ${f.variantId}::uuid`);
     if (f.warehouseId) cond.push(Prisma.sql`AND it.warehouse_id = ${f.warehouseId}::uuid`);
     if (f.locationId) cond.push(Prisma.sql`AND it.location_id = ${f.locationId}::uuid`);
     if (f.type) cond.push(Prisma.sql`AND it.type = ${f.type}::inventory_txn_type`);
     if (f.from) cond.push(Prisma.sql`AND it.created_at >= ${f.from}::timestamptz`);
     if (f.to) cond.push(Prisma.sql`AND it.created_at <= ${f.to}::timestamptz`);
     const limit = Math.min(Math.max(f.limit ?? 200, 1), 1000);
+    // Ledger keyed on item_variant_id → shows movements for universal items too.
     return tx.$queryRaw<LedgerView[]>`
-      SELECT it.id, it.type, it.component_brand_variant_id AS "variantId",
-        v.component_id AS "componentId", c.generic_pn AS "genericPN", v.brand_id AS "brandId",
-        b.slug AS "brandSlug",
+      SELECT it.id, it.type, it.item_variant_id AS "variantId",
+        iv.item_id AS "componentId", COALESCE(i.generic_pn, i.code) AS "genericPN", iv.brand_id AS "brandId",
+        COALESCE(b.slug, '') AS "brandSlug",
         it.warehouse_id AS "warehouseId", it.location_id AS "locationId",
         it.qty_delta::float8 AS "qtyDelta", it.transfer_group_id AS "transferGroupId",
         it.ref_type AS "refType", it.ref_id AS "refId", it.grn_no AS "grnNo",
         it.reason, it.note, il.lot_no AS "lotNo", sup.slug AS "supplierSlug", it.created_at AS "createdAt"
       FROM inventory_transactions it
-      JOIN component_brand_variants v ON v.id = it.component_brand_variant_id
-      JOIN components c ON c.id = v.component_id
-      JOIN brands b ON b.id = v.brand_id
+      JOIN item_variants iv ON iv.id = it.item_variant_id
+      JOIN items i ON i.id = iv.item_id
+      LEFT JOIN brands b ON b.id = iv.brand_id
       LEFT JOIN item_lots il ON il.id = it.lot_id
       LEFT JOIN suppliers sup ON sup.id = il.supplier_id
       WHERE 1 = 1 ${cond.length ? Prisma.join(cond, " ") : Prisma.empty}
@@ -338,22 +349,25 @@ export async function getComponentStock(idOrPn: string): Promise<ComponentStockV
 
 // ── write path ───────────────────────────────────────────────────────────────
 
-/** Resolve (or create) the lot for an inbound movement. Blank lotNo → auto-generated. */
+/** Resolve (or create) the lot for an inbound movement. Blank lotNo → auto-generated.
+ *  Keyed on item_variant_id (universal); `cbvId` (nullable) is stored alongside so
+ *  legacy lots keep both columns and universal lots carry only item_variant_id. */
 async function resolveInboundLot(
   tx: TxClient,
   ctx: TenantContext,
-  variantId: string,
+  ivId: string,
+  cbvId: string | null,
   opts: { lotNo?: string; expiryDate?: string; unitCost?: number; supplierId?: string | null },
 ): Promise<string> {
   let lotNo = (opts.lotNo ?? "").trim();
   if (!lotNo) lotNo = `LOT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomUUID().slice(0, 4).toUpperCase()}`;
   const found = await tx.$queryRaw<{ id: string }[]>`
     SELECT id FROM item_lots WHERE company_id = ${ctx.companyId!}::uuid
-      AND component_brand_variant_id = ${variantId}::uuid AND lot_no = ${lotNo} AND deleted_at IS NULL LIMIT 1`;
+      AND item_variant_id = ${ivId}::uuid AND lot_no = ${lotNo} AND deleted_at IS NULL LIMIT 1`;
   if (found[0]) return found[0].id;
   const ins = await tx.$queryRaw<{ id: string }[]>`
-    INSERT INTO item_lots (company_id, component_brand_variant_id, lot_no, supplier_id, expiry_date, unit_cost, created_by, updated_by)
-    VALUES (${ctx.companyId!}::uuid, ${variantId}::uuid, ${lotNo}, ${opts.supplierId ?? null}::uuid, ${opts.expiryDate ?? null}::date, ${opts.unitCost ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+    INSERT INTO item_lots (company_id, component_brand_variant_id, item_variant_id, lot_no, supplier_id, expiry_date, unit_cost, created_by, updated_by)
+    VALUES (${ctx.companyId!}::uuid, ${cbvId}::uuid, ${ivId}::uuid, ${lotNo}, ${opts.supplierId ?? null}::uuid, ${opts.expiryDate ?? null}::date, ${opts.unitCost ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
     RETURNING id`;
   return ins[0].id;
 }
@@ -361,12 +375,13 @@ async function resolveInboundLot(
 /** FEFO lot pick for an outbound move: the lot with positive derived on-hand at
  *  this location, earliest expiry first (then oldest). null → trigger fallback. */
 export async function pickOutboundLot(tx: TxClient, ctx: TenantContext, variantId: string, locationId: string): Promise<string | null> {
+  // `variantId` is the item_variant_id (universal). Keyed on it throughout.
   const rows = await tx.$queryRaw<{ id: string }[]>`
     SELECT il.id
     FROM item_lots il
     JOIN inventory_transactions t ON t.lot_id = il.id
-     AND t.component_brand_variant_id = ${variantId}::uuid AND t.location_id = ${locationId}::uuid
-    WHERE il.company_id = ${ctx.companyId!}::uuid AND il.component_brand_variant_id = ${variantId}::uuid AND il.deleted_at IS NULL
+     AND t.item_variant_id = ${variantId}::uuid AND t.location_id = ${locationId}::uuid
+    WHERE il.company_id = ${ctx.companyId!}::uuid AND il.item_variant_id = ${variantId}::uuid AND il.deleted_at IS NULL
     GROUP BY il.id, il.expiry_date, il.created_at
     HAVING SUM(t.qty_delta) > 0
     ORDER BY il.expiry_date NULLS LAST, il.created_at
@@ -376,40 +391,57 @@ export async function pickOutboundLot(tx: TxClient, ctx: TenantContext, variantI
 
 export async function createInventoryTransaction(input: InventoryTxnInput) {
   return guarded("inventory.create", async (tx, ctx) => {
-    const variantId = input.variantId ?? (await resolveVariantByKeys(tx, input.genericPN!, input.brandSlug!));
-    const variant = await tx.component_brand_variants.findFirst({ where: { id: variantId, deleted_at: null }, select: { id: true } });
-    if (!variant) throw Errors.badRequest("Unknown variant", { variantId });
+    // Resolve to the UNIVERSAL stock key (item_variant_id) plus the optional
+    // legacy CBV id. `input.variantId` may be an item_variant id (universal
+    // item) OR a legacy CBV id — F2 reused CBV.id as item_variant.id, so for
+    // legacy items they're equal; for universal-only items there is no CBV.
+    const { ivId, cbvId } = await resolveStockVariant(tx, input);
 
-    const base = { company_id: ctx.companyId!, component_brand_variant_id: variantId, created_by: ctx.userId };
+    // Both columns are set explicitly on every INSERT so the row is valid for
+    // legacy AND universal items (the sync trigger becomes a no-op). Prisma's
+    // generated client has no `item_variant_id` (post-baseline column), so all
+    // inserts go through raw SQL.
+    const txnCols = Prisma.sql`(company_id, type, component_brand_variant_id, item_variant_id, warehouse_id, location_id, qty_delta, transfer_group_id, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)`;
     const touched: { locationId: string }[] = [];
 
     if (input.type === "TRANSFER") {
       const fromWh = await warehouseForLocation(tx, input.fromLocationId!);
       const toWh = await warehouseForLocation(tx, input.toLocationId!);
       const qty = input.qty!;
-      const avail = await availableAt(tx, variantId, input.fromLocationId!);
+      const avail = await availableAt(tx, ivId, input.fromLocationId!);
       if (avail < qty) throw Errors.conflict(
         "Insufficient available stock at source",
         { available: avail, requested: qty },
         `Only ${avail} available at the source location — reduce the transfer qty or transfer from a different location.`,
       );
       const group = randomUUID();
-      await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: fromWh, location_id: input.fromLocationId!, qty_delta: -qty, transfer_group_id: group, note: input.note ?? null } });
-      await tx.inventory_transactions.create({ data: { ...base, type: "TRANSFER", warehouse_id: toWh, location_id: input.toLocationId!, qty_delta: qty, transfer_group_id: group, note: input.note ?? null } });
+      // Outbound leg needs a lot (FEFO) so append-only lot tracking holds; inbound leg reuses it.
+      const outLot = await pickOutboundLot(tx, ctx, ivId, input.fromLocationId!);
+      await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+        ${ctx.companyId!}::uuid, 'TRANSFER'::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${fromWh}::uuid, ${input.fromLocationId!}::uuid,
+        ${-qty}, ${group}::uuid, ${outLot}::uuid, NULL, NULL, NULL, NULL, ${input.note ?? null}, ${ctx.userId}::uuid)`);
+      await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+        ${ctx.companyId!}::uuid, 'TRANSFER'::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${toWh}::uuid, ${input.toLocationId!}::uuid,
+        ${qty}, ${group}::uuid, ${outLot}::uuid, NULL, NULL, NULL, NULL, ${input.note ?? null}, ${ctx.userId}::uuid)`);
       touched.push({ locationId: input.fromLocationId! }, { locationId: input.toLocationId! });
     } else if (input.type === "ADJUSTMENT") {
       const locationId = input.locationId ?? (await defaultLocation(tx));
       const wh = await warehouseForLocation(tx, locationId);
       const delta = input.qtyDelta!;
       if (delta < 0) {
-        const avail = await availableAt(tx, variantId, locationId);
+        const avail = await availableAt(tx, ivId, locationId);
         if (avail < -delta) throw Errors.conflict(
           "Insufficient available stock",
           { available: avail, requested: -delta },
           `Only ${avail} available at this location — reduce the quantity or receive more stock first.`,
         );
       }
-      await tx.inventory_transactions.create({ data: { ...base, type: "ADJUSTMENT", warehouse_id: wh, location_id: locationId, qty_delta: delta, reason: input.reason ?? null, note: input.note ?? null } });
+      // Negative adjustment picks a FEFO lot; positive adjustment lets the
+      // default-lot trigger assign LOT-UNASSIGNED (lot_id NULL here).
+      const adjLot = delta < 0 ? await pickOutboundLot(tx, ctx, ivId, locationId) : null;
+      await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+        ${ctx.companyId!}::uuid, 'ADJUSTMENT'::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+        ${delta}, NULL, ${adjLot}::uuid, NULL, NULL, NULL, ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
       touched.push({ locationId });
     } else {
       const locationId = input.locationId ?? (await defaultLocation(tx));
@@ -417,7 +449,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
       const qty = input.qty!;
       const delta = POSITIVE_TYPES.has(input.type) ? qty : NEGATIVE_TYPES.has(input.type) ? -qty : qty;
       if (delta < 0) {
-        const avail = await availableAt(tx, variantId, locationId);
+        const avail = await availableAt(tx, ivId, locationId);
         if (avail < -delta) throw Errors.conflict(
           "Insufficient available stock",
           { available: avail, requested: -delta },
@@ -433,15 +465,14 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
             SELECT id FROM suppliers WHERE company_id = ${ctx.companyId!}::uuid AND slug = ${input.supplierSlug} AND deleted_at IS NULL LIMIT 1`;
           supplierId = s[0]?.id ?? null;
         }
-        const lotId = await resolveInboundLot(tx, ctx, variantId, {
+        const lotId = await resolveInboundLot(tx, ctx, ivId, cbvId, {
           lotNo: input.lotNo, expiryDate: input.expiryDate, unitCost: input.unitCost, supplierId,
         });
-        await tx.$executeRaw`
-          INSERT INTO inventory_transactions
-            (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
-          VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
-                  ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
-                  ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+        await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+          ${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+          ${delta}, NULL, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+          ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
+        touched.push({ locationId });
       } else if (input.lotAllocations && input.lotAllocations.length > 0) {
         // Outbound MULTI-LOT: caller manually split across lots. Validate sum
         // matches qty and each lot has stock at the source location, then emit
@@ -456,7 +487,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
         }
         for (const alloc of input.lotAllocations) {
           const rows = await tx.$queryRaw<{ variantId: string; onHandAtLoc: number }[]>`
-            SELECT il.component_brand_variant_id AS "variantId",
+            SELECT il.item_variant_id AS "variantId",
                    COALESCE((
                      SELECT SUM(t.qty_delta)::float8 FROM inventory_transactions t
                      WHERE t.lot_id = il.id AND t.location_id = ${locationId}::uuid
@@ -465,7 +496,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
             WHERE il.id = ${alloc.lotId}::uuid AND il.deleted_at IS NULL
               AND il.company_id = ${ctx.companyId!}::uuid`;
           if (!rows[0]) throw Errors.notFound("Lot");
-          if (rows[0].variantId !== variantId) {
+          if (rows[0].variantId !== ivId) {
             throw Errors.badRequest(
               "One of the picked lots belongs to a different variant",
               undefined,
@@ -481,12 +512,10 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
           }
         }
         for (const alloc of input.lotAllocations) {
-          await tx.$executeRaw`
-            INSERT INTO inventory_transactions
-              (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
-            VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
-                    ${-alloc.qty}, ${alloc.lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
-                    ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+          await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+            ${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+            ${-alloc.qty}, NULL, ${alloc.lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+            ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
         }
         touched.push({ locationId });
       } else {
@@ -495,7 +524,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
         let lotId: string | null;
         if (input.lotId) {
           const rows = await tx.$queryRaw<{ variantId: string; onHandAtLoc: number }[]>`
-            SELECT il.component_brand_variant_id AS "variantId",
+            SELECT il.item_variant_id AS "variantId",
                    COALESCE((
                      SELECT SUM(t.qty_delta)::float8 FROM inventory_transactions t
                      WHERE t.lot_id = il.id AND t.location_id = ${locationId}::uuid
@@ -504,7 +533,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
             WHERE il.id = ${input.lotId}::uuid AND il.deleted_at IS NULL
               AND il.company_id = ${ctx.companyId!}::uuid`;
           if (!rows[0]) throw Errors.notFound("Lot");
-          if (rows[0].variantId !== variantId) {
+          if (rows[0].variantId !== ivId) {
             throw Errors.badRequest(
               "Selected lot belongs to a different variant of this item",
               undefined,
@@ -520,23 +549,54 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
           }
           lotId = input.lotId;
         } else {
-          lotId = await pickOutboundLot(tx, ctx, variantId, locationId);
+          lotId = await pickOutboundLot(tx, ctx, ivId, locationId);
         }
-        await tx.$executeRaw`
-          INSERT INTO inventory_transactions
-            (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)
-          VALUES (${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${variantId}::uuid, ${wh}::uuid, ${locationId}::uuid,
-                  ${delta}, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
-                  ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`;
+        await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
+          ${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
+          ${delta}, NULL, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
+          ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
         touched.push({ locationId });
       }
     }
 
     // return the affected balance rows (post-trigger projection)
     const locIds = [...new Set(touched.map((t) => t.locationId))];
-    const balances = await tx.$queryRaw<BalanceView[]>(
-      balanceSelect(Prisma.sql`AND ib.component_brand_variant_id = ${variantId}::uuid AND ib.location_id IN (${Prisma.join(locIds.map((id) => Prisma.sql`${id}::uuid`))})`),
+    // Defensive: every branch above pushes to `touched`, but never call
+    // Prisma.join with an empty array (it throws) — return no balances instead.
+    const balances = locIds.length === 0 ? [] : await tx.$queryRaw<BalanceView[]>(
+      balanceSelect(Prisma.sql`AND ib.item_variant_id = ${ivId}::uuid AND ib.location_id IN (${Prisma.join(locIds.map((id) => Prisma.sql`${id}::uuid`))})`),
     );
     return { ok: true, type: input.type, balances };
   });
+}
+
+/** Resolve an inventory-transaction request to the universal stock key.
+ *  Returns `ivId` (item_variant_id, always) + `cbvId` (legacy CBV id, or null
+ *  for universal-only items). Accepts either an explicit `variantId` (item_variant
+ *  OR legacy CBV — same uuid for backfilled items) or business keys. */
+async function resolveStockVariant(
+  tx: TxClient,
+  input: InventoryTxnInput,
+): Promise<{ ivId: string; cbvId: string | null }> {
+  if (input.variantId) {
+    const iv = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM item_variants WHERE id = ${input.variantId}::uuid AND deleted_at IS NULL LIMIT 1`;
+    if (!iv[0]) throw Errors.badRequest("Unknown variant", { variantId: input.variantId });
+    const cbv = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM component_brand_variants WHERE id = ${input.variantId}::uuid AND deleted_at IS NULL LIMIT 1`;
+    return { ivId: input.variantId, cbvId: cbv[0]?.id ?? null };
+  }
+  // Business-key path (legacy): resolveVariantByKeys returns a CBV id, which for
+  // backfilled items equals its item_variant id.
+  const cbvId = await resolveVariantByKeys(tx, input.genericPN!, input.brandSlug!);
+  const iv = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM item_variants WHERE id = ${cbvId}::uuid AND deleted_at IS NULL LIMIT 1`;
+  if (!iv[0]) {
+    throw Errors.badRequest(
+      "This component variant has no universal item mirror yet",
+      { cbvId },
+      "It was created via a legacy path that predates the items master. Re-save the component, or run the items backfill.",
+    );
+  }
+  return { ivId: cbvId, cbvId };
 }

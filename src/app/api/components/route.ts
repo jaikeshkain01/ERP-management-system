@@ -52,6 +52,7 @@ const Body = z.object({
   variants: z
     .array(z.object({ brand: z.string().trim().min(1), partNo: z.string().trim().min(1), stock: z.number().nonnegative().optional() }))
     .optional(),
+  openingLocationId: z.string().uuid().nullable().optional(),
 });
 
 export async function POST(req: Request) {
