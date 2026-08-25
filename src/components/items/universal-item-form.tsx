@@ -31,7 +31,7 @@ import {
   ArrowLeft, Save, AlertCircle, CheckCircle2, Info,
   Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory, ShoppingBag,
   Lock, Plus, Trash2, ChevronDown, ChevronRight, Sliders,
-  Copy, Search, Eye, Layers, Link2,
+  Copy, Search, Eye, Layers, Link2, Sparkles,
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { CategoryCascade } from "@/components/category-cascade"
@@ -143,10 +143,16 @@ type SectionKey = "stock" | "specs" | "mfr" | "board" | "packaging" | "storage" 
 // sequence, no remarks. Users add those fields later in the editor.
 interface BomDraftLine {
   key: string
+  /** Set once the row is linked to an existing catalog item. Empty ⇒ the
+   *  row will be created as a NEW item on submit (see submit chain). */
   childItemId: string
+  /** Display fields — reflect the linked item OR the fields the user is
+   *  editing for a new item. `childCode` doubles as the new-item code. */
   childCode: string
   childName: string
   childItemType: string
+  /** Optional generic PN for a new item; ignored when linked. */
+  childGenericPn: string
   qty: string
   refDes: string
 }
@@ -380,7 +386,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
 
   const newBomLine = (): BomDraftLine => ({
     key: `bom-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))}`,
-    childItemId: "", childCode: "", childName: "", childItemType: "raw",
+    childItemId: "", childCode: "", childName: "", childItemType: "raw", childGenericPn: "",
     qty: "1", refDes: "",
   })
   const addBomLine = () => setBomLines((prev) => [...prev, newBomLine()])
@@ -388,11 +394,30 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const patchBomLine = (key: string, patch: Partial<BomDraftLine>) =>
     setBomLines((prev) => prev.map((l) => l.key === key ? { ...l, ...patch } : l))
 
-  // Typing in Name: update text, clear any prior link. Query drives the
-  // typeahead dropdown for THIS row only (openRow gates visibility).
+  // Typing in Name: update text, clear any prior link, and auto-suggest a
+  // code from the typed name + current type. User can override Code before
+  // submit. Query drives the typeahead dropdown for THIS row only.
   const onBomNameChange = (key: string, value: string) => {
-    patchBomLine(key, { childName: value, childItemId: "", childCode: "", childItemType: "raw" })
+    setBomLines((prev) => prev.map((l) => {
+      if (l.key !== key) return l
+      // Only re-suggest the code if the user hasn't hand-edited it away
+      // from what a prior suggestion would have produced (or if it's empty).
+      const priorSuggest = suggestCode(l.childName, l.childItemType as ItemType)
+      const codeIsAutoSuggested = !l.childCode || l.childCode === priorSuggest
+      const nextCode = codeIsAutoSuggested ? suggestCode(value, l.childItemType as ItemType) : l.childCode
+      return { ...l, childName: value, childItemId: "", childCode: nextCode }
+    }))
     setBomOpenRow(value.trim() ? key : null)
+  }
+
+  const onBomTypeChange = (key: string, value: string) => {
+    setBomLines((prev) => prev.map((l) => {
+      if (l.key !== key) return l
+      const priorSuggest = suggestCode(l.childName, l.childItemType as ItemType)
+      const codeIsAutoSuggested = !l.childCode || l.childCode === priorSuggest
+      const nextCode = codeIsAutoSuggested ? suggestCode(l.childName, value as ItemType) : l.childCode
+      return { ...l, childItemType: value, childCode: nextCode }
+    }))
   }
 
   // Debounced /api/items lookup per open row. Cheap — one query at a time.
@@ -491,15 +516,15 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     const cleanedSpecs = specs.filter((s) => s.key.trim() !== "")
     const cleanedMfrs  = mfrRows.filter((r) => r.brand.trim() !== "")
 
-    // BOM guard: any row where the user typed a name but never picked a
-    // match from the typeahead is a hard error — item_bom_lines.child_item_id
-    // is a NOT NULL FK, we cannot ship those to the server.
+    // BOM guard: unlinked rows are legal (we auto-create the child item on
+    // submit) as long as they have enough detail. Every unlinked row needs
+    // at minimum a name; code is auto-suggested when blank. Rows with no
+    // name at all are dropped as empty draft rows.
     if (bomOpen) {
-      const unlinked = bomLines.filter((l) => l.childName.trim() !== "" && !l.childItemId)
-      if (unlinked.length > 0) {
+      const bad = bomLines.filter((l) => !l.childItemId && l.childName.trim() !== "" && !l.childItemType)
+      if (bad.length > 0) {
         return showToast({
-          message: `Pick a catalog match for ${unlinked.length} BOM line${unlinked.length === 1 ? "" : "s"}`,
-          hint: unlinked.map((l) => `"${l.childName}"`).join(", ") + " — start typing again to pick from the dropdown, or remove the row.",
+          message: `Pick a type for ${bad.length} new BOM item${bad.length === 1 ? "" : "s"}`,
           type: "error",
         })
       }
@@ -619,40 +644,92 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
         }
       }
 
-      // Chain BOM POST + PATCH — add-mode only. Any valid line in the
-      // section seeds a Draft version. On any failure we surface it in the
-      // toast but the item itself stays created (partial success).
+      // Chain BOM: for each row, resolve childItemId. Linked rows use it
+      // directly; unlinked rows POST a new /api/items first with the
+      // minimum viable fields (name + code + type) then use the returned
+      // id. Rows that can't be created are dropped and reported.
+      //
+      // Sequence: item POST → mfr POSTs → child-item POSTs → /bom POST
+      // (create Draft) → PATCH /bom/[versionId] with the resolved lines.
       let bomVersionId: string | null = null
-      const validBomLines = bomLines.filter(
-        (l) => l.childItemId && Number.isFinite(Number(l.qty)) && Number(l.qty) > 0,
+      const submittableRows = bomLines.filter(
+        (l) => (l.childItemId || l.childName.trim()) &&
+               Number.isFinite(Number(l.qty)) && Number(l.qty) > 0,
       )
-      if (!isEdit && bomApplicable && openSections.has("bom") && savedId && validBomLines.length > 0) {
+      if (!isEdit && bomApplicable && openSections.has("bom") && savedId && submittableRows.length > 0) {
         try {
-          const cRes = await fetch(`/api/items/${savedId}/bom`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
-          })
-          const cBody = await cRes.json().catch(() => null)
-          if (!cRes.ok) {
-            failed.push(`BOM version: ${extractError(cBody, "failed to create version").message}`)
-          } else {
-            bomVersionId = (cBody?.data?.selectedVersionId as string | null) ?? null
-            if (bomVersionId) {
-              const pRes = await fetch(`/api/items/${savedId}/bom/${bomVersionId}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  lines: validBomLines.map((l) => ({
-                    childItemId: l.childItemId,
-                    qty: Number(l.qty),
-                    refDes: l.refDes.trim() || null,
-                  })),
-                }),
+          // Resolve child ids for every row: pre-create the unlinked ones.
+          const resolved: { childItemId: string; qty: number; refDes: string }[] = []
+          for (const l of submittableRows) {
+            if (l.childItemId) {
+              resolved.push({
+                childItemId: l.childItemId,
+                qty: Number(l.qty),
+                refDes: l.refDes.trim() || l.refDes,
               })
-              if (!pRes.ok) {
-                const pBody = await pRes.json().catch(() => null)
-                failed.push(`BOM lines: ${extractError(pBody, "failed to save lines").message}`)
+              continue
+            }
+            // New item creation. Auto-suggest code if the user left it blank.
+            const childName = l.childName.trim()
+            const childCode = (l.childCode.trim() || suggestCode(childName, l.childItemType as ItemType))
+            if (!childCode) {
+              failed.push(`BOM child "${childName}": couldn't generate a code`)
+              continue
+            }
+            const cRes = await fetch(`/api/items`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: childName,
+                code: childCode,
+                itemType: l.childItemType,
+                genericPn: l.childGenericPn.trim() || null,
+              }),
+            })
+            const cBody = await cRes.json().catch(() => null)
+            if (!cRes.ok) {
+              failed.push(`BOM child "${childName}": ${extractError(cBody, "failed to create").message}`)
+              continue
+            }
+            const newChildId = cBody?.data?.id as string | undefined
+            if (!newChildId) {
+              failed.push(`BOM child "${childName}": server did not return an id`)
+              continue
+            }
+            resolved.push({
+              childItemId: newChildId,
+              qty: Number(l.qty),
+              refDes: l.refDes.trim() || l.refDes,
+            })
+          }
+
+          if (resolved.length > 0) {
+            const vRes = await fetch(`/api/items/${savedId}/bom`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            })
+            const vBody = await vRes.json().catch(() => null)
+            if (!vRes.ok) {
+              failed.push(`BOM version: ${extractError(vBody, "failed to create version").message}`)
+            } else {
+              bomVersionId = (vBody?.data?.selectedVersionId as string | null) ?? null
+              if (bomVersionId) {
+                const pRes = await fetch(`/api/items/${savedId}/bom/${bomVersionId}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    lines: resolved.map((r) => ({
+                      childItemId: r.childItemId,
+                      qty: r.qty,
+                      refDes: r.refDes.trim() || null,
+                    })),
+                  }),
+                })
+                if (!pRes.ok) {
+                  const pBody = await pRes.json().catch(() => null)
+                  failed.push(`BOM lines: ${extractError(pBody, "failed to save lines").message}`)
+                }
               }
             }
           }
@@ -1347,15 +1424,16 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               </div>
             </CardHeader>
             <CardContent className="p-6 space-y-3">
-              <div className="border border-border rounded-lg overflow-visible">
-                <table className="w-full text-left text-xs">
+              <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
+                <table className="w-full text-left text-xs min-w-[1000px]">
                   <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
                     <tr>
-                      <th className="px-2 py-2 min-w-[260px]">Name</th>
-                      <th className="px-2 py-2 w-28">Code</th>
-                      <th className="px-2 py-2 w-24">Type</th>
+                      <th className="px-2 py-2 min-w-[220px]">Name</th>
+                      <th className="px-2 py-2 w-32">Code</th>
+                      <th className="px-2 py-2 w-28">Type</th>
+                      <th className="px-2 py-2 w-32">Generic PN</th>
                       <th className="px-2 py-2 w-16 text-center">Qty</th>
-                      <th className="px-2 py-2 w-40">Ref des</th>
+                      <th className="px-2 py-2 w-36">Ref des</th>
                       <th className="px-2 py-2 w-8" />
                     </tr>
                   </thead>
@@ -1401,16 +1479,46 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                               )}
                               {!linked && l.childName.trim() && (
                                 <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
-                                  <AlertCircle className="h-3 w-3" /> Pick a match — BOM lines must reference an existing item
+                                  <Sparkles className="h-3 w-3" /> New item — will be created on submit
                                 </span>
                               )}
                             </div>
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input value={l.childCode} readOnly className="h-8 text-xs font-mono bg-muted/20" disabled={!linked} />
+                            <Input
+                              value={l.childCode}
+                              onChange={(e) => patchBomLine(l.key, { childCode: e.target.value })}
+                              readOnly={linked}
+                              placeholder={linked ? "" : "auto"}
+                              className={`h-8 text-xs font-mono ${linked ? "bg-muted/20" : ""}`}
+                            />
                           </td>
                           <td className="px-2 py-1.5">
-                            <Input value={linked ? l.childItemType.replace("_", " ") : ""} readOnly className="h-8 text-xs bg-muted/20" disabled={!linked} />
+                            {linked ? (
+                              <Input value={l.childItemType.replace("_", " ")} readOnly className="h-8 text-xs bg-muted/20" />
+                            ) : (
+                              <select
+                                value={l.childItemType}
+                                onChange={(e) => onBomTypeChange(l.key, e.target.value)}
+                                className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+                              >
+                                <option value="raw">Raw</option>
+                                <option value="semi_assembled">Sub-assembly</option>
+                                <option value="assembled">Assembled</option>
+                                <option value="consumable">Consumable</option>
+                                <option value="asset">Asset</option>
+                                <option value="packaging">Packaging</option>
+                              </select>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              value={l.childGenericPn}
+                              onChange={(e) => patchBomLine(l.key, { childGenericPn: e.target.value })}
+                              readOnly={linked}
+                              placeholder={linked ? "" : "e.g. 10K-0603-1%"}
+                              className={`h-8 text-xs font-mono ${linked ? "bg-muted/20" : ""}`}
+                            />
                           </td>
                           <td className="px-2 py-1.5">
                             <Input
@@ -1445,7 +1553,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                     })}
                     {bomLines.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                        <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
                           No lines. Click <b>Add line</b> to start.
                         </td>
                       </tr>
@@ -1455,7 +1563,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               </div>
 
               <p className="text-[10px] text-muted-foreground">
-                <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item.
+                <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item ·{" "}
+                <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created and added to the catalog.
                 Preferred brand, sequence and remarks aren&apos;t captured here — pick them up in the BOM editor after creation.
               </p>
             </CardContent>
