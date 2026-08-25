@@ -19,23 +19,33 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (end of 2026-08-25 session — Slices 1–3 + F6.4 B1 committed)
+## Where we are RIGHT NOW (mid 2026-08-25 session — F6.4 complete, uncommitted)
 
-The **universal-item transformation critical path (F1→F7) is shipped and COMMITTED**. Slices 1–3 of the Stage/Category model AND **F6.4 B1 (universal BOM editor)** are also committed on `main`:
+The **universal-item transformation critical path (F1→F7) is shipped and committed**. Slices 1–3 of the Stage/Category model + **F6.4 B1 (universal BOM editor)** landed earlier this session. **F6.4 B2 → B3 → B4 are now DONE in the working tree** and staged for commit:
 
-- `66f290b` feat(items): typeahead + inline child creation on the BOM editor page  ← this session
-- `29e9f6c` feat(items): create-child-on-submit for unlinked BOM rows              ← this session
-- `c30ca37` refactor(items): match PCB Add-Manually UX for BOM row picker           ← this session
-- `9835463` feat(items): add BOM section to the item add form                        ← this session
-- `67168bf` fix(items): make Edit/Create BOM button reachable on details page        ← this session
-- `91a8d32` feat(items): **universal BOM editor (F6.4 / B1)**                        ← this session
+- `f355484` docs: refresh SESSION-HANDOFF after F6.4 B1 lands                        ← previous session
+- `66f290b` feat(items): typeahead + inline child creation on the BOM editor page
+- `29e9f6c` feat(items): create-child-on-submit for unlinked BOM rows
+- `c30ca37` refactor(items): match PCB Add-Manually UX for BOM row picker
+- `9835463` feat(items): add BOM section to the item add form
+- `67168bf` fix(items): make Edit/Create BOM button reachable on details page
+- `91a8d32` feat(items): **universal BOM editor (F6.4 / B1)**
 - `36f109b` docs: refresh SESSION-HANDOFF after Slices 1–3 land
 - `d197125` feat(items): is_finished_good flag (Slice 3)
 - `0bfa509` feat(items): Stage-driven category picker (Slice 2)
 - `5363bf1` feat(items): categories require a stage (Slice 1)
 - `2916e7c` Refactor code structure and remove redundant changes  ← F1–F7 landed here
 
-Working tree is clean. **7 commits ahead of `origin/main` — not pushed.**
+**7 files modified, uncommitted** — the F6.4 B2/B3/B4 slice:
+- `src/lib/server/data/items.ts` — added `ParentLegacyKind`, `getParentLegacyKind`, `mirrorUniversalBomToLegacy` (Activate → pcb_lines / product_pcbs + lazy-create bom_versions), exported `mirrorLegacyBomToUniversal`.
+- `src/lib/server/data/pcbs.ts` — `updatePcbRevision` mirrors lines + Active-flip (including demoted siblings) into universal; `deletePcbRevision` cascades soft-delete.
+- `src/lib/server/data/products.ts` — `updateProductPcbRevision` mirrors the repoint; `deleteCatalogProduct` cascades soft-delete.
+- `src/lib/server/data/production.ts` — `createProductionOrder` + readiness rewritten on `item_bom_versions` + recursive `item_bom_lines`; orphan-leaf guard; docstring updated.
+- `src/app/items/[id]/bom/page.tsx` — amber "not yet visible to production" banner when `parentLegacyKind === null`.
+- `src/app/pcb-management/structure/page.tsx` — server-redirect to `/items/[id]/bom` for the PCB's Active revision.
+- `src/app/products/structure/page.tsx` — server-redirect to `/items/[id]/bom` for the product.
+
+**Working tree modified (F6.4 slice), NOT yet committed. Push not done — 11 local commits ahead of `origin/main` (7 previous + 4 will land as B2/B3/B4/handoff-update).**
 
 The ERP now has:
 
@@ -92,22 +102,19 @@ Per user's request:
 
 ## Open items — user's roadmap
 
-### F6.4 — BOM write cutover (B1 done; B2 → B3 → B4 remain)
+### F6.4 — BOM write cutover (COMPLETE this session)
 
-- **B2 — Legacy ↔ universal dual-write.** Scoped and waiting on two decisions before code:
-  1. **Direction:** bidirectional (agent-recommended — universal editor becomes trustworthy immediately) vs legacy→universal-only (safer, keeps universal editor "preview").
-  2. **Universal-only parents** (items created via `/items/add` with a BOM, no legacy pcb_revision/product row): show a "not yet visible to production" banner until B3, or reject the save?
-  - **Concrete changes** (bidirectional path):
-    - Legacy PCB structure save on `/pcb-management/structure` → after writing `pcb_lines`, mirror the diff into `item_bom_lines` for the same Active universal version (lazy-create if missing).
-    - Legacy product structure save on `/products/structure` → same shape for `product_pcbs`.
-    - Extend `saveBomLines` + `activateBomVersion` in `items.ts` — on activate of a backfilled parent, mirror Active lines back into `pcb_lines`/`product_pcbs`. Drafts don't touch legacy.
-    - Single new helper `mirrorBom(tx, parentItemId, {toUniversal | toLegacy}, lines)` to keep logic in one place.
-  - **Rule that falls out of the design:** legacy always reflects the currently-Active universal BOM. Nothing else.
-  - **Edge cases named:** cross-editor races (last-writer-wins, killed by B4); universal-only parents (banner or reject); solder/footprint on legacy rows resolved from the child item at write time; sequence and ref_des mirror 1:1.
+- **B2 — Legacy ↔ universal dual-write (SHIPPED).** Bidirectional. Decisions taken: bidirectional direction; **banner** for universal-only parents (no reject, no auto-shadow). Concrete impl:
+  - `mirrorUniversalBomToLegacy(tx, ctx, parentItemId, versionId)` in `items.ts` — called from `activateBomVersion`. Whole-version replace of `pcb_lines` (for pcb-revision parents) or `product_pcbs` (for product parents). Product parents lazy-create the `bom_versions` shadow row when the universal version has no `legacy_bom_version_id`. PCB-revision parents also promote `pcb_revisions.status='Active'` and demote sibling revs; product parents promote/demote `bom_versions.status`.
+  - `mirrorLegacyBomToUniversal(tx, ctx, {kind, id})` in `items.ts` — called from `updatePcbRevision` (per this rev + every demoted sibling), `deletePcbRevision`, `updateProductPcbRevision`, `deleteCatalogProduct`. Whole-version replace; lazy-creates the `item_bom_versions` row if the legacy row post-dates F2.
+  - UI banner ("not yet visible to production") shows on `/items/[id]/bom` whenever `parentLegacyKind === null` (item has no legacy `pcb_revisions` / `products` row) — Activate still works but won't drive production until B3 flips.
+  - **Rule that fell out:** legacy ALWAYS reflects the currently-Active universal BOM, and vice versa. Nothing else.
+  - **Non-mirrored legacy paths** (accepted risk pre-B4): `createPcb`, `createNextRevision`, `createCatalogProduct` — new legacy rows post-B2 don't get an items mirror until F2 runs again. These flows aren't used post-F2 in the current tenants (probe: zero drift).
 
-- **B3 — Production explosion cutover.** `createProductionOrder` in `src/lib/server/data/production.ts` currently reads `pcb_lines` + `product_pcbs`. Switch to `item_bom_versions (Active)` + recursive `item_bom_lines`. Verify same demand shape against ROIP400. Cheap once B2 is stable.
+- **B3 — Production explosion cutover (SHIPPED).** `createProductionOrder` + readiness now recurse `item_bom_lines` from the product's Active `item_bom_versions`. Depth-guarded recursive CTE. Leaves = items with no Active BOM below them; they must exist in `components` (else a clear 409 with `orphanItemIds`). `production_orders.bom_version_id` still snapshots the legacy `bom_versions.id` (via `legacy_bom_version_id`) for historical continuity — NULL when a universal-only product runs (won't happen while B2 lazy-creates the shadow). **Shape check passed** against ROIP400: 17 components, per-unit qtys identical to the legacy explosion.
 
-- **B4 — Legacy retirement.** `/pcb-management/structure` + `/products/structure` become server-redirects to `/items/[id]/bom`. Migration drops `pcb_lines` and `product_pcbs`. One-way; do it only after B3 runs against real production orders for a session.
+- **B4 — Legacy structure page retirement (SHIPPED, partial).** `/pcb-management/structure?pcb=<slug|id>` and `/products/structure?product=<slug|id>` are now Server Components that resolve the parent item's id (Active revision id for PCBs, product id for products) and `redirect()` to `/items/[id]/bom`. Fallback → `/items/list`.
+  - **NOT SHIPPED yet (deliberately gated):** dropping `pcb_lines` / `product_pcbs` tables + deleting legacy data-layer code. Many read paths still exist (dashboard, bootstrap, brands, components.usage, pcbs.ts detail queries). Retire after (a) B3 has driven real production orders for a session, and (b) those read paths are ported to universal — that's a separate slice.
 
 - **B5 (optional)** — Version workflow polish: effective dates, supersede workflow, diff between versions.
 
