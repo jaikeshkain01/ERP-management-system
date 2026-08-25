@@ -30,6 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeft, Plus, Trash2, Layers, GitBranch, CheckCircle2, AlertCircle,
   Cpu, Nut, Package, Boxes, Wrench, Laptop, Save, Undo2, Copy,
+  Link2, Sparkles,
 } from "lucide-react"
 import { extractError } from "@/lib/api-error"
 
@@ -58,20 +59,36 @@ interface Line {
 interface Bom { itemId: string; versions: Version[]; selectedVersionId: string | null; lines: Line[] }
 
 // Local editing shape — new/edited rows share this. `id` is undefined for
-// unsaved additions; server assigns one on PATCH.
+// unsaved additions; server assigns one on PATCH. `childItemId` empty on an
+// unsaved row means the user is CREATING a new catalog item inline —
+// `childCode`, `childItemType`, `childGenericPn` describe that new item and
+// are POSTed to /api/items on save (with minStock: 10, zero opening stock).
 interface DraftLine {
   key: string                    // stable local key for React
   id?: string                    // server id if the line already exists
   childItemId: string
-  childCode: string              // captured at pick time so the picker can close
+  childCode: string              // catalog code (readonly if linked) OR new item's code (editable, auto-suggested)
   childName: string
   childItemType: ItemType
+  childGenericPn: string         // new-item PN; ignored when linked
   qty: string                    // strings so inputs stay controlled
   refDes: string
   preferredBrandId: string       // '' = no preferred brand
   preferredBrandSlug: string | null
   sequence: string
   remarks: string
+}
+
+// Auto-suggest a code from name + type — same shape as universal-item-form
+// so users see consistent patterns whether they're on the add form or here.
+function suggestCode(name: string, itemType: ItemType): string {
+  const slug: Record<ItemType, string> = {
+    raw: "RAW", semi_assembled: "SUB", assembled: "FG",
+    consumable: "CON", asset: "AST", packaging: "PKG",
+  }
+  const namePart = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24)
+  if (!namePart) return ""
+  return `${slug[itemType]}-${namePart}`
 }
 
 const TYPE_META: Record<ItemType, { icon: React.ComponentType<{ className?: string }>; label: string }> = {
@@ -91,6 +108,7 @@ function toDraft(l: Line): DraftLine {
     childCode: l.childCode,
     childName: l.childName,
     childItemType: l.childItemType,
+    childGenericPn: "",
     qty: String(l.qty),
     refDes: l.refDes ?? "",
     preferredBrandId: "",
@@ -170,30 +188,12 @@ export default function ItemBomEditorPage() {
     }
   }
 
-  // ── child picker (typeahead) ──────────────────────────────────────────────
-  const [pickerOpen, setPickerOpen] = React.useState<string | null>(null) // draft key
-  const [query, setQuery] = React.useState("")
-  const [results, setResults] = React.useState<ParentItem[]>([])
-  const [searching, setSearching] = React.useState(false)
-
-  React.useEffect(() => {
-    if (!pickerOpen) return
-    const q = query.trim()
-    let cancelled = false
-    setSearching(true)
-    const t = window.setTimeout(async () => {
-      const url = `/api/items?${new URLSearchParams(q ? { q } : {}).toString()}`
-      const res = await fetch(url, { cache: "no-store" })
-      if (cancelled) return
-      if (res.ok) {
-        const b = await res.json() as { data: ParentItem[] }
-        // Filter out the parent itself (self-loop guard mirrored client-side).
-        setResults(b.data.filter((r) => r.id !== id))
-      }
-      setSearching(false)
-    }, 200)
-    return () => { cancelled = true; window.clearTimeout(t) }
-  }, [query, pickerOpen, id])
+  // ── child picker (typeahead-in-row) ───────────────────────────────────────
+  // Same UX as universal-item-form's BOM section: type in the Name field,
+  // matches appear in a dropdown, click to link. A green Link2 icon marks
+  // linked rows; sparkles marks rows that will be created as new items.
+  const [openRow, setOpenRow] = React.useState<string | null>(null)
+  const [matches, setMatches] = React.useState<Record<string, ParentItem[]>>({})
 
   const loadVariantsForChild = React.useCallback(async (childId: string) => {
     if (variantsByChild[childId]) return
@@ -204,6 +204,26 @@ export default function ItemBomEditorPage() {
     }
   }, [variantsByChild])
 
+  // Debounced /api/items lookup per open row.
+  React.useEffect(() => {
+    if (!openRow) return
+    const row = draftLines.find((l) => l.key === openRow)
+    if (!row) return
+    const q = row.childName.trim()
+    if (!q) { setMatches((prev) => ({ ...prev, [openRow]: [] })); return }
+    let cancelled = false
+    const t = window.setTimeout(async () => {
+      const res = await fetch(`/api/items?q=${encodeURIComponent(q)}`, { cache: "no-store" })
+      if (cancelled) return
+      if (res.ok) {
+        const b = await res.json() as { data: ParentItem[] }
+        // Filter out the parent itself (self-loop guard).
+        setMatches((prev) => ({ ...prev, [openRow]: b.data.filter((r) => r.id !== id).slice(0, 8) }))
+      }
+    }, 180)
+    return () => { cancelled = true; window.clearTimeout(t) }
+  }, [openRow, draftLines, id])
+
   const pickChild = (draftKey: string, picked: ParentItem) => {
     setDraftLines((prev) => prev.map((d) =>
       d.key === draftKey
@@ -211,23 +231,41 @@ export default function ItemBomEditorPage() {
         : d
     ))
     void loadVariantsForChild(picked.id)
-    setPickerOpen(null)
-    setQuery("")
+    setOpenRow(null)
   }
 
   // ── line mutations ────────────────────────────────────────────────────────
   const patchLine = (key: string, patch: Partial<DraftLine>) => {
     setDraftLines((prev) => prev.map((d) => d.key === key ? { ...d, ...patch } : d))
   }
+  // Typing in Name: update text, clear any link, and auto-suggest a code
+  // as long as the user hasn't hand-edited it away from a prior suggestion.
+  const onNameChange = (key: string, value: string) => {
+    setDraftLines((prev) => prev.map((d) => {
+      if (d.key !== key) return d
+      const priorSuggest = suggestCode(d.childName, d.childItemType)
+      const codeIsAutoSuggested = !d.childCode || d.childCode === priorSuggest
+      const nextCode = codeIsAutoSuggested && !d.id ? suggestCode(value, d.childItemType) : d.childCode
+      return { ...d, childName: value, childItemId: "", childCode: nextCode, childItemType: d.childItemType }
+    }))
+    setOpenRow(value.trim() ? key : null)
+  }
+  const onTypeChange = (key: string, value: ItemType) => {
+    setDraftLines((prev) => prev.map((d) => {
+      if (d.key !== key) return d
+      const priorSuggest = suggestCode(d.childName, d.childItemType)
+      const codeIsAutoSuggested = !d.childCode || d.childCode === priorSuggest
+      const nextCode = codeIsAutoSuggested ? suggestCode(d.childName, value) : d.childCode
+      return { ...d, childItemType: value, childCode: nextCode }
+    }))
+  }
   const addLine = () => {
     const key = `new-${crypto.randomUUID()}`
     setDraftLines((prev) => [...prev, {
-      key, childItemId: "", childCode: "", childName: "", childItemType: "raw",
+      key, childItemId: "", childCode: "", childName: "", childItemType: "raw", childGenericPn: "",
       qty: "1", refDes: "", preferredBrandId: "", preferredBrandSlug: null,
       sequence: "", remarks: "",
     }])
-    setPickerOpen(key)
-    setQuery("")
   }
   const removeLine = (key: string) => setDraftLines((prev) => prev.filter((d) => d.key !== key))
 
@@ -252,20 +290,73 @@ export default function ItemBomEditorPage() {
     return false
   }, [bom, draftLines])
 
-  // ── save (whole-version replace) ──────────────────────────────────────────
+  // ── save (whole-version replace, with inline child creation) ──────────────
   const save = async () => {
     if (!selectedVersionId) return
-    // Validate before firing.
-    for (const d of draftLines) {
-      if (!d.childItemId) return showToast({ type: "error", message: "Pick a child item on every line" })
+
+    // Drop rows that are completely empty (no name AND no link) — they're
+    // just draft placeholders. Everything else needs a valid qty + either
+    // a link OR a name for the create-new-child path.
+    const submittable = draftLines.filter((d) => d.childItemId || d.childName.trim())
+    for (const d of submittable) {
       const q = Number(d.qty)
-      if (!Number.isFinite(q) || q <= 0) return showToast({ type: "error", message: `Qty on "${d.childName || d.childCode || "line"}" must be > 0` })
+      if (!Number.isFinite(q) || q <= 0) {
+        return showToast({ type: "error", message: `Qty on "${d.childName || d.childCode || "line"}" must be > 0` })
+      }
     }
+
     setSaving(true)
     try {
+      // Pre-create any unlinked rows via POST /api/items, capturing their
+      // returned ids for the BOM PATCH. Failed creates surface in the toast
+      // and their rows are dropped from the save; the rest still ships.
+      const failed: string[] = []
+      const resolved: (DraftLine & { resolvedChildId: string })[] = []
+      for (const d of submittable) {
+        if (d.childItemId) {
+          resolved.push({ ...d, resolvedChildId: d.childItemId })
+          continue
+        }
+        const childName = d.childName.trim()
+        const childCode = d.childCode.trim() || suggestCode(childName, d.childItemType)
+        if (!childCode) {
+          failed.push(`"${childName}": couldn't generate a code`)
+          continue
+        }
+        const cRes = await fetch("/api/items", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: childName,
+            code: childCode,
+            itemType: d.childItemType,
+            genericPn: d.childGenericPn.trim() || null,
+            // Inline BOM-child creation defaults: zero opening stock, and
+            // min-stock 10 so they immediately show up on reorder-planning
+            // screens instead of sitting at "no threshold set".
+            minStock: 10,
+          }),
+        })
+        const cBody = await cRes.json().catch(() => null)
+        if (!cRes.ok) {
+          failed.push(`"${childName}": ${extractError(cBody, "failed to create").message}`)
+          continue
+        }
+        const newId = cBody?.data?.id as string | undefined
+        if (!newId) {
+          failed.push(`"${childName}": server did not return an id`)
+          continue
+        }
+        resolved.push({ ...d, resolvedChildId: newId })
+      }
+
+      if (resolved.length === 0 && failed.length > 0) {
+        return showToast({ type: "error", message: `Nothing could be saved — ${failed.length} row(s) failed`, hint: failed.join(" · ") })
+      }
+
       const body = {
-        lines: draftLines.map((d) => ({
-          childItemId: d.childItemId,
+        lines: resolved.map((d) => ({
+          childItemId: d.resolvedChildId,
           qty: Number(d.qty),
           refDes: d.refDes.trim() || null,
           preferredBrandId: d.preferredBrandId || null,
@@ -283,7 +374,11 @@ export default function ItemBomEditorPage() {
       const fresh = eb?.data as Bom
       setBom(fresh)
       setDraftLines(fresh.lines.map(toDraft))
-      showToast({ type: "success", message: `Saved ${fresh.lines.length} line${fresh.lines.length === 1 ? "" : "s"}` })
+      if (failed.length > 0) {
+        showToast({ type: "error", message: `Saved ${fresh.lines.length} line(s), ${failed.length} skipped`, hint: failed.join(" · ") })
+      } else {
+        showToast({ type: "success", message: `Saved ${fresh.lines.length} line${fresh.lines.length === 1 ? "" : "s"}` })
+      }
     } finally {
       setSaving(false)
     }
@@ -469,68 +564,109 @@ export default function ItemBomEditorPage() {
               {draftLines.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">No lines yet. {isEditable && "Click \"Add line\" to start."}</p>
               ) : (
-                <div className="border border-border rounded-lg overflow-x-auto">
-                  <table className="w-full text-sm min-w-[900px]">
+                <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
+                  <table className="w-full text-sm min-w-[1200px]">
                     <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
                       <tr>
-                        <th className="px-3 py-2 text-left font-bold">Child item</th>
-                        <th className="px-3 py-2 text-right font-bold w-24">Qty</th>
-                        <th className="px-3 py-2 text-left font-bold w-40">Ref des</th>
+                        <th className="px-3 py-2 text-left font-bold min-w-[220px]">Name</th>
+                        <th className="px-3 py-2 text-left font-bold w-32">Code</th>
+                        <th className="px-3 py-2 text-left font-bold w-28">Type</th>
+                        <th className="px-3 py-2 text-left font-bold w-32">Generic PN</th>
+                        <th className="px-3 py-2 text-right font-bold w-20">Qty</th>
+                        <th className="px-3 py-2 text-left font-bold w-32">Ref des</th>
                         <th className="px-3 py-2 text-left font-bold w-40">Preferred brand</th>
-                        <th className="px-3 py-2 text-right font-bold w-20">Seq</th>
+                        <th className="px-3 py-2 text-right font-bold w-16">Seq</th>
                         <th className="px-3 py-2 text-left font-bold">Remarks</th>
                         {isEditable && <th className="w-10" />}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
                       {draftLines.map((d) => {
-                        const cMeta = TYPE_META[d.childItemType]
-                        const variants = d.childItemId ? (variantsByChild[d.childItemId] ?? []) : []
-                        const isPickerOn = pickerOpen === d.key
+                        const linked = !!d.childItemId
+                        const variants = linked ? (variantsByChild[d.childItemId] ?? []) : []
+                        const rowMatches = openRow === d.key ? (matches[d.key] ?? []) : []
                         return (
                           <tr key={d.key} className="hover:bg-muted/10 align-top">
                             <td className="px-3 py-2 relative">
-                              {isEditable && isPickerOn ? (
-                                <div className="space-y-1">
-                                  <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by code or name…" className="h-8 text-sm" />
-                                  <div className="absolute z-20 top-full left-2 right-2 mt-1 border border-border rounded-lg bg-background shadow-lg max-h-64 overflow-y-auto">
-                                    {searching && <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>}
-                                    {!searching && results.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>}
-                                    {results.map((r) => {
-                                      const RIcon = TYPE_META[r.itemType].icon
-                                      return (
-                                        <button
-                                          key={r.id}
-                                          type="button"
-                                          className="w-full text-left px-3 py-1.5 hover:bg-muted/40 cursor-pointer flex items-center gap-2"
-                                          onClick={() => pickChild(d.key, r)}
-                                        >
-                                          <RIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                                          <span className="font-semibold text-sm">{r.name}</span>
-                                          <span className="font-mono text-[11px] text-muted-foreground">{r.code}</span>
-                                          <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground/70">{TYPE_META[r.itemType].label}</span>
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              ) : d.childItemId ? (
-                                <button
-                                  type="button"
+                              <div className="relative">
+                                <Input
+                                  value={d.childName}
+                                  onChange={(e) => onNameChange(d.key, e.target.value)}
+                                  onFocus={() => { if (isEditable && d.childName.trim() && !linked) setOpenRow(d.key) }}
+                                  onBlur={() => window.setTimeout(() => setOpenRow((r) => (r === d.key ? null : r)), 150)}
                                   disabled={!isEditable}
-                                  onClick={() => { setPickerOpen(d.key); setQuery("") }}
-                                  className="flex items-center gap-2 text-left"
-                                  title={isEditable ? "Click to change" : ""}
-                                >
-                                  <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground" />
-                                  <span className="font-semibold text-foreground">{d.childName}</span>
-                                  <span className="font-mono text-[11px] text-muted-foreground">{d.childCode}</span>
-                                </button>
+                                  placeholder="Search catalog — type a code or name…"
+                                  className={`h-8 text-sm ${linked ? "pr-7" : ""}`}
+                                  autoComplete="off"
+                                />
+                                {linked && (
+                                  <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
+                                )}
+                                {rowMatches.length > 0 && (
+                                  <ul className="absolute left-0 top-[calc(100%+2px)] z-50 max-h-56 w-[min(360px,80vw)] overflow-y-auto rounded-lg border border-border bg-popover shadow-xl">
+                                    {rowMatches.map((r) => (
+                                      <li key={r.id}>
+                                        <button
+                                          type="button"
+                                          onMouseDown={(e) => { e.preventDefault(); pickChild(d.key, r) }}
+                                          className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-muted/60"
+                                        >
+                                          <span className="min-w-0">
+                                            <span className="block truncate font-medium">{r.name}</span>
+                                            <span className="block truncate text-[10px] text-muted-foreground">
+                                              {r.code} · {r.itemType.replace("_", " ")}
+                                            </span>
+                                          </span>
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                                {isEditable && !linked && d.childName.trim() && (
+                                  <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
+                                    <Sparkles className="h-3 w-3" /> New item — will be created on save (min stock 10)
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={d.childCode}
+                                onChange={(e) => patchLine(d.key, { childCode: e.target.value })}
+                                readOnly={linked}
+                                disabled={!isEditable}
+                                placeholder={linked ? "" : "auto"}
+                                className={`h-8 text-sm font-mono ${linked ? "bg-muted/20" : ""}`}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              {linked ? (
+                                <Input value={d.childItemType.replace("_", " ")} readOnly disabled={!isEditable} className="h-8 text-sm bg-muted/20" />
                               ) : (
-                                <button type="button" onClick={() => { setPickerOpen(d.key); setQuery("") }} className="text-xs text-primary hover:underline">
-                                  Pick a child item…
-                                </button>
+                                <select
+                                  value={d.childItemType}
+                                  onChange={(e) => onTypeChange(d.key, e.target.value as ItemType)}
+                                  disabled={!isEditable}
+                                  className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
+                                >
+                                  <option value="raw">Raw</option>
+                                  <option value="semi_assembled">Sub-assembly</option>
+                                  <option value="assembled">Assembled</option>
+                                  <option value="consumable">Consumable</option>
+                                  <option value="asset">Asset</option>
+                                  <option value="packaging">Packaging</option>
+                                </select>
                               )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={d.childGenericPn}
+                                onChange={(e) => patchLine(d.key, { childGenericPn: e.target.value })}
+                                readOnly={linked}
+                                disabled={!isEditable}
+                                placeholder={linked ? "" : "e.g. 10K-0603-1%"}
+                                className={`h-8 text-sm font-mono ${linked ? "bg-muted/20" : ""}`}
+                              />
                             </td>
                             <td className="px-3 py-2">
                               <Input
@@ -626,7 +762,9 @@ export default function ItemBomEditorPage() {
           </Card>
 
           <p className="text-[11px] text-muted-foreground">
-            Notes: legacy <Link href="/pcb-management/structure" className="underline">PCB structure</Link> and <Link href="/products/structure" className="underline">product structure</Link> pages still write to their own tables during the B2 dual-write phase. This universal editor writes to <span className="font-mono">item_bom_versions / item_bom_lines</span>.
+            <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item ·{" "}
+            <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created on save (zero opening stock, min stock 10). ·{" "}
+            Legacy <Link href="/pcb-management/structure" className="underline">PCB structure</Link> and <Link href="/products/structure" className="underline">product structure</Link> pages still write to their own tables during the B2 dual-write phase.
           </p>
         </>
       )}

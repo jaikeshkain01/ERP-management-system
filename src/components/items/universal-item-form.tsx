@@ -684,6 +684,11 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 code: childCode,
                 itemType: l.childItemType,
                 genericPn: l.childGenericPn.trim() || null,
+                // Inline-created BOM children start with zero on-hand
+                // (no opening stock captured here) and a min-stock of 10
+                // so they immediately flag on reorder-planning screens
+                // rather than sitting at "no threshold set".
+                minStock: 10,
               }),
             })
             const cBody = await cRes.json().catch(() => null)
