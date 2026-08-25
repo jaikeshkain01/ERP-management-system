@@ -2,8 +2,11 @@
  * Production order lifecycle (mock/DB). The four stages of a shop-floor batch
  * (ARCHITECTURE.md §7b), all going through `withTenant` (one transaction each):
  *
- *   STAGE 1 create   → production_orders(Draft) + exploded production_order_items
- *                      (required_qty = Σ pcb_line.qty × product_pcbs.qty × order.qty)
+ *   STAGE 1 create   → production_orders(Draft) + exploded production_order_items.
+ *                      Post-B3 the explosion recurses item_bom_lines from the
+ *                      product's Active item_bom_versions (universal BOM) — leaves
+ *                      (no Active sub-BOM) become production_order_items.
+ *                      pre-B3 was: Σ pcb_line.qty × product_pcbs.qty × order.qty.
  *   STAGE 2 allocate → reserve stock: production_material_moves(kind='allocation')
  *                      per item across its brand variants; the DB trigger bumps
  *                      inventory_balances.reserved. Atomic: if ANY item is short,
@@ -148,21 +151,75 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
     });
     if (!product) throw Errors.badRequest("Unknown product", { product: input.product });
 
-    const bom = await tx.bom_versions.findFirst({
-      where: { product_id: product.id, status: "Active", deleted_at: null },
-      select: { id: true },
-    });
-    if (!bom) throw Errors.conflict("Product has no Active BOM version to build against");
+    // B3: source the explosion from the universal BOM (item_bom_versions +
+    // recursive item_bom_lines). The product's item mirror (F2) shares its
+    // id, so parent_item_id = product.id. Snapshot the LEGACY bom_versions.id
+    // when the universal Active is a backfilled version — production_orders
+    // still stores that id for historical continuity. A universal-only
+    // product (no legacy bom_versions row for its Active version) records
+    // NULL and can't be built until B2 has ever mirrored — but B2 lazy-
+    // creates a bom_versions row on Activate, so any Active universal
+    // version has a legacy binding.
+    const activeUniv = await tx.$queryRaw<{ id: string; legacyBv: string | null }[]>`
+      SELECT id, legacy_bom_version_id::text AS "legacyBv"
+        FROM item_bom_versions
+       WHERE parent_item_id = ${product.id}::uuid
+         AND status = 'Active'
+         AND deleted_at IS NULL
+       LIMIT 1`;
+    if (!activeUniv[0]) throw Errors.conflict("Product has no Active BOM version to build against");
+    const universalVersionId = activeUniv[0].id;
+    const snapshotBomVersionId = activeUniv[0].legacyBv;
 
-    // Explode demand per component: Σ (pcb_line.qty × product_pcbs.qty) × order.qty.
+    // Recursive explode: walk item_bom_lines from the Active version, recursing
+    // into every child that has its own Active BOM. Only leaves (no Active BOM
+    // below them) become production_order_items. depth guard is a belt-and-
+    // braces defence — assertNoCycles already blocks cycles at write time.
     const demand = await tx.$queryRaw<{ componentId: string; perUnit: number }[]>`
-      SELECT pl.component_id AS "componentId", SUM(pl.qty * pp.qty)::float8 AS "perUnit"
-      FROM product_pcbs pp
-      JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
-      JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-      WHERE pp.bom_version_id = ${bom.id}::uuid AND pp.deleted_at IS NULL
-      GROUP BY pl.component_id`;
+      WITH RECURSIVE explode(child, qty, depth) AS (
+        SELECT bl.child_item_id, bl.qty::float8 AS qty, 1
+          FROM item_bom_lines bl
+         WHERE bl.bom_version_id = ${universalVersionId}::uuid
+           AND bl.deleted_at IS NULL
+        UNION ALL
+        SELECT bl.child_item_id, (e.qty * bl.qty)::float8, e.depth + 1
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child
+                                    AND cbv.status = 'Active'
+                                    AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id
+                                AND bl.deleted_at IS NULL
+         WHERE e.depth < 20
+      )
+      SELECT e.child::text AS "componentId", SUM(e.qty)::float8 AS "perUnit"
+        FROM explode e
+       WHERE NOT EXISTS (
+         SELECT 1 FROM item_bom_versions bv2
+          WHERE bv2.parent_item_id = e.child
+            AND bv2.status = 'Active'
+            AND bv2.deleted_at IS NULL
+       )
+       GROUP BY e.child`;
     if (!demand.length) throw Errors.conflict("Active BOM has no component lines to plan");
+
+    // Every leaf must live in `components` too (production_order_items.
+    // component_id FKs to components). By F2 every raw items row has its
+    // matching components row; a leaf that is a non-raw item without a
+    // components mirror would break the FK — flag it clearly.
+    const leafIds = demand.map((d) => d.componentId);
+    const inComponents = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT id::text AS id FROM components
+       WHERE id IN (${Prisma.join(leafIds.map((id) => Prisma.sql`${id}::uuid`))})
+         AND deleted_at IS NULL`);
+    const componentIdSet = new Set(inComponents.map((r) => r.id));
+    const orphans = leafIds.filter((id) => !componentIdSet.has(id));
+    if (orphans.length) {
+      throw Errors.conflict(
+        "BOM contains leaf items that aren't backed by a component record",
+        { orphanItemIds: orphans },
+        "Convert those items to raw (they'll be backfilled into components), or add an Active BOM to them so they aren't leaves.",
+      );
+    }
 
     const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const orderNo = await nextOrderNo(tx);
@@ -172,7 +229,7 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
         ...audit,
         order_no: orderNo,
         product_id: product.id,
-        bom_version_id: bom.id,
+        bom_version_id: snapshotBomVersionId,
         qty: input.qty,
         status: "Draft",
         target_date: input.targetDate ? new Date(input.targetDate) : null,
@@ -566,20 +623,41 @@ export async function getReadiness(productKey: string | undefined, qty: number):
       : (
           await tx.$queryRaw<{ id: string; name: string; slug: string }[]>`
             SELECT p.id, p.name, p.slug FROM products p
-            JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+            JOIN item_bom_versions bv ON bv.parent_item_id = p.id
+                                      AND bv.status = 'Active'
+                                      AND bv.deleted_at IS NULL
             WHERE p.deleted_at IS NULL ORDER BY p.name LIMIT 1`
         )[0] ?? null;
     if (!product) throw Errors.notFound("Product");
 
     const rows = await tx.$queryRaw<{ genericPN: string; component: string; required: number; available: number }[]>`
-      WITH demand AS (
-        SELECT pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
-        FROM bom_versions bv
-        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
-        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
-        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-        WHERE bv.product_id = ${product.id}::uuid AND bv.status = 'Active' AND bv.deleted_at IS NULL
-        GROUP BY pl.component_id
+      WITH RECURSIVE explode(child, qty, depth) AS (
+        SELECT bl.child_item_id, bl.qty::numeric, 1
+          FROM item_bom_versions bv
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+         WHERE bv.parent_item_id = ${product.id}::uuid
+           AND bv.status = 'Active'
+           AND bv.deleted_at IS NULL
+        UNION ALL
+        SELECT bl.child_item_id, (e.qty * bl.qty)::numeric, e.depth + 1
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child
+                                    AND cbv.status = 'Active'
+                                    AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id
+                                AND bl.deleted_at IS NULL
+         WHERE e.depth < 20
+      ),
+      demand AS (
+        SELECT e.child AS component_id, SUM(e.qty)::numeric AS per_unit
+          FROM explode e
+         WHERE NOT EXISTS (
+           SELECT 1 FROM item_bom_versions bv2
+            WHERE bv2.parent_item_id = e.child
+              AND bv2.status = 'Active'
+              AND bv2.deleted_at IS NULL
+         )
+         GROUP BY e.child
       )
       SELECT c.generic_pn AS "genericPN", c.name AS component,
              (d.per_unit * ${batch})::float8 AS required,
@@ -588,7 +666,7 @@ export async function getReadiness(productKey: string | undefined, qty: number):
                LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
                WHERE v.component_id = d.component_id AND v.deleted_at IS NULL
              ), 0)::float8 AS available
-      FROM demand d JOIN components c ON c.id = d.component_id
+      FROM demand d JOIN components c ON c.id = d.component_id AND c.deleted_at IS NULL
       ORDER BY c.name`;
 
     const items: ReadinessItemView[] = rows.map((r) => ({
