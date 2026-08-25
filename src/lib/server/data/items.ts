@@ -146,6 +146,9 @@ export interface ItemView {
   leadTimeDays: number | null;
   specs: unknown;
   status: ItemStatus;
+  /** Sellable flag (Slice 3). Independent of stage — a Populated PCB may be
+   *  `semi_assembled` AND a finished good. Feeds the future sales module. */
+  isFinishedGood: boolean;
   /** Inventory rollup (F5.5). Sum across every variant + location.
    *  0 when the item holds no stock. */
   onHand: number;
@@ -217,7 +220,8 @@ const ITEM_SELECT = Prisma.sql`
   i.safety_stock::float8 AS "safetyStock",
   i.lead_time_days AS "leadTimeDays",
   i.specs,
-  i.status::text AS "status"
+  i.status::text AS "status",
+  i.is_finished_good AS "isFinishedGood"
 `;
 
 interface ItemRow {
@@ -263,6 +267,7 @@ interface ItemRow {
   leadTimeDays: number | null;
   specs: unknown;
   status: ItemStatus;
+  isFinishedGood: boolean;
 }
 
 interface VariantRow extends ItemVariantView {}
@@ -759,6 +764,8 @@ export interface CreateItemInput {
   leadTimeDays?: number | null;
   specs?: unknown;
   status?: ItemStatus;               // default 'active'
+  /** Slice 3: sellable flag. Independent of stage. Defaults to false. */
+  isFinishedGood?: boolean;
   variants?: CreateItemVariantInput[];
 }
 
@@ -916,6 +923,7 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         depreciation_method, condition_kind,
         name, description, category_id, item_type, base_uom,
         min_stock, reorder_qty, safety_stock, lead_time_days, specs, status,
+        is_finished_good,
         created_by, updated_by
       ) VALUES (
         ${ctx.companyId!}::uuid, ${code}, ${genericPn},
@@ -931,6 +939,7 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         ${input.categoryId ?? null}::uuid, ${itemType}::item_type, ${input.baseUom ?? "PCS"},
         ${input.minStock ?? 0}, ${input.reorderQty ?? 0}, ${input.safetyStock ?? 0},
         ${input.leadTimeDays ?? null}, ${JSON.stringify(specs)}::jsonb, ${status}::item_status,
+        ${input.isFinishedGood ?? false},
         ${ctx.userId}::uuid, ${ctx.userId}::uuid
       )
       RETURNING id`;
@@ -1107,6 +1116,8 @@ export interface UpdateItemInput {
   leadTimeDays?: number | null;
   specs?: unknown;
   status?: ItemStatus;
+  /** Slice 3: flip the sellable flag on/off. Independent of stage. */
+  isFinishedGood?: boolean;
   // Deliberately no `itemType` — reclassifying an item is a workflow of its
   // own (moves it between master lists) and belongs to a later slice.
 }
@@ -1307,6 +1318,7 @@ export async function updateItem(id: string, patch: UpdateItemInput): Promise<It
     if (patch.leadTimeDays !== undefined)        sets.push(Prisma.sql`lead_time_days = ${patch.leadTimeDays}`);
     if (patch.specs !== undefined)               sets.push(Prisma.sql`specs = ${JSON.stringify(patch.specs ?? [])}::jsonb`);
     if (patch.status !== undefined)              sets.push(Prisma.sql`status = ${patch.status}::item_status`);
+    if (patch.isFinishedGood !== undefined)      sets.push(Prisma.sql`is_finished_good = ${patch.isFinishedGood}`);
 
     await tx.$executeRaw(Prisma.sql`
       UPDATE items SET ${Prisma.join(sets, ", ")}

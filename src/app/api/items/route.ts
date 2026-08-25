@@ -82,6 +82,7 @@ const CreateBody = z.object({
   leadTimeDays: z.number().int().nonnegative().nullable().optional(),
   specs: z.unknown().optional(),
   status: ITEM_STATUS.optional(),
+  isFinishedGood: z.boolean().optional(),
   variants: z.array(VariantBody).max(50).optional(),
 });
 

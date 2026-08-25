@@ -85,6 +85,8 @@ export interface UniversalItemInitial {
   itemType: ItemType; baseUom: string;
   minStock: number; reorderQty: number; safetyStock: number; leadTimeDays: number | null;
   specs: unknown; status: ItemStatus;
+  /** Slice 3: sellable flag. Independent of stage. */
+  isFinishedGood: boolean;
   solderType: "SMD" | "DIP" | null; footprint: string | null; spq: number | null;
   packageLengthMm: number | null; packageWidthMm: number | null; packageHeightMm: number | null;
   packageWeightG: number | null; tareWeightG: number | null;
@@ -169,6 +171,10 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const [genericPn, setGenericPn] = React.useState(initial?.genericPn ?? "")
   const [description, setDescription] = React.useState(initial?.description ?? "")
   const [baseUom, setBaseUom] = React.useState(initial?.baseUom ?? "PCS")
+  // Slice 3: sellable flag. Independent of stage — a Populated PCB can be
+  // semi_assembled AND a finished good. Defaults false in add mode; edit
+  // mode reflects whatever is stored.
+  const [isFinishedGood, setIsFinishedGood] = React.useState<boolean>(initial?.isFinishedGood ?? false)
   const [submitting, setSubmitting] = React.useState(false)
   const [savingDraft, setSavingDraft] = React.useState(false)
 
@@ -430,6 +436,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           ...(isEdit ? {} : { itemType }),
           baseUom,
           status: submitStatus,
+          isFinishedGood,
           ...(stockOpen ? {
             minStock:     numOrUndef(minStock),
             reorderQty:   numOrUndef(reorderQty),
@@ -556,6 +563,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setGenericPn("")
     setDescription(src.description ?? "")
     setBaseUom(src.baseUom)
+    setIsFinishedGood(!!src.isFinishedGood)
 
     const openSet = new Set<SectionKey>()
     if (src.minStock || src.reorderQty || src.safetyStock || src.leadTimeDays != null) {
@@ -815,6 +823,27 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   Drives the Manufacturer section in a later phase — for now it's a hint on the item.
                 </span>
               </div>
+            </div>
+
+            {/* Finished-good flag (Slice 3). Independent of stage — a Populated
+                PCB can be semi_assembled AND sellable. Feeds the future sales
+                module; nothing else consumes it yet. */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Role</label>
+              <label className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={isFinishedGood}
+                  onChange={(e) => setIsFinishedGood(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 cursor-pointer"
+                />
+                <div className="flex-1">
+                  <div className="text-sm font-semibold text-foreground">This is a finished good (we sell it)</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    Independent of stage — a Populated PCB can be a sub-assembly <em>and</em> a finished good. Feeds the sales module.
+                  </div>
+                </div>
+              </label>
             </div>
 
             {/* Category — filtered to the chosen stage */}

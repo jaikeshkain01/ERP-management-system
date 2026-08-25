@@ -63,6 +63,7 @@ const PatchBody = z.object({
   leadTimeDays: z.number().int().nonnegative().nullable().optional(),
   specs: z.unknown().optional(),
   status: z.enum(["active", "inactive", "discontinued"]).optional(),
+  isFinishedGood: z.boolean().optional(),
 });
 
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
