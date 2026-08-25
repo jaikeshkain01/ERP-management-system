@@ -568,6 +568,12 @@ export default function ItemDetailsPage() {
                       <span className="text-muted-foreground/70">· {bom.versions.length} versions</span>
                     )}
                     <span className="ml-auto text-muted-foreground font-mono">{bom.lines.length} line{bom.lines.length === 1 ? "" : "s"}</span>
+                    <Link
+                      href={`/items/${encodeURIComponent(id)}/bom`}
+                      className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] font-bold text-foreground hover:bg-muted/40"
+                    >
+                      <Pencil className="h-3 w-3" /> Edit BOM
+                    </Link>
                   </div>
                   <div className="border border-border rounded-lg overflow-hidden">
                     <table className="w-full text-sm">

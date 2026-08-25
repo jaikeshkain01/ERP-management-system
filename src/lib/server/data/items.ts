@@ -708,6 +708,381 @@ export async function getItemBom(id: string, versionId?: string): Promise<ItemBo
   });
 }
 
+// ── BOM write (F6.4 / Slice B1) ─────────────────────────────────────────────
+//
+// The universal BOM editor writes here — one editor page, one code path for
+// PCB revisions AND products AND any future manufactured item. Legacy
+// `pcb_lines` / `product_pcbs` writes stay live behind the current structure
+// pages during the transition (B2 dual-write, B3 production cutover, B4
+// retirement).
+//
+// Rules enforced at this layer:
+//   • Parent must not be `raw` — raw items are foundational, no BOM (mirrors
+//     the details-page empty state; DB doesn't enforce this).
+//   • Lines edit only on `Draft` versions. To change an Active/Superseded
+//     BOM, the caller creates a new Draft revision (usually copied from
+//     Active) and then Activates it — the DB's uq_item_bom_versions_active
+//     partial index guarantees at most one Active per parent.
+//   • Whole-version replace (see B1 decision): callers send the full lines
+//     array; server diffs by (versionId, childItemId), soft-deletes drops,
+//     inserts adds, updates the intersection. This keeps audit-log noise
+//     to only rows that actually moved.
+//   • Cycle guard: a line's child cannot equal the parent (self-loop) and
+//     none of the child's transitive descendants (via Active/Draft BOMs)
+//     may be the parent — otherwise the production-order explosion would
+//     loop forever.
+//   • Comma-list ref-des kept as `text` (B1 decision) — matches the F6.2
+//     backfill from `pcb_lines.ref_des`.
+
+export interface CreateItemBomVersionInput {
+  /** Version label. Omitted → auto-assigned "v1", "v2", ... */
+  version?: string;
+  effectiveFrom?: string | null; // yyyy-mm-dd
+  effectiveTo?:   string | null;
+  /** Seed the new Draft with a copy of another version's lines. Typically
+   *  the current Active — the "New revision from active" flow. */
+  copyLinesFromVersionId?: string | null;
+}
+
+async function assertParentIsBomCapable(tx: TxClient, itemId: string): Promise<void> {
+  const row = await tx.$queryRaw<{ itemType: ItemType }[]>`
+    SELECT item_type::text AS "itemType"
+      FROM items WHERE id = ${itemId}::uuid AND deleted_at IS NULL`;
+  if (!row[0]) throw Errors.notFound("Item");
+  if (row[0].itemType === "raw") {
+    throw Errors.badRequest("Raw items don't have a BOM", { itemType: row[0].itemType });
+  }
+}
+
+/** Create a new Draft BOM version for `itemId`. If `copyLinesFromVersionId`
+ *  is given, its lines are duplicated into the new draft. */
+export async function createItemBomVersion(
+  itemId: string,
+  input: CreateItemBomVersionInput,
+): Promise<ItemBomView> {
+  return guarded("item.edit", async (tx, ctx) => {
+    if (!isUuid(itemId)) throw Errors.notFound("Item");
+    await assertParentIsBomCapable(tx, itemId);
+
+    // Auto-name: next integer beyond the parent's existing version count so
+    // "v3" collides with nothing. Users can pass any string to override.
+    let version = input.version?.trim() || "";
+    if (!version) {
+      const nextRow = await tx.$queryRaw<{ n: number }[]>`
+        SELECT COALESCE(count(*), 0)::int + 1 AS n
+          FROM item_bom_versions
+         WHERE parent_item_id = ${itemId}::uuid AND deleted_at IS NULL`;
+      version = `v${nextRow[0].n}`;
+    }
+
+    // Uniqueness check — friendlier 409 than the partial-index constraint.
+    const dupe = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id FROM item_bom_versions
+       WHERE company_id = ${ctx.companyId!}::uuid
+         AND parent_item_id = ${itemId}::uuid
+         AND version = ${version}
+         AND deleted_at IS NULL
+       LIMIT 1`;
+    if (dupe[0]) throw Errors.conflict("A BOM version with this label already exists", { version });
+
+    const inserted = await tx.$queryRaw<{ id: string }[]>`
+      INSERT INTO item_bom_versions (
+        company_id, parent_item_id, version, status,
+        effective_from, effective_to,
+        created_by, updated_by
+      ) VALUES (
+        ${ctx.companyId!}::uuid, ${itemId}::uuid, ${version}, 'Draft'::bom_status,
+        ${input.effectiveFrom ?? null}::date, ${input.effectiveTo ?? null}::date,
+        ${ctx.userId}::uuid, ${ctx.userId}::uuid
+      ) RETURNING id`;
+    const newVersionId = inserted[0].id;
+
+    if (input.copyLinesFromVersionId) {
+      if (!isUuid(input.copyLinesFromVersionId)) {
+        throw Errors.badRequest("Invalid copyLinesFromVersionId");
+      }
+      await tx.$executeRaw`
+        INSERT INTO item_bom_lines (
+          company_id, bom_version_id, child_item_id, qty, ref_des,
+          preferred_brand_id, sequence, remarks, created_by, updated_by
+        )
+        SELECT ${ctx.companyId!}::uuid, ${newVersionId}::uuid, child_item_id,
+               qty, ref_des, preferred_brand_id, sequence, remarks,
+               ${ctx.userId}::uuid, ${ctx.userId}::uuid
+          FROM item_bom_lines
+         WHERE bom_version_id = ${input.copyLinesFromVersionId}::uuid
+           AND deleted_at IS NULL`;
+    }
+
+    return getItemBomInTx(tx, itemId, newVersionId);
+  });
+}
+
+export interface BomLineInput {
+  childItemId: string;
+  qty: number;
+  refDes?: string | null;
+  preferredBrandId?: string | null;
+  sequence?: number | null;
+  remarks?: string | null;
+}
+
+/** Cycle guard: rejects if the parent item is reachable as a descendant of
+ *  any of the proposed children through the current Active/Draft BOM graph.
+ *  Uses a recursive CTE — cheap enough per save; BOM depths are small. */
+async function assertNoCycles(
+  tx: TxClient,
+  parentItemId: string,
+  childItemIds: string[],
+): Promise<void> {
+  if (childItemIds.length === 0) return;
+  // Self-loop is the trivial case — a child cannot be its own parent.
+  if (childItemIds.some((cid) => cid === parentItemId)) {
+    throw Errors.badRequest("A BOM line cannot reference its own parent item", { parentItemId });
+  }
+  const idList = Prisma.join(childItemIds.map((id) => Prisma.sql`${id}::uuid`));
+  const hit = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+    WITH RECURSIVE descend(id) AS (
+      SELECT unnest(ARRAY[${idList}]::uuid[])
+      UNION
+      SELECT bl.child_item_id
+        FROM item_bom_lines bl
+        JOIN item_bom_versions bv ON bv.id = bl.bom_version_id
+        JOIN descend d           ON bv.parent_item_id = d.id
+       WHERE bv.status IN ('Active', 'Draft')
+         AND bv.deleted_at IS NULL
+         AND bl.deleted_at IS NULL
+    )
+    SELECT id FROM descend WHERE id = ${parentItemId}::uuid LIMIT 1
+  `);
+  if (hit[0]) {
+    throw Errors.badRequest(
+      "BOM cycle detected — this line would make the parent a descendant of itself",
+      { parentItemId },
+      "Remove the offending child or break the cycle in the child's own BOM before adding this line.",
+    );
+  }
+}
+
+/** Whole-version replace of `versionId`'s lines. Only allowed on Draft.
+ *  Diffs by (versionId, childItemId): incoming set determines survivors;
+ *  drops soft-deleted; intersection updated; adds inserted. All in one tx. */
+export async function saveBomLines(
+  itemId: string,
+  versionId: string,
+  lines: BomLineInput[],
+): Promise<ItemBomView> {
+  return guarded("item.edit", async (tx, ctx) => {
+    if (!isUuid(itemId) || !isUuid(versionId)) throw Errors.notFound("BOM version");
+    await assertParentIsBomCapable(tx, itemId);
+
+    const vrow = await tx.$queryRaw<{ status: string; parent: string }[]>`
+      SELECT status::text AS status, parent_item_id::text AS parent
+        FROM item_bom_versions
+       WHERE id = ${versionId}::uuid AND deleted_at IS NULL`;
+    if (!vrow[0]) throw Errors.notFound("BOM version");
+    if (vrow[0].parent !== itemId) {
+      throw Errors.badRequest("Version does not belong to this item", { itemId, versionId });
+    }
+    if (vrow[0].status !== "Draft") {
+      throw Errors.badRequest(
+        "Only Draft BOM versions are editable",
+        { status: vrow[0].status },
+        "Create a new revision (copies this version's lines into a Draft) to edit.",
+      );
+    }
+
+    // Validate incoming lines and dedupe by child_item_id (the DB has a
+    // partial unique index on (version, child) — merge quantities client-side
+    // if a UI ever presents two rows for the same child).
+    const seen = new Set<string>();
+    for (const l of lines) {
+      if (!isUuid(l.childItemId)) throw Errors.badRequest("Invalid childItemId", { childItemId: l.childItemId });
+      if (seen.has(l.childItemId)) {
+        throw Errors.badRequest("Duplicate child item in BOM lines — merge the rows first", { childItemId: l.childItemId });
+      }
+      seen.add(l.childItemId);
+      if (!Number.isFinite(l.qty) || l.qty <= 0) {
+        throw Errors.badRequest("BOM line qty must be > 0", { childItemId: l.childItemId, qty: l.qty });
+      }
+      if (l.preferredBrandId != null && !isUuid(l.preferredBrandId)) {
+        throw Errors.badRequest("Invalid preferredBrandId", { childItemId: l.childItemId });
+      }
+      if (l.sequence != null && (!Number.isInteger(l.sequence))) {
+        throw Errors.badRequest("BOM line sequence must be an integer", { childItemId: l.childItemId });
+      }
+    }
+
+    await assertNoCycles(tx, itemId, lines.map((l) => l.childItemId));
+
+    // Existing lines on this version, keyed by child_item_id.
+    const existing = await tx.$queryRaw<{ id: string; childItemId: string }[]>`
+      SELECT id, child_item_id AS "childItemId"
+        FROM item_bom_lines
+       WHERE bom_version_id = ${versionId}::uuid AND deleted_at IS NULL`;
+    const existingByChild = new Map(existing.map((e) => [e.childItemId, e.id]));
+
+    const incomingChildren = new Set(lines.map((l) => l.childItemId));
+    const deletes = existing.filter((e) => !incomingChildren.has(e.childItemId));
+
+    // Soft-delete rows that dropped out.
+    if (deletes.length > 0) {
+      const idList = Prisma.join(deletes.map((d) => Prisma.sql`${d.id}::uuid`));
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE item_bom_lines
+           SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+         WHERE id IN (${idList})`);
+    }
+
+    // Upsert intersection + inserts. Loop is fine — BOMs are small.
+    for (const l of lines) {
+      const existingId = existingByChild.get(l.childItemId);
+      const refDes = l.refDes?.trim() || null;
+      const remarks = l.remarks?.trim() || null;
+      if (existingId) {
+        await tx.$executeRaw`
+          UPDATE item_bom_lines
+             SET qty = ${l.qty},
+                 ref_des = ${refDes},
+                 preferred_brand_id = ${l.preferredBrandId ?? null}::uuid,
+                 sequence = ${l.sequence ?? null},
+                 remarks = ${remarks},
+                 updated_by = ${ctx.userId}::uuid
+           WHERE id = ${existingId}::uuid`;
+      } else {
+        await tx.$executeRaw`
+          INSERT INTO item_bom_lines (
+            company_id, bom_version_id, child_item_id, qty, ref_des,
+            preferred_brand_id, sequence, remarks, created_by, updated_by
+          ) VALUES (
+            ${ctx.companyId!}::uuid, ${versionId}::uuid, ${l.childItemId}::uuid,
+            ${l.qty}, ${refDes}, ${l.preferredBrandId ?? null}::uuid,
+            ${l.sequence ?? null}, ${remarks},
+            ${ctx.userId}::uuid, ${ctx.userId}::uuid
+          )`;
+      }
+    }
+
+    // Touch the version's updated_at so listings reflect the last edit.
+    await tx.$executeRaw`
+      UPDATE item_bom_versions
+         SET updated_by = ${ctx.userId}::uuid
+       WHERE id = ${versionId}::uuid`;
+
+    return getItemBomInTx(tx, itemId, versionId);
+  });
+}
+
+/** Activate a Draft version. Supersedes the prior Active (if any) in the
+ *  same transaction so the partial unique index never sees two Actives. */
+export async function activateBomVersion(itemId: string, versionId: string): Promise<ItemBomView> {
+  return guarded("item.edit", async (tx, ctx) => {
+    if (!isUuid(itemId) || !isUuid(versionId)) throw Errors.notFound("BOM version");
+
+    const vrow = await tx.$queryRaw<{ status: string; parent: string }[]>`
+      SELECT status::text AS status, parent_item_id::text AS parent
+        FROM item_bom_versions
+       WHERE id = ${versionId}::uuid AND deleted_at IS NULL`;
+    if (!vrow[0]) throw Errors.notFound("BOM version");
+    if (vrow[0].parent !== itemId) {
+      throw Errors.badRequest("Version does not belong to this item", { itemId, versionId });
+    }
+    if (vrow[0].status !== "Draft") {
+      throw Errors.badRequest("Only Draft versions can be activated", { status: vrow[0].status });
+    }
+
+    // Supersede prior Active — even if none exists this is a no-op UPDATE.
+    await tx.$executeRaw`
+      UPDATE item_bom_versions
+         SET status = 'Superseded'::bom_status, updated_by = ${ctx.userId}::uuid
+       WHERE parent_item_id = ${itemId}::uuid
+         AND status = 'Active'
+         AND deleted_at IS NULL`;
+
+    await tx.$executeRaw`
+      UPDATE item_bom_versions
+         SET status = 'Active'::bom_status, updated_by = ${ctx.userId}::uuid
+       WHERE id = ${versionId}::uuid`;
+
+    return getItemBomInTx(tx, itemId, versionId);
+  });
+}
+
+/** Soft-delete a Draft version + its lines. Active/Superseded/Obsolete
+ *  versions are refused — they carry historical context that production
+ *  runs may still reference. */
+export async function deleteBomVersion(itemId: string, versionId: string): Promise<ItemBomView> {
+  return guarded("item.edit", async (tx, ctx) => {
+    if (!isUuid(itemId) || !isUuid(versionId)) throw Errors.notFound("BOM version");
+
+    const vrow = await tx.$queryRaw<{ status: string; parent: string }[]>`
+      SELECT status::text AS status, parent_item_id::text AS parent
+        FROM item_bom_versions
+       WHERE id = ${versionId}::uuid AND deleted_at IS NULL`;
+    if (!vrow[0]) throw Errors.notFound("BOM version");
+    if (vrow[0].parent !== itemId) {
+      throw Errors.badRequest("Version does not belong to this item", { itemId, versionId });
+    }
+    if (vrow[0].status !== "Draft") {
+      throw Errors.badRequest(
+        "Only Draft BOM versions can be deleted",
+        { status: vrow[0].status },
+        "Mark the version Obsolete via a status change (future slice) instead of deleting historical BOMs.",
+      );
+    }
+
+    await tx.$executeRaw`
+      UPDATE item_bom_lines
+         SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+       WHERE bom_version_id = ${versionId}::uuid AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE item_bom_versions
+         SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+       WHERE id = ${versionId}::uuid`;
+
+    return getItemBomInTx(tx, itemId);
+  });
+}
+
+/** Same query as getItemBom's inner body — reused across the write helpers so
+ *  each returns a fresh ItemBomView without the guarded()/session wrapping. */
+async function getItemBomInTx(tx: TxClient, id: string, versionId?: string): Promise<ItemBomView> {
+  const versions = await tx.$queryRaw<ItemBomVersionSummary[]>`
+    SELECT bv.id, bv.version, bv.status::text AS status,
+           bv.effective_from::text AS "effectiveFrom",
+           bv.effective_to::text   AS "effectiveTo",
+           (SELECT count(*)::int FROM item_bom_lines bl
+              WHERE bl.bom_version_id = bv.id AND bl.deleted_at IS NULL) AS "lineCount"
+      FROM item_bom_versions bv
+     WHERE bv.parent_item_id = ${id}::uuid AND bv.deleted_at IS NULL
+     ORDER BY (bv.status = 'Active') DESC, bv.created_at DESC`;
+
+  if (versions.length === 0) {
+    return { itemId: id, versions: [], selectedVersionId: null, lines: [] };
+  }
+  const selected = (versionId && versions.find((v) => v.id === versionId)?.id) ?? versions[0].id;
+
+  const lines = await tx.$queryRaw<ItemBomLineView[]>`
+    SELECT bl.id,
+           bl.child_item_id AS "childItemId",
+           ci.code          AS "childCode",
+           ci.name          AS "childName",
+           ci.item_type::text AS "childItemType",
+           bl.qty::float8   AS qty,
+           bl.ref_des       AS "refDes",
+           (SELECT b.slug FROM brands b WHERE b.id = bl.preferred_brand_id) AS "preferredBrandSlug",
+           bl.sequence      AS sequence,
+           bl.remarks       AS remarks,
+           EXISTS (SELECT 1 FROM item_bom_versions cbv
+                     WHERE cbv.parent_item_id = bl.child_item_id AND cbv.deleted_at IS NULL) AS "childHasBom"
+      FROM item_bom_lines bl
+      JOIN items ci ON ci.id = bl.child_item_id
+     WHERE bl.bom_version_id = ${selected}::uuid AND bl.deleted_at IS NULL
+     ORDER BY bl.sequence NULLS LAST, ci.code`;
+
+  return { itemId: id, versions, selectedVersionId: selected, lines };
+}
+
 // ── create ───────────────────────────────────────────────────────────────────
 
 export interface CreateItemVariantInput {
