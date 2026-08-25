@@ -19,11 +19,19 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (mid 2026-08-25 session — F6.4 complete, uncommitted)
+## Where we are RIGHT NOW (end of 2026-08-25 session — F6.4 complete + modules consolidated)
 
-The **universal-item transformation critical path (F1→F7) is shipped and committed**. Slices 1–3 of the Stage/Category model + **F6.4 B1 (universal BOM editor)** landed earlier this session. **F6.4 B2 → B3 → B4 are now DONE in the working tree** and staged for commit:
+The **universal-item transformation critical path (F1→F7) is shipped and pushed**. **F6.4 is complete end-to-end** (B1 → B2 → B3 → B4). The `/pcb-management/*` and `/products/*` modules have been folded into filtered views over `/items/list`. Working tree clean; `main` matches `origin/main`.
 
-- `f355484` docs: refresh SESSION-HANDOFF after F6.4 B1 lands                        ← previous session
+Head of `main`:
+
+- `09810c5` fix(items): portal the BOM row typeahead so suggestions don't get clipped
+- `ac1d7fe` feat(dashboard): source module counts + universal search from /api/items
+- `ca28152` feat(items): fold PCB Management / Products modules into filtered item views
+- `5ae7da9` feat(items): retire legacy structure pages, redirect to universal BOM editor (F6.4 / B4)
+- `f0a1075` feat(production): explode BOMs from universal item_bom_lines (F6.4 / B3)
+- `ea97987` feat(items): bidirectional BOM dual-write (F6.4 / B2)
+- `f355484` docs: refresh SESSION-HANDOFF after F6.4 B1 lands
 - `66f290b` feat(items): typeahead + inline child creation on the BOM editor page
 - `29e9f6c` feat(items): create-child-on-submit for unlinked BOM rows
 - `c30ca37` refactor(items): match PCB Add-Manually UX for BOM row picker
@@ -36,27 +44,16 @@ The **universal-item transformation critical path (F1→F7) is shipped and commi
 - `5363bf1` feat(items): categories require a stage (Slice 1)
 - `2916e7c` Refactor code structure and remove redundant changes  ← F1–F7 landed here
 
-**7 files modified, uncommitted** — the F6.4 B2/B3/B4 slice:
-- `src/lib/server/data/items.ts` — added `ParentLegacyKind`, `getParentLegacyKind`, `mirrorUniversalBomToLegacy` (Activate → pcb_lines / product_pcbs + lazy-create bom_versions), exported `mirrorLegacyBomToUniversal`.
-- `src/lib/server/data/pcbs.ts` — `updatePcbRevision` mirrors lines + Active-flip (including demoted siblings) into universal; `deletePcbRevision` cascades soft-delete.
-- `src/lib/server/data/products.ts` — `updateProductPcbRevision` mirrors the repoint; `deleteCatalogProduct` cascades soft-delete.
-- `src/lib/server/data/production.ts` — `createProductionOrder` + readiness rewritten on `item_bom_versions` + recursive `item_bom_lines`; orphan-leaf guard; docstring updated.
-- `src/app/items/[id]/bom/page.tsx` — amber "not yet visible to production" banner when `parentLegacyKind === null`.
-- `src/app/pcb-management/structure/page.tsx` — server-redirect to `/items/[id]/bom` for the PCB's Active revision.
-- `src/app/products/structure/page.tsx` — server-redirect to `/items/[id]/bom` for the product.
-
-**Working tree modified (F6.4 slice), NOT yet committed. Push not done — 11 local commits ahead of `origin/main` (7 previous + 4 will land as B2/B3/B4/handoff-update).**
-
 The ERP now has:
 
-- **One `items` master** for every kind of thing (raw / semi-assembled / assembled / consumable / asset / packaging), plus `item_variants` and generalized `item_lots`.
-- **Universal ledger** keyed on `item_variant_id` — purchased AND manufactured items hold real stock (F5.3/F5.4 lifted the CBV NOT NULL and flipped the projection).
-- **Universal BOMs** (`item_bom_versions` / `item_bom_lines`), backfilled from PCB + product BOMs, read side + viewer done (F6).
-- **Production books finished goods** into stock (F7 — completing a production order writes a `PRODUCTION` ledger row for the product's manufactured variant).
-- **Full universal UI** on top: `/items/list`, `/items/add`, `/items/edit/[id]`, `/items/details/[id]`, and a **rebuilt `/components/inventory` page** on the universal master with Stock In/Out (FEFO / pin-lot / multi-lot split).
-- Legacy `/components/list`, `/components/add`, `/components/edit`, `/components/details` are all server-redirect wrappers to `/items/*`.
-
-**Everything is UNCOMMITTED on `main`.** ~15 migrations + a lot of app code. **Committing this is the single most important open task.**
+- **One `items` master** for every stage (raw / semi-assembled / assembled / consumable / asset / packaging), plus `item_variants` and generalized `item_lots`.
+- **Universal ledger** keyed on `item_variant_id` — purchased AND manufactured items hold stock.
+- **Universal BOMs** (`item_bom_versions` / `item_bom_lines`) — read, write, activate, delete. Add-form seeds a Draft inline; details page routes to the editor; both surfaces support inline child creation (new item POSTed with `minStock: 10`, zero opening stock) and portalled typeahead suggestions that escape the table's overflow clip.
+- **Production explodes universally** — `createProductionOrder` recurses `item_bom_versions (Active)` + `item_bom_lines` with a depth-guarded CTE; verified same 17-component demand shape as legacy on ROIP400.
+- **Legacy structure pages retired** — `/pcb-management/structure` and `/products/structure` server-redirect to `/items/[id]/bom`. `pcb_lines` and `product_pcbs` tables are still on disk (deliberately not dropped — many read paths still reference them; a later slice does that cutover once every last reader is on universal).
+- **Modules consolidated** — `/pcb-management/list` and `/products/list` are now filtered `/api/items` views. Nav labels rebranded: "Products" → **Assembled Products**, "PCB Management" → **Semi-assembled**. Workspace tabs stripped (single-page each). Dashboard KPIs and universal search now read from `/api/items`. Suppliers breadcrumbs (`from=products` / `from=pcb`) point at the new filtered URLs.
+- **Full universal item UI**: `/items/list`, `/items/add`, `/items/edit/[id]`, `/items/details/[id]`, `/items/[id]/bom`, plus the universal `/components/inventory` page (F5.9) with FEFO / pin-lot / multi-lot-split Stock In/Out.
+- **Legacy `/components/*` and `/pcb-management/*` and `/products/*`** — every page is either a filtered items view or a server-redirect to `/items/*`.
 
 ### Migrations added this session (in order)
 - `20260819000000_items_universal_master` (F1) — items + item_variants
@@ -118,17 +115,23 @@ Per user's request:
 
 - **B5 (optional)** — Version workflow polish: effective dates, supersede workflow, diff between versions.
 
-### Architectural discussion — open (not yet committed)
+### Module consolidation — SHIPPED this session
 
-**End of 2026-08-25**: user proposed retiring the `/pcb-management/*` and `/products/*` modules as separate surfaces and folding them into first-class **Semi-assembled Products** and **Assembled/Finished Products** views over `/items/list`. Agent concurs — PCBs and Products are already `items` rows (F2), the legacy modules are the last pre-universal holdouts, and their differentiation (PCB metadata, sellable-ness) already lives on the item.
-- **Open decision:** revisions model. Today `pcb_revisions.id → items.id` — each revision IS a separate item. Alternative: collapse to one item-per-PCB with the revision history captured by `item_bom_versions` (Rev A = Active, Rev B = new Draft → activate → prior becomes Superseded). Cleaner mental model, but a real data migration.
-- Feeds naturally out of B4 — once legacy structure pages retire, the nav labels change ("PCB Management" → "Semi-assembled" filter chip on `/items/list`).
+`ca28152` + `ac1d7fe` folded `/pcb-management/list` and `/products/list` into filtered `/api/items` views. Nav rebranded ("Products" → **Assembled Products**, "PCB Management" → **Semi-assembled**), workspace tabs stripped (single-page each), dashboard KPI tiles + universal search re-sourced from `/api/items`, suppliers `from=` breadcrumbs pointed at the new URLs, and the terminology pass replaced "Sub-assembly" / "Finished good" with "Semi-assembled" / "Assembled" everywhere. `Add item` links pass `?type=` so `/items/add` pre-selects the stage.
+
+**Still open — the revisions model.** Today `pcb_revisions.id → items.id` (F2) so each revision IS a separate item. Alternative: **Option B** — collapse to one item-per-PCB with revisions captured by `item_bom_versions` (Rev A = Active, Rev B = new Draft → activate → prior becomes Superseded). Cleaner mental model but a real data migration (merge N revision items into one, migrate inbound refs from POs / ledger / production runs / BOM child links, redirect the N legacy revision URLs). No blocker — Option A works fine post-consolidation — but worth doing as a standalone slice if the current model starts to hurt.
+
+### Typeahead portal fix — SHIPPED this session
+
+`09810c5` — the BOM row typeahead dropdown was being clipped by the table's `overflow-x-auto` wrapper on both surfaces. Portalled the suggestions `<ul>` to `<body>` with `position: fixed`, anchored to the input's `getBoundingClientRect()`; repositions on scroll/resize. Applied to `/items/[id]/bom` editor and the `/items/add` Assembly / BOM section.
 
 ### Other open items
-- **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
+1. **`pcb_lines` / `product_pcbs` table drops** — deliberately gated in B4. Retire after (a) B3 has driven real production orders for a full session, and (b) the remaining read paths (dashboard, bootstrap, brands, components.usage, `pcbs.ts` detail queries) are ported to universal. That's a standalone slice.
+2. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
 3. **Verifier drift** — `scripts/verify-items-migrations.ts` "balances rollup: same totals whichever variant column keys the sum" now fails because F5.4 made CBV nullable — the CBV-keyed sum lumps all `cbv=NULL` rows under one bucket while the IV-keyed sum splits them by real IV. Not a data bug; the check is obsolete post-F5.4. Update the check to skip NULL CBV keys OR replace it with an IV-keyed equivalent.
-4. **Legacy retirement + dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource. Also delete stray `._probe.ts` at the repo root (leftover from a prior commit — Windows hidden file, shouldn't be tracked).
-5. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
+4. **Option B (revisions collapse)** — see Module consolidation section above. Standalone future slice.
+5. **Dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource. Also delete stray `._probe.ts` at the repo root (leftover from a prior commit — Windows hidden file, shouldn't be tracked).
+6. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
 
 ## DB state right now
 - 4 companies: **StackIOT** (seeded — 17 components, 4 PCBs, ROIP400 product with BOM, stock), StackIOT Technologies Pvt Ltd, Test Co, **Dielectric Technologies Pvt. Ltd.** (user's fresh test tenant — 1 item "Registor 10ohm" with 500 on-hand in WH-01·A13).
