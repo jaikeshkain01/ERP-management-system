@@ -99,8 +99,8 @@ interface ItemBom {
 
 const TYPE_META: Record<ItemType, { label: string; icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   raw:            { label: "Raw",             icon: Nut,     tone: "bg-primary/10 text-primary border-primary/20" },
-  semi_assembled: { label: "Sub-assembly",    icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
-  assembled:      { label: "Finished good",   icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  semi_assembled: { label: "Semi-assembled",  icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  assembled:      { label: "Assembled",       icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   consumable:     { label: "Consumable",      icon: Boxes,   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   asset:          { label: "Asset",           icon: Laptop,  tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   packaging:      { label: "Packaging",       icon: Wrench,  tone: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },

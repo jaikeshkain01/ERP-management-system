@@ -48,7 +48,7 @@ const TYPE_ICON: Record<ItemType, React.ComponentType<{ className?: string }>> =
 }
 const TYPE_META: Record<ItemType, { label: string; tone: string }> = {
   raw:            { label: "Raw",          tone: "bg-primary/10 text-primary border-primary/20" },
-  semi_assembled: { label: "Sub-assembly", tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  semi_assembled: { label: "Semi-assembled", tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
   assembled:      { label: "Finished",     tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   consumable:     { label: "Consumable",   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   asset:          { label: "Asset",        tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
@@ -217,7 +217,7 @@ export default function InventoryPage() {
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
             {(["all", "raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"] as const).map((t) => {
               const active = typeFilter === t
-              const label = t === "all" ? "All types" : t === "semi_assembled" ? "Sub-assembly" : t === "assembled" ? "Finished" : t[0].toUpperCase() + t.slice(1)
+              const label = t === "all" ? "All types" : t === "semi_assembled" ? "Semi-assembled" : t === "assembled" ? "Assembled" : t[0].toUpperCase() + t.slice(1)
               return (
                 <button key={t} onClick={() => setTypeFilter(t)}
                   className={`px-2.5 py-1 text-xs rounded-full border font-semibold transition-all ${active ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted/50"}`}>

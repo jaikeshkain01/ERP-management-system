@@ -64,8 +64,8 @@ export const BASE_AREAS: Array<{
   href: string
 }> = [
   { label: "Items", description: "Every item — parts, sub-assemblies, products, assets.", icon: Nut, href: "/items/list" },
-  { label: "Products", description: "Finished goods catalog.", icon: Package, href: "/products/list" },
-  { label: "PCB Management", description: "Board variations library.", icon: Cpu, href: "/pcb-management/list" },
+  { label: "Assembled Products", description: "Assembled items + sellable finished goods.", icon: Package, href: "/products/list" },
+  { label: "Semi-assembled", description: "PCB revisions and sub-assemblies.", icon: Cpu, href: "/pcb-management/list" },
   { label: "Suppliers & Manufacturers", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
 ]
 
@@ -149,25 +149,24 @@ export const WORKSPACES: Workspace[] = [
       { title: "Usage Analysis", href: "/components/usage" },
     ],
   },
+  // Both workspaces are now single-page — the "Structure" tabs were dropped
+  // in the module-consolidation slice because /products/structure and
+  // /pcb-management/structure just server-redirect to the per-item BOM
+  // editor (F6.4 / B4). Keeping them as tabs would bounce the user out of
+  // the workspace mid-flow. Access the BOM from each card instead.
   {
     id: "products",
-    label: "Products",
+    label: "Assembled Products",
     icon: Package,
     href: "/products/list",
-    tabs: [
-      { title: "Product List", href: "/products/list" },
-      { title: "Product Structure", href: "/products/structure", moduleId: "bom" },
-    ],
+    tabs: [],
   },
   {
     id: "pcb",
-    label: "PCB Management",
+    label: "Semi-assembled",
     icon: Cpu,
     href: "/pcb-management/list",
-    tabs: [
-      { title: "PCB List", href: "/pcb-management/list" },
-      { title: "PCB Structure", href: "/pcb-management/structure", moduleId: "bom" },
-    ],
+    tabs: [],
   },
   {
     id: "production",

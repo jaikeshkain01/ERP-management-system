@@ -99,7 +99,7 @@ function suggestCode(name: string, itemType: ItemType): string {
 
 const TYPE_META: Record<ItemType, { icon: React.ComponentType<{ className?: string }>; label: string }> = {
   raw:            { icon: Nut,     label: "Raw" },
-  semi_assembled: { icon: Cpu,     label: "Sub-assembly" },
+  semi_assembled: { icon: Cpu,     label: "Semi-assembled" },
   assembled:      { icon: Package, label: "Assembled" },
   consumable:     { icon: Boxes,   label: "Consumable" },
   asset:          { icon: Laptop,  label: "Asset" },
@@ -670,7 +670,7 @@ export default function ItemBomEditorPage() {
                                   className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
                                 >
                                   <option value="raw">Raw</option>
-                                  <option value="semi_assembled">Sub-assembly</option>
+                                  <option value="semi_assembled">Semi-assembled</option>
                                   <option value="assembled">Assembled</option>
                                   <option value="consumable">Consumable</option>
                                   <option value="asset">Asset</option>

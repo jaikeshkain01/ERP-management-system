@@ -23,7 +23,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -163,8 +163,19 @@ interface BomChildSearchResult {
 
 export default function UniversalItemForm({ mode, initial }: UniversalItemFormProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const d = useData()
   const isEdit = mode === "edit"
+
+  // `?type=X` on /items/add pre-selects the stage — driven by the
+  // "Add item" buttons on the filtered Semi-assembled / Assembled Products
+  // list pages so the user doesn't have to change stage after landing here.
+  // Ignored in edit mode (initial always wins) and when the value isn't a
+  // recognized ItemType.
+  const validTypes = new Set<ItemType>(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"])
+  const typeFromQuery = !isEdit ? searchParams?.get("type") ?? null : null
+  const initialTypeFromQuery: ItemType | null =
+    typeFromQuery && validTypes.has(typeFromQuery as ItemType) ? (typeFromQuery as ItemType) : null
 
   const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" | "info" } | null>(null)
   const showToast = React.useCallback((info: { message: string; hint?: string; type: "success" | "error" | "info" }) => {
@@ -188,8 +199,10 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   //  treated as touched so the category-→-type auto-detect does not fight
   //  the caller's stored type. Code is also treated as touched so the
   //  auto-suggester does not overwrite it on the first render.
-  const [itemType, setItemType] = React.useState<ItemType>(initial?.itemType ?? "raw")
-  const [typeTouched, setTypeTouched] = React.useState(isEdit)
+  const [itemType, setItemType] = React.useState<ItemType>(initial?.itemType ?? initialTypeFromQuery ?? "raw")
+  // Mark touched when the caller pre-selected via ?type=, so the category-→-
+  // type auto-detect doesn't clobber it on first render.
+  const [typeTouched, setTypeTouched] = React.useState(isEdit || initialTypeFromQuery !== null)
   const [sourceKind, setSourceKind] = React.useState<"purchased" | "manufactured">(
     initial?.variants.some((v) => v.sourceKind === "manufactured") ? "manufactured" : "purchased",
   )
@@ -1508,7 +1521,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                                 className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
                               >
                                 <option value="raw">Raw</option>
-                                <option value="semi_assembled">Sub-assembly</option>
+                                <option value="semi_assembled">Semi-assembled</option>
                                 <option value="assembled">Assembled</option>
                                 <option value="consumable">Consumable</option>
                                 <option value="asset">Asset</option>
