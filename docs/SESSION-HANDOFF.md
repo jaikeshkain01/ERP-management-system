@@ -19,9 +19,18 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (end of session — CRITICAL PATH COMPLETE)
+## Where we are RIGHT NOW (end of 2026-08-25 session — Slices 1–3 committed)
 
-The **universal-item transformation critical path (F1→F7) is shipped**. The ERP now has:
+The **universal-item transformation critical path (F1→F7) is shipped and COMMITTED**. Slices 1–3 of the Stage/Category model are also committed on `main`:
+
+- `d197125` feat(items): is_finished_good flag (Slice 3)
+- `0bfa509` feat(items): Stage-driven category picker (Slice 2)
+- `5363bf1` feat(items): categories require a stage (Slice 1)
+- `2916e7c` Refactor code structure and remove redundant changes  ← F1–F7 landed here
+
+Working tree is clean.
+
+The ERP now has:
 
 - **One `items` master** for every kind of thing (raw / semi-assembled / assembled / consumable / asset / packaging), plus `item_variants` and generalized `item_lots`.
 - **Universal ledger** keyed on `item_variant_id` — purchased AND manufactured items hold real stock (F5.3/F5.4 lifted the CBV NOT NULL and flipped the projection).
@@ -48,6 +57,7 @@ The **universal-item transformation critical path (F1→F7) is shipped**. The ER
 - `20260821000009_item_boms_universal_master` (F6.1)
 - `20260821000010_item_boms_backfill` (F6.2)
 - `20260824000000_categories_require_stage` (Slice 1) — every category has a stage, seeded Bare/Populated PCBs
+- `20260825000000_items_is_finished_good` (Slice 3) — items.is_finished_good NOT NULL DEFAULT false, backfilled from products
 
 ### Slice 1 + Slice 2 shipped this session (the Stage/Category model)
 Per user's request:
@@ -55,16 +65,15 @@ Per user's request:
 - **Slice 1**: `item_categories.default_item_type` is now NOT NULL. Category-create API requires `defaultItemType`. Seeded **Bare PCBs** (raw) and **Populated PCBs** (semi_assembled) into every tenant.
 - **Slice 2**: Add-form Section 1 renamed to **"Stage"** with two groups (Build stage: Raw / Semi-assembled / Assembled; Other: Consumable / Asset / Packaging). Category cascade filtered to the chosen stage (`<CategoryCascade stageFilter={itemType} />`). "+ Add category" auto-uses the current stage. Category → type auto-detect removed (one-way flow now). Item-type lock on the edit form removed (soft warning instead).
 
-### Slice 3 (PENDING — user has approved, was about to start when context ran out)
-Add `items.is_finished_good boolean NULL` + checkbox on the form: *"This is a finished good (we sell it)"*. Independent of stage — a populated PCB can be `semi_assembled` **and** sellable. Feeds the future sales module. Purely additive; nothing else consumes it yet.
+### Slice 3 (SHIPPED this session)
+`items.is_finished_good boolean NOT NULL DEFAULT false` + a "This is a finished good (we sell it)" checkbox in Section 1 of the add/edit form. Independent of stage — a Populated PCB can be `semi_assembled` **and** sellable. Backfilled `true` for every product-backed item (that WAS the finished-goods master). Threaded through `ItemView` / API bodies / form state / duplicate-from. Partial index `(company_id) WHERE is_finished_good` for the future "list sellable items" query. Verified: 26 items → 1 finished good (ROIP400), 25 non-finished.
 
 ## Open items — user's roadmap
-1. **Commit everything** — HIGHEST priority. Suggest logical chunks: (a) migrations, (b) server data/API, (c) universal-item UI, (d) inventory rebuild, (e) Stage/Category slices.
-2. **Slice 3** — `is_finished_good` flag (approved, tiny slice, 15 min).
-3. **F6.4** — BOM write cutover: repoint PCB-structure + product-structure editors + production's demand explosion onto `item_bom_*`; then retire `pcb_lines`/`product_pcbs`.
-4. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
-5. **Legacy retirement + dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource.
-6. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
+1. **F6.4** — BOM write cutover: repoint PCB-structure + product-structure editors + production's demand explosion onto `item_bom_*`; then retire `pcb_lines`/`product_pcbs`.
+2. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
+3. **Verifier drift** — `scripts/verify-items-migrations.ts` "balances rollup: same totals whichever variant column keys the sum" now fails because F5.4 made CBV nullable — the CBV-keyed sum lumps all `cbv=NULL` rows under one bucket while the IV-keyed sum splits them by real IV. Not a data bug; the check is obsolete post-F5.4. Update the check to skip NULL CBV keys OR replace it with an IV-keyed equivalent.
+4. **Legacy retirement + dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource. Also delete stray `._probe.ts` at the repo root (leftover from a prior commit — Windows hidden file, shouldn't be tracked).
+5. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
 
 ## DB state right now
 - 4 companies: **StackIOT** (seeded — 17 components, 4 PCBs, ROIP400 product with BOM, stock), StackIOT Technologies Pvt Ltd, Test Co, **Dielectric Technologies Pvt. Ltd.** (user's fresh test tenant — 1 item "Registor 10ohm" with 500 on-hand in WH-01·A13).
@@ -123,5 +132,5 @@ npx tsx scripts/seed-admin.ts && npx tsx scripts/seed-sample.ts && npx tsx scrip
 - Legacy Stock In modal (`StockMoveModal`) is deprecated but on disk — the rebuilt inventory page uses `ItemStockMoveDialog` instead. No CBV anywhere in the new write path.
 - `hint` field on `ApiError` is the standard for surfacing remediation.
 
-## Nothing is committed
-All work above is uncommitted on `main`. **First ask should be: commit now, in logical chunks.** Suggest 5–6 commits (migrations, server, universal-item UI, inventory rebuild, Stage/Category slices, docs/plan).
+## Repo state
+Everything from F1 through Slice 3 is committed on `main`. Working tree is clean. Next commit target is one of the open items above (likely F6.4 or F5.6).
