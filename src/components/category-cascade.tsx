@@ -21,6 +21,7 @@ export function CategoryCascade({
   allLabel = "— Select —",
   className,
   manage = false,
+  stageFilter,
 }: {
   value: string
   onChange: (id: string) => void
@@ -29,6 +30,10 @@ export function CategoryCascade({
   className?: string
   /** Show inline rename/delete controls for the selected node. */
   manage?: boolean
+  /** Slice 2: filter the picker to categories belonging to this stage.
+   *  A root is visible when the root itself OR any descendant matches the
+   *  stage — so a stage-scoped user still sees the whole subtree. */
+  stageFilter?: string
 }) {
   const d = useData()
   const [renaming, setRenaming] = React.useState(false)
@@ -97,13 +102,34 @@ export function CategoryCascade({
   const iconBtn =
     "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-muted-foreground hover:text-foreground disabled:opacity-50"
 
+  // Stage filter: a node is visible if IT matches, or any descendant does.
+  // We compute this once per render by memoizing on the stage + dataset.
+  const visibleIds = React.useMemo(() => {
+    if (!stageFilter) return null
+    const roots = d.categoryChildren(null)
+    const allow = new Set<string>()
+    const walk = (node: { id: string; defaultItemType: string | null }): boolean => {
+      const children = d.categoryChildren(node.id)
+      let anyChild = false
+      for (const kid of children) if (walk(kid as unknown as { id: string; defaultItemType: string | null })) anyChild = true
+      const self = node.defaultItemType === stageFilter
+      if (self || anyChild) allow.add(node.id)
+      return self || anyChild
+    }
+    for (const r of roots) walk(r as unknown as { id: string; defaultItemType: string | null })
+    return allow
+  }, [d, stageFilter])
+
+  const filteredChildren = (parentId: string | null) =>
+    d.categoryChildren(parentId).filter((c) => !visibleIds || visibleIds.has(c.id))
+
   return (
     <div className="space-y-2">
       <div className={className ?? "flex flex-wrap gap-2"}>
         {levels.map((lv, idx) => (
           <select key={idx} value={lv.selected} onChange={(e) => handle(idx, e.target.value)} className={selectCls}>
             <option value="">{idx === 0 ? allLabel : "— All —"}</option>
-            {d.categoryChildren(lv.parentId).map((o) => (
+            {filteredChildren(lv.parentId).map((o) => (
               <option key={o.id} value={o.id}>{o.name}</option>
             ))}
           </select>

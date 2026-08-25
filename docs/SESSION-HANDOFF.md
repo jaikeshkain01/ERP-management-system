@@ -7,84 +7,87 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 
 ## Critical working notes (read first)
 - **DB:** local `postgresql://…@localhost:5432/stackiot_erp`. `DATABASE_URL` = app role **`erp_app`** under RLS; `DIRECT_URL` = owner **`postgres`**, bypasses RLS for migrations/probes.
-- **Migrations:** apply with **`npx prisma migrate deploy`** (NOT `migrate dev`). `schema.prisma` is **NOT** the source of truth — hand-written SQL migrations are; **new tables/columns are accessed via raw SQL** (`$queryRaw`/`$executeRaw`), not the generated client.
+- **Migrations:** apply with **`npx prisma migrate deploy`** (NOT `migrate dev`). `schema.prisma` is **NOT** the source of truth — hand-written SQL migrations are; **new tables/columns are accessed via raw SQL** (`$queryRaw`/`$executeRaw`), not the generated Prisma client.
 - **Typecheck:** `npx tsc --noEmit 2>&1 | grep -v "\.next/"`.
-- **Can't log in from the agent** (auth gated; entering credentials disallowed). Verify via `tsc` + SQL probes over `DIRECT_URL`. User verifies UI by logging in.
-- **DB was fully reset this session** (see below). Login: `admin@stackiot.local` / `ChangeMe123!`.
-- **Bootstrap grants bug** — `scripts/sql/02-grant-runtime-privileges.sql` grants to legacy role `stack`; live app role is `erp_app`. After any `DROP SCHEMA public CASCADE`, re-grant to `erp_app` (recipe below) or the app returns permission-denied. Consider fixing the SQL file.
+- **F1–F3 verify (still authoritative):** `npx tsx scripts/verify-items-migrations.ts` — run this after any ledger/items change.
+- **Can't log in from the agent.** Verify via `tsc` + SQL probes over `DIRECT_URL`. User verifies UI by logging in.
+- **`hint` field on `ApiError` is the standard pattern** for surfacing remediation to users. Populate it on any new 4xx/409.
 - **Keep token use low.** Prefer targeted edits; delegate mechanical sweeps to a subagent.
 
-## Where we are RIGHT NOW (this session's arc)
-Session started with the High/Medium/Low CRUD tier work already done. Added a large stack of features on top; DB then wiped for a fresh test. All code is uncommitted.
+## Read on load
+- `memory/project_universal_item.md` — the invariant: everything is an Item with a lot.
+- `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
+- `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-### Ship record — features live in code, not yet exercised by a logged-in user
+## Where we are RIGHT NOW (end of session — CRITICAL PATH COMPLETE)
 
-**Toast + error UX (whole app)**
-- Server error envelope now carries a `hint?: string` field ([http.ts](src/lib/server/http.ts)). Populated on ~13 conflict guards across purchases/production/warehouses/locations/lots/variants/categories/products/suppliers with concrete remediation text.
-- Client [api-error.ts](src/lib/api-error.ts) `extractError()` extracts `{message, hint}`; every high-value toast renders the hint on a second line.
-- Every toast in the app raised to `z-[70]` (above the `z-50` modal backdrop) and uses **opaque `bg-background`** + tinted border — fixes prior "toast unreadable behind blurred modal" and "translucent tint over content" issues.
+The **universal-item transformation critical path (F1→F7) is shipped**. The ERP now has:
 
-**Cross-workspace nav (origin-aware, license-gated)**
-- `?from=<workspace-id>` query param preserves source-workspace context when jumping into another workspace. `WorkspaceTabs` honours it; item-details + supplier-details switch breadcrumb + Back button accordingly.
-- `isWorkspaceReachable(workspace, isEnabled)` helper — if `from=` names a locked module, the hint is silently dropped (falls back to path-based). Same used on item-details "Open in Inventory" button and Universal Search's Inventory chip: **licensed → outline button; unlicensed → dashed 🔒 chip with "not in your plan" tooltip**.
-- 11 cross-workspace links converted (Purchases → Items/Suppliers/Brands, Suppliers ↔ Items, PCB Structure → Items/Suppliers/Brands, Product Structure → same).
+- **One `items` master** for every kind of thing (raw / semi-assembled / assembled / consumable / asset / packaging), plus `item_variants` and generalized `item_lots`.
+- **Universal ledger** keyed on `item_variant_id` — purchased AND manufactured items hold real stock (F5.3/F5.4 lifted the CBV NOT NULL and flipped the projection).
+- **Universal BOMs** (`item_bom_versions` / `item_bom_lines`), backfilled from PCB + product BOMs, read side + viewer done (F6).
+- **Production books finished goods** into stock (F7 — completing a production order writes a `PRODUCTION` ledger row for the product's manufactured variant).
+- **Full universal UI** on top: `/items/list`, `/items/add`, `/items/edit/[id]`, `/items/details/[id]`, and a **rebuilt `/components/inventory` page** on the universal master with Stock In/Out (FEFO / pin-lot / multi-lot split).
+- Legacy `/components/list`, `/components/add`, `/components/edit`, `/components/details` are all server-redirect wrappers to `/items/*`.
 
-**BOM Import moved to PCB Management**
-- Old `/products/import` **deleted**. New page: **`/pcb-management/import`** with:
-  - **Two-mode selector:** "Create product with PCBs" (each sheet → PCB inside one product; header fields Name/Code/Version/Description) OR "Import PCBs only" (each sheet → standalone PCB in catalog).
-  - **Per-sheet include checkboxes** — untick garbage/rollup sheets; count/badge tallies only included sheets.
-  - "Import BOM" button removed from `/products/list`, added to `/pcb-management/list`.
+**Everything is UNCOMMITTED on `main`.** ~15 migrations + a lot of app code. **Committing this is the single most important open task.**
 
-**PCB revisions ("division versions") — full multi-revision management**
-- Schema already supported it (`pcb_revisions.status: bom_status`, `product_pcbs.pcb_revision_id`). App code was single-revision-only.
-- Backend: `GET/POST /api/pcbs/[id]/revisions`, `PATCH/DELETE /api/pcbs/[id]/revisions/[revId]`, `GET /api/pcbs/[id]/usage` (Product↔Revision map), extended `GET /api/pcbs/[id]/bom?revision=<uuid>`.
-- New `PcbRevisionsCard` on PCB Structure ([src/components/pcb/pcb-revisions-card.tsx](src/components/pcb/pcb-revisions-card.tsx)): revision list with status badges, per-row **inline BOM expand** (lazy fetch), **Set Active** (auto-demotes prior Active → Superseded), **Add revision modal** (blank or clone from another; auto-suggests next label like Rev B), **Edit BOM modal** (per-revision line editor with catalog type-ahead — [edit-revision-bom-modal.tsx](src/components/pcb/edit-revision-bom-modal.tsx)), **Delete revision** (guarded), **"Used by product" chip column** shows product-usage per revision.
-- **Compare Revisions modal** ([compare-revisions-modal.tsx](src/components/pcb/compare-revisions-modal.tsx)): pick A/B → client-side diff by component id → Added/Removed/Changed/Same rows with per-field highlights + qty deltas. Toggle "show unchanged". Wired via ⇄ Compare button on `PcbRevisionsCard` (only shown when ≥2 revisions).
-- Product-side pin swap: `PATCH /api/products/[id]/pcbs/[linkId]` + `ProductPcbRevisionSelector` compact dropdown on each PCB node on `/products/structure`. "Not primary" badge when product pins to a non-Active revision.
-- Server invariant: **at most one Active revision per PCB** (promotion auto-demotes prior Active). Products **don't auto-migrate** when a PCB's Active changes — that's the whole point.
+### Migrations added this session (in order)
+- `20260819000000_items_universal_master` (F1) — items + item_variants
+- `20260819000001_items_backfill` (F2) — mirror components/products/pcb_revisions → items
+- `20260819000002_ledger_item_variant_dual_write` (F3) — ledger dual columns + sync trigger
+- `20260821000000_items_generic_pn` (P4b) — items.generic_pn
+- `20260821000001_items_board_meta` (P5) — solder/footprint/spq
+- `20260821000002_items_packaging_meta` (P6)
+- `20260821000003_items_storage_meta` (P7)
+- `20260821000004_items_asset_meta` (P8) — custodian FK + serial (tenant-unique) etc.
+- `20260821000005_role_permissions_item_mirror` (F5.2) — item.* perms mirrored from component.*
+- `20260821000006_ledger_sync_bidirectional` (F5.3) — reverse trigger direction
+- `20260821000007_ledger_cbv_nullable` (F5.4) — drop NOT NULL, flip projection key
+- `20260821000008_default_lot_by_item_variant` (F5.4 follow-up) — `assign_default_lot` keys on IV
+- `20260821000009_item_boms_universal_master` (F6.1)
+- `20260821000010_item_boms_backfill` (F6.2)
+- `20260824000000_categories_require_stage` (Slice 1) — every category has a stage, seeded Bare/Populated PCBs
 
-**Lot inventory enrichment on item details**
-- Lot Inventory table shows: Lot · Mfr PN · **Supplier · Received · Mfg Date** · Expiry · **Date Code · MSL** · On Hand · Unit Cost · Value · Actions. Expiry colour-coded (amber ≤30d, red expired) with tooltip. Note indicator `*` on lots with notes. **Totals footer.**
+### Slice 1 + Slice 2 shipped this session (the Stage/Category model)
+Per user's request:
 
-**Stock Out — lot picker + multi-lot split**
-- `POST /api/inventory/transactions` outbound accepts:
-  - `lotId` (single-lot pin, overrides FEFO), or
-  - `lotAllocations: [{lotId, qty}, ...]` (multi-lot split; sum must equal total qty; server writes one ledger row per allocation).
-- Both validate lot belongs to variant + has enough on-hand **at the source location**.
-- Stock modal (`StockMoveModal`): outbound-only Lot picker with **Auto (FEFO)** default + "Split across lots" toggle → editable {Lot, Qty, ✕} table with running total.
-- **Barcode-ready polish** on lot/expiry inputs: `data-scannable="lot"|"expiry"`, `autoComplete="off"`, `spellCheck={false}`, `autoCapitalize="characters"`, `enterKeyHint="next"`. Ready for a scanner listener to drop in later (no scanner wired yet).
+- **Slice 1**: `item_categories.default_item_type` is now NOT NULL. Category-create API requires `defaultItemType`. Seeded **Bare PCBs** (raw) and **Populated PCBs** (semi_assembled) into every tenant.
+- **Slice 2**: Add-form Section 1 renamed to **"Stage"** with two groups (Build stage: Raw / Semi-assembled / Assembled; Other: Consumable / Asset / Packaging). Category cascade filtered to the chosen stage (`<CategoryCascade stageFilter={itemType} />`). "+ Add category" auto-uses the current stage. Category → type auto-detect removed (one-way flow now). Item-type lock on the edit form removed (soft warning instead).
 
-**Near-expiry surfacing**
-- `GET /api/item-lots?expiringWithinDays=30` — filters to lots with expiry within N days (incl. already expired) that still have positive on-hand.
-- Inventory page: **"Expiring ≤30d · N"** filter chip (amber tone when active, hidden if N=0).
-- Dashboard: amber **"Expiring ≤30d"** KPI tile (`Clock` icon, appears only when N>0, gated on inventory module).
+### Slice 3 (PENDING — user has approved, was about to start when context ran out)
+Add `items.is_finished_good boolean NULL` + checkbox on the form: *"This is a finished good (we sell it)"*. Independent of stage — a populated PCB can be `semi_assembled` **and** sellable. Feeds the future sales module. Purely additive; nothing else consumes it yet.
 
-**Stock-In location picker (from earlier this session)**
-- Optional destination-bin picker on inbound; default = warehouse's bulk/default bin.
+## Open items — user's roadmap
+1. **Commit everything** — HIGHEST priority. Suggest logical chunks: (a) migrations, (b) server data/API, (c) universal-item UI, (d) inventory rebuild, (e) Stage/Category slices.
+2. **Slice 3** — `is_finished_good` flag (approved, tiny slice, 15 min).
+3. **F6.4** — BOM write cutover: repoint PCB-structure + product-structure editors + production's demand explosion onto `item_bom_*`; then retire `pcb_lines`/`product_pcbs`.
+4. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
+5. **Legacy retirement + dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource.
+6. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
 
-**Universal Search enhancement**
-- Component result preview shows both "Items" (arrow, primary) and **"📦 Inventory"** chip (licensed) / **"🔒 Inventory"** (unlicensed). Enter still routes to Items (primary path).
+## DB state right now
+- 4 companies: **StackIOT** (seeded — 17 components, 4 PCBs, ROIP400 product with BOM, stock), StackIOT Technologies Pvt Ltd, Test Co, **Dielectric Technologies Pvt. Ltd.** (user's fresh test tenant — 1 item "Registor 10ohm" with 500 on-hand in WH-01·A13).
+- Categories: 40+ per tenant + the two new PCB categories. Every category has `default_item_type`.
+- All F1–F3 verify checks green as of session end.
 
-## Database reset done — current DB state
+## Testing accounts
+- `admin@stackiot.local` / `ChangeMe123!` → StackIOT (full seed data — use for BOM / production / stock tests).
+- `stackiot@stackiot.tech` → StackIOT Technologies Pvt Ltd (no warehouse; use for empty-tenant flows).
+- User's own login → Dielectric (their test tenant, has some data now).
 
-Fresh DB seeded this session. State:
-- **1 user** (`admin@stackiot.local` / `ChangeMe123!`)
-- 1 warehouse (MAIN), 15 manufacturers, 8 suppliers, 17 items, 26 variants, 4 PCBs (1 revision each), 1 product (ROIP 400), 26 opening ledger rows / lots, 3 PRs, 2 POs.
-- Seeds ran (in this exact order): `seed-admin.ts` → `seed-sample.ts` → `seed-inventory.ts` → `seed-purchases.ts`.
+## DB reset recipe (kept in case of nuclear-option testing)
+> ⚠️ Discussed but the user opted NOT to reset — his fresh Dielectric tenant made resetting unnecessary. Keep for reference; note the sequencing gap: a fresh reset runs the F2/F6.2 backfills against an EMPTY DB, then seeds legacy tables — so universal screens would come up empty. If you ever do reset, either write a `scripts/reseed-all.ts` that runs seed BEFORE re-invoking the backfills, or accept that universal screens start empty.
 
-### To repeat the reset
 ```bash
 DURL=$(grep -oE 'DIRECT_URL="?[^"]+' .env | sed 's/DIRECT_URL=//; s/"//g')
-# 1. wipe schema
 cat > ._reset.sql <<'EOF'
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
+DROP SCHEMA public CASCADE; CREATE SCHEMA public;
 GRANT ALL ON SCHEMA public TO PUBLIC;
 EOF
 DIRECT_URL="$DURL" DATABASE_URL="$DURL" npx prisma db execute --file ._reset.sql
-# 2. migrations + client
 npx prisma migrate deploy && npx prisma generate
-# 3. **CRITICAL** — regrant to erp_app (bootstrap SQL still targets legacy "stack" role)
+# CRITICAL: regrant to erp_app (bootstrap SQL still targets legacy "stack" role)
 cat > ._grants.sql <<'EOF'
 GRANT USAGE ON SCHEMA public TO erp_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA public TO erp_app;
@@ -96,43 +99,29 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE       
 EOF
 DIRECT_URL="$DURL" DATABASE_URL="$DURL" npx prisma db execute --file ._grants.sql
 rm ._reset.sql ._grants.sql
-# 4. seed
-npx tsx scripts/seed-admin.ts && npx tsx scripts/seed-sample.ts && npx tsx scripts/seed-inventory.ts && npx tsx scripts/seed-purchases.ts
+npx tsx scripts/seed-admin.ts && npx tsx scripts/seed-sample.ts && npx tsx scripts/seed-inventory.ts && npx tsx scripts/seed-purchases.ts && npx tsx scripts/seed-default-categories.ts
 ```
 
-## Open items — user's roadmap (in the order they wanted)
-
-User last said "do sequence wise" through this batching (I paused before starting Batch A when they asked to reset the DB):
-
-- **Batch A (UI-only, no migrations)** — *not yet started*
-  - **Adjustment UI + reason codes** — the `ADJUSTMENT` type has a server endpoint but **no UI page exists**. Real feature = build the Adjustment modal from scratch (component context, signed qty, location, reason picker with standard codes: Cycle count / Damaged / Miscount / Write-off / Expired / Return / Other + required note when Other). Server accepts freetext `reason`, so no schema change.
-  - **ABC classification** — compute per-item `annualConsumption × cheapest_unit_cost`, sort desc, bucket A (top 20%) / B (next 30%) / C (rest). Item list badge + filter chip. Client-side only (data already in bootstrap).
-
-- **Batch B (needs migrations)** — *not yet started*
-  - **Item obsolescence workflow** — new `lifecycle_status` column on `components` (Active / Obsolete). Block inbound on Obsolete; UI badge + status toggle. Migration required.
-  - **Landed cost breakdown** — new columns on `item_lots` (freight/duty/handling). Revalue on-hand; PO receiving UI extension.
-
-- **Batch C (warehouse ops)** — *not yet started*
-  - **Damaged / Quarantine bin type** — extend `location_kind` enum with `quarantine`. Stock-out with "Damaged" reason routes here.
-  - **Cycle counting flow** — new session table + dedicated page (draft → in-progress → posted).
-
-- **Batch D (last)** — *not yet started*
-  - **In-transit / two-step transfers** — either new `in_transit` bin type or a state column on transfers; Ship → Receive with settle event.
-
-- **Barcode / QR scanner integration** — user asked to skip for now but keep UI ready (already done: `data-scannable` hooks in place).
+## Key files (quick reference)
+- **Universal item form:** `src/components/items/universal-item-form.tsx` — the shared form (mode="add"|"edit"). 1600+ lines, all sections.
+- **Item data layer:** `src/lib/server/data/items.ts` — `listItems`, `getItem(InTx)`, `createItem`, `updateItem`, `deleteItem`, `addItemVariant`, `getItemStock`, `getItemBom`, `getItemLedger`, `getVariantLots`, `getItemPcbUsage`.
+- **Universal inventory page:** `src/app/components/inventory/page.tsx` (rebuilt on `/api/items`).
+- **Universal stock dialog:** `src/components/inventory/item-stock-move-dialog.tsx` — In/Out, FEFO/pin-lot/multi-lot-split.
+- **Detail page:** `src/app/items/details/[id]/page.tsx` — Master, Manufacturer, Board/Packaging/Storage/Asset, BOM, PCB-usage, stock rollup, lots, movement history.
+- **Category cascade:** `src/components/category-cascade.tsx` — now with `stageFilter` prop.
+- **Inventory data layer:** `src/lib/server/data/inventory.ts` — fully re-keyed on `item_variant_id` (F5.7). Legacy `getComponentStock` still there for legacy paths.
+- **Production:** `src/lib/server/data/production.ts` — `completeProductionOrder` writes finished-goods PRODUCTION row.
+- **Perms matrix:** `src/lib/permissions.ts` — `item: CRUD` (F5.2).
+- **F1–F3 verify:** `scripts/verify-items-migrations.ts` — always run after ledger/items changes.
+- **Default categories seed:** `scripts/seed-default-categories.ts` — idempotent, seeds 40-node taxonomy per company.
 
 ## Design decisions locked earlier (don't relitigate)
-- Items and Inventory stay **separate workspaces** — module-licensed separately. Cross-links via `?from=` + gated buttons is the pattern.
-- The `hint` field on `ApiError` is the standard pattern for surfacing remediation to the user; new guards should populate it.
-
-## Key files (quick reference)
-- Spec: `docs/COMPONENTS-IMPROVEMENTS.md` · CRUD gaps: `docs/CRUD-AUDIT.md` · schema: `docs/schema.sql`
-- Server: `src/lib/server/data/{components,inventory,item-lots,item-categories,warehouses,purchases,production,products,pcbs,suppliers}.ts` · `src/lib/server/http.ts` (ApiError + hint)
-- Client shared: `src/lib/api-error.ts` (extractError) · `src/lib/modules.ts` (workspaceById, isWorkspaceReachable)
-- PCB revisions: `src/components/pcb/{pcb-revisions-card,edit-revision-bom-modal,compare-revisions-modal,product-pcb-revision-selector}.tsx`
-- Stock modal: `src/components/inventory/stock-move-modal.tsx` (lot picker + multi-lot split + barcode-ready)
-- BOM import: `src/lib/bom-import.ts` · `src/app/pcb-management/import/page.tsx`
-- Warehouses UI: `src/app/components/inventory/warehouses/page.tsx`
+- Items and Inventory stay **separate workspaces** — module-licensed separately. Cross-links via `?from=` + gated buttons.
+- Universal items = **single source of truth**; legacy `components`/`products`/`pcbs` stay writable during transition, but every new UI reads via `items`.
+- **Category = one stage** (Slice 1). Bare PCBs and Populated PCBs are separate categories.
+- **Item type ≠ role.** "Assembled" is a stage; "finished good" is a role → will be an `is_finished_good` flag (Slice 3, pending).
+- Legacy Stock In modal (`StockMoveModal`) is deprecated but on disk — the rebuilt inventory page uses `ItemStockMoveDialog` instead. No CBV anywhere in the new write path.
+- `hint` field on `ApiError` is the standard for surfacing remediation.
 
 ## Nothing is committed
-All work above is uncommitted on `main`. Ask before committing.
+All work above is uncommitted on `main`. **First ask should be: commit now, in logical chunks.** Suggest 5–6 commits (migrations, server, universal-item UI, inventory rebuild, Stage/Category slices, docs/plan).

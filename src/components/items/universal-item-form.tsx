@@ -40,10 +40,12 @@ import { extractError } from "@/lib/api-error"
 type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
 
-// One row per selectable item type. `slug` is the code prefix suggested by
-// the auto-code helper when no category is chosen yet. `defaultUom` matches
-// the intuitive base unit; user can override.
-const ITEM_TYPES: {
+// One row per selectable stage. `slug` is the code prefix suggested by the
+// auto-code helper when no category is chosen yet. `defaultUom` matches the
+// intuitive base unit; user can override. `group` splits the picker into
+// "Build stage" (raw → semi_assembled → assembled) and "Other" (consumable,
+// asset, packaging) — orthogonal-to-build kinds live in their own bucket.
+interface StageMeta {
   value: ItemType
   label: string
   hint: string
@@ -52,15 +54,17 @@ const ITEM_TYPES: {
   defaultSource: "purchased" | "manufactured"
   icon: React.ComponentType<{ className?: string }>
   tone: string
-}[] = [
-  { value: "raw",            label: "Raw",            hint: "Purchased material or part",             slug: "RAW", defaultUom: "PCS", defaultSource: "purchased",    icon: Nut,    tone: "border-primary/30 bg-primary/5" },
-  { value: "semi_assembled", label: "Sub-assembly",   hint: "A PCB or WIP built in-house",            slug: "SUB", defaultUom: "PCS", defaultSource: "manufactured", icon: Cpu,    tone: "border-sky-500/30 bg-sky-500/5" },
-  { value: "assembled",      label: "Finished good",  hint: "A product shipped to customers",         slug: "FG",  defaultUom: "PCS", defaultSource: "manufactured", icon: Package,tone: "border-emerald-500/30 bg-emerald-500/5" },
-  { value: "consumable",     label: "Consumable",     hint: "Solder, flux, cleaner, adhesive, tape…", slug: "CON", defaultUom: "PCS", defaultSource: "purchased",    icon: Boxes,  tone: "border-amber-500/30 bg-amber-500/5" },
-  { value: "asset",          label: "Asset",          hint: "IT gear, tools, machines, fixtures",     slug: "AST", defaultUom: "PCS", defaultSource: "purchased",    icon: Laptop, tone: "border-violet-500/30 bg-violet-500/5" },
-  { value: "packaging",      label: "Packaging",      hint: "Boxes, bags, foam, labels",              slug: "PKG", defaultUom: "PCS", defaultSource: "purchased",    icon: Wrench, tone: "border-slate-500/30 bg-slate-500/5" },
+  group: "build" | "other"
+}
+const ITEM_TYPES: StageMeta[] = [
+  { value: "raw",            label: "Raw",             hint: "Purchased material or part",             slug: "RAW", defaultUom: "PCS", defaultSource: "purchased",    icon: Nut,     tone: "border-primary/30 bg-primary/5",         group: "build" },
+  { value: "semi_assembled", label: "Semi-assembled",  hint: "A sub-assembly built in-house",          slug: "SUB", defaultUom: "PCS", defaultSource: "manufactured", icon: Cpu,     tone: "border-sky-500/30 bg-sky-500/5",         group: "build" },
+  { value: "assembled",      label: "Assembled",       hint: "A fully-built board or product",         slug: "FG",  defaultUom: "PCS", defaultSource: "manufactured", icon: Package, tone: "border-emerald-500/30 bg-emerald-500/5", group: "build" },
+  { value: "consumable",     label: "Consumable",      hint: "Solder, flux, cleaner, adhesive, tape…", slug: "CON", defaultUom: "PCS", defaultSource: "purchased",    icon: Boxes,   tone: "border-amber-500/30 bg-amber-500/5",     group: "other" },
+  { value: "asset",          label: "Asset",           hint: "IT gear, tools, machines, fixtures",     slug: "AST", defaultUom: "PCS", defaultSource: "purchased",    icon: Laptop,  tone: "border-violet-500/30 bg-violet-500/5",   group: "other" },
+  { value: "packaging",      label: "Packaging",       hint: "Boxes, bags, foam, labels",              slug: "PKG", defaultUom: "PCS", defaultSource: "purchased",    icon: Wrench,  tone: "border-slate-500/30 bg-slate-500/5",     group: "other" },
 ]
-const ITEM_TYPE_BY_VALUE: Record<ItemType, (typeof ITEM_TYPES)[number]> = Object.fromEntries(ITEM_TYPES.map((t) => [t.value, t])) as Record<ItemType, (typeof ITEM_TYPES)[number]>
+const ITEM_TYPE_BY_VALUE: Record<ItemType, StageMeta> = Object.fromEntries(ITEM_TYPES.map((t) => [t.value, t])) as Record<ItemType, StageMeta>
 
 const UOM_OPTIONS = ["PCS", "Reel", "Tray", "Meter", "Set", "Box", "Roll", "Kg", "Litre"]
 
@@ -341,10 +345,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setSpecs(next)
   }
 
-  // Switching type toggles the default source (a finished good is always
+  // Switching stage toggles the default source (a finished good is always
   // manufactured, a raw part is always purchased), the default UOM, and — if
-  // the current category doesn't fit the new type — clears it so the picker
-  // reflects the new context. User can override any of these afterwards.
+  // the current category no longer belongs to this stage — clears the picker
+  // so the user re-picks from the (now stage-scoped) list. One-way flow:
+  // Stage → Category. There is no reverse Category → Stage auto-detect
+  // any more (Slice 2 makes categories a proper subset of a stage).
   const handlePickType = (t: ItemType) => {
     const meta = ITEM_TYPE_BY_VALUE[t]
     setItemType(t)
@@ -354,20 +360,6 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     const cat = d.getCategory(categoryId)
     if (cat && cat.defaultItemType && cat.defaultItemType !== t) setCategoryId("")
   }
-
-  // Auto-set item type from the picked category when the user has not yet
-  // committed to a type themselves. Categories carry `defaultItemType` as a
-  // hint; respecting it stops "picked Resistors → left type as Asset" mistakes.
-  React.useEffect(() => {
-    if (typeTouched) return
-    const cat = d.getCategory(categoryId)
-    if (cat?.defaultItemType && cat.defaultItemType !== itemType) {
-      setItemType(cat.defaultItemType as ItemType)
-      const meta = ITEM_TYPE_BY_VALUE[cat.defaultItemType as ItemType]
-      setSourceKind(meta.defaultSource)
-      setBaseUom(meta.defaultUom)
-    }
-  }, [categoryId, typeTouched, itemType, d])
 
   // Auto-suggest a code from name/category/type, but stop the moment the user
   // types into the code field (respect their edit).
@@ -756,39 +748,46 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             <CardDescription>Type, category, code, name — the core of every item.</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            {/* Item type chips */}
-            <div className="space-y-2">
+            {/* Stage picker — two groups: Build stage + Other. Item type in the
+                DB is still `item_type`; this UI just labels it "Stage" so it
+                reads naturally to a manufacturing person. */}
+            <div className="space-y-3">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                Item type
-                {isEdit && <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/80 normal-case tracking-normal"><Lock className="h-3 w-3" /> immutable after create</span>}
+                Stage
+                {isEdit && <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/80 normal-case tracking-normal"><Lock className="h-3 w-3" /> keep in mind: changing stage on an existing item reclassifies it everywhere</span>}
               </label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {ITEM_TYPES.map((t) => {
-                  const Icon = t.icon
-                  const active = itemType === t.value
-                  const locked = isEdit
-                  return (
-                    <button
-                      key={t.value}
-                      type="button"
-                      disabled={locked && !active}
-                      onClick={() => !locked && handlePickType(t.value)}
-                      title={locked ? "Item type can't change after create — create a new item instead" : undefined}
-                      className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
-                        locked
-                          ? active ? `${t.tone} border-primary/60 shadow-3xs cursor-default` : "border-border/50 bg-background opacity-40 cursor-not-allowed"
-                          : active ? `${t.tone} border-primary/60 shadow-3xs cursor-pointer` : "border-border bg-background hover:bg-muted/30 cursor-pointer"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon className={`h-4 w-4 ${active ? "text-primary" : "text-muted-foreground"}`} />
-                        <span className={`text-sm font-bold ${active ? "text-primary" : "text-foreground"}`}>{t.label}</span>
-                      </div>
-                      <div className="text-[11px] text-muted-foreground mt-0.5">{t.hint}</div>
-                    </button>
-                  )
-                })}
-              </div>
+              {(["build", "other"] as const).map((group) => {
+                const stages = ITEM_TYPES.filter((t) => t.group === group)
+                return (
+                  <div key={group} className="space-y-1.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                      {group === "build" ? "Build stage" : "Other"}
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {stages.map((t) => {
+                        const Icon = t.icon
+                        const active = itemType === t.value
+                        return (
+                          <button
+                            key={t.value}
+                            type="button"
+                            onClick={() => handlePickType(t.value)}
+                            className={`text-left rounded-lg border px-3 py-2.5 transition-all cursor-pointer ${
+                              active ? `${t.tone} border-primary/60 shadow-3xs` : "border-border bg-background hover:bg-muted/30"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <Icon className={`h-4 w-4 ${active ? "text-primary" : "text-muted-foreground"}`} />
+                              <span className={`text-sm font-bold ${active ? "text-primary" : "text-foreground"}`}>{t.label}</span>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">{t.hint}</div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
 
             {/* Source toggle */}
@@ -818,10 +817,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               </div>
             </div>
 
-            {/* Category */}
+            {/* Category — filtered to the chosen stage */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Category (optional)</label>
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Category <span className="normal-case tracking-normal text-[10px] font-medium text-muted-foreground/80">(within {ITEM_TYPE_BY_VALUE[itemType].label})</span>
+                </label>
                 <button
                   type="button"
                   onClick={() => setShowAddCat((v) => !v)}
@@ -830,13 +831,13 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   <Plus className="h-3 w-3" /> {showAddCat ? "Cancel" : "Add category"}
                 </button>
               </div>
-              <CategoryCascade value={categoryId} onChange={setCategoryId} allLabel="— Select a category —" />
+              <CategoryCascade value={categoryId} onChange={setCategoryId} allLabel="— Select a category —" stageFilter={itemType} />
               {showAddCat && (
                 <div className="rounded-lg border border-border bg-muted/10 p-3 space-y-2">
                   <p className="text-[11px] text-muted-foreground">
                     New category will be added {categoryId
                       ? <>under <span className="font-mono text-foreground">{d.getCategory(categoryId)?.path}</span></>
-                      : "as a top-level root"}, with default item type <span className="font-mono text-foreground">{itemType}</span>.
+                      : "as a top-level root"}, under stage <span className="font-mono text-foreground">{ITEM_TYPE_BY_VALUE[itemType].label}</span>.
                   </p>
                   <div className="flex items-center gap-2">
                     <Input
@@ -853,7 +854,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 </div>
               )}
               <span className="text-[11px] text-muted-foreground">
-                Picking a category with a default item type will auto-set the type above (until you override it manually).
+                Categories are scoped to the stage picked above. Change the stage to see a different set.
               </span>
             </div>
 
