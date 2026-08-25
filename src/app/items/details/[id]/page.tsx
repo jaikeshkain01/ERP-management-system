@@ -548,32 +548,52 @@ export default function ItemDetailsPage() {
             </SectionCard>
           )}
 
-          {/* Bill of Materials (F6.3) — manufactured items with a universal BOM */}
+          {/* Bill of Materials — visible for every non-raw item.
+              With versions:  full render + prominent "Edit BOM" button.
+              Without one:    "No BOM yet" empty state with a "Create BOM" CTA.
+              Raw items skip the section entirely (raw = foundational, no BOM). */}
+          {item.itemType !== "raw" && (!bom || bom.versions.length === 0) && (
+            <SectionCard icon={Layers} title="Bill of Materials">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
+                  No BOM defined yet. Create the first version to list the child items that make up this {TYPE_META[item.itemType].label.toLowerCase()}.
+                </p>
+                <Link
+                  href={`/items/${encodeURIComponent(id)}/bom`}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold hover:opacity-90"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Create BOM
+                </Link>
+              </div>
+            </SectionCard>
+          )}
           {bom && bom.versions.length > 0 && (() => {
             const active = bom.versions.find((v) => v.id === bom.selectedVersionId)
             return (
               <SectionCard icon={Layers} title="Bill of Materials">
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-muted-foreground">Version:</span>
-                    <span className="font-mono font-bold text-foreground">{active?.version ?? "—"}</span>
-                    {active && (
-                      <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold border ${
-                        active.status === "Active"
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
-                          : "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20"
-                      }`}>{active.status}</span>
-                    )}
-                    {bom.versions.length > 1 && (
-                      <span className="text-muted-foreground/70">· {bom.versions.length} versions</span>
-                    )}
-                    <span className="ml-auto text-muted-foreground font-mono">{bom.lines.length} line{bom.lines.length === 1 ? "" : "s"}</span>
+                  <div className="flex flex-wrap items-center gap-2">
                     <Link
                       href={`/items/${encodeURIComponent(id)}/bom`}
-                      className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] font-bold text-foreground hover:bg-muted/40"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-bold hover:opacity-90"
                     >
-                      <Pencil className="h-3 w-3" /> Edit BOM
+                      <Pencil className="h-3.5 w-3.5" /> Edit BOM
                     </Link>
+                    <div className="flex flex-wrap items-center gap-2 text-xs ml-2">
+                      <span className="text-muted-foreground">Version:</span>
+                      <span className="font-mono font-bold text-foreground">{active?.version ?? "—"}</span>
+                      {active && (
+                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold border ${
+                          active.status === "Active"
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
+                            : "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20"
+                        }`}>{active.status}</span>
+                      )}
+                      {bom.versions.length > 1 && (
+                        <span className="text-muted-foreground/70">· {bom.versions.length} versions</span>
+                      )}
+                    </div>
+                    <span className="ml-auto text-xs text-muted-foreground font-mono">{bom.lines.length} line{bom.lines.length === 1 ? "" : "s"}</span>
                   </div>
                   <div className="border border-border rounded-lg overflow-hidden">
                     <table className="w-full text-sm">
