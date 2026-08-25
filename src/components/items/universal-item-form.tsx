@@ -22,6 +22,7 @@
  */
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -395,6 +396,34 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const [bomLines, setBomLines]        = React.useState<BomDraftLine[]>([])
   const [bomOpenRow, setBomOpenRow]    = React.useState<string | null>(null)  // key of the row whose typeahead is open
   const [bomMatches, setBomMatches]    = React.useState<Record<string, BomChildSearchResult[]>>({})
+  // Portal-anchored dropdown positioning. The table wraps in an
+  // `overflow-x-auto` scroll container which clips absolutely-positioned
+  // dropdowns to its edges — matches disappeared under the next row. We
+  // render the suggestions list to <body> via portal at a fixed position
+  // measured off the input's bounding rect, and update the anchor on
+  // scroll/resize.
+  const bomInputRefs = React.useRef<Map<string, HTMLInputElement | null>>(new Map())
+  const setBomInputRef = React.useCallback((key: string, el: HTMLInputElement | null) => {
+    if (el) bomInputRefs.current.set(key, el)
+    else bomInputRefs.current.delete(key)
+  }, [])
+  const [bomAnchorRect, setBomAnchorRect] = React.useState<{ x: number; y: number; w: number } | null>(null)
+  React.useEffect(() => {
+    if (!bomOpenRow) { setBomAnchorRect(null); return }
+    const measure = () => {
+      const el = bomInputRefs.current.get(bomOpenRow)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setBomAnchorRect({ x: r.left, y: r.bottom, w: r.width })
+    }
+    measure()
+    window.addEventListener("scroll", measure, true)
+    window.addEventListener("resize", measure)
+    return () => {
+      window.removeEventListener("scroll", measure, true)
+      window.removeEventListener("resize", measure)
+    }
+  }, [bomOpenRow, bomMatches])
   const bomApplicable = itemType !== "raw"
 
   const newBomLine = (): BomDraftLine => ({
@@ -1464,6 +1493,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                           <td className="px-2 py-1.5">
                             <div className="relative">
                               <Input
+                                ref={(el) => setBomInputRef(l.key, el)}
                                 value={l.childName}
                                 onChange={(e) => onBomNameChange(l.key, e.target.value)}
                                 onFocus={() => { if (l.childName.trim() && !linked) setBomOpenRow(l.key) }}
@@ -1475,8 +1505,16 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                               {linked && (
                                 <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
                               )}
-                              {matches.length > 0 && (
-                                <ul className="absolute left-0 top-[calc(100%+2px)] z-50 max-h-56 w-[min(360px,80vw)] overflow-y-auto rounded-lg border border-border bg-popover shadow-xl">
+                              {matches.length > 0 && bomAnchorRect && bomOpenRow === l.key && typeof window !== "undefined" && createPortal(
+                                <ul
+                                  style={{
+                                    position: "fixed",
+                                    top: bomAnchorRect.y + 2,
+                                    left: bomAnchorRect.x,
+                                    width: Math.max(bomAnchorRect.w, 260),
+                                  }}
+                                  className="z-[100] max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl"
+                                >
                                   {matches.map((r) => (
                                     <li key={r.id}>
                                       <button
@@ -1493,7 +1531,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                                       </button>
                                     </li>
                                   ))}
-                                </ul>
+                                </ul>,
+                                document.body,
                               )}
                               {!linked && l.childName.trim() && (
                                 <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">

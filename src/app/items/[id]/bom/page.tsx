@@ -21,6 +21,7 @@
  */
 
 import * as React from "react"
+import { createPortal } from "react-dom"
 import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -198,8 +199,36 @@ export default function ItemBomEditorPage() {
   // Same UX as universal-item-form's BOM section: type in the Name field,
   // matches appear in a dropdown, click to link. A green Link2 icon marks
   // linked rows; sparkles marks rows that will be created as new items.
+  //
+  // The dropdown is portalled to <body> at a fixed position anchored to the
+  // input's bounding rect. Without the portal it renders inside a <td> whose
+  // enclosing scroll container (`overflow-x-auto`) clips it — the suggestions
+  // ended up hidden under the next row. Reposition on scroll/resize keeps
+  // the anchor tracking; escape/blur close it via existing handlers.
   const [openRow, setOpenRow] = React.useState<string | null>(null)
   const [matches, setMatches] = React.useState<Record<string, ParentItem[]>>({})
+  const nameInputRefs = React.useRef<Map<string, HTMLInputElement | null>>(new Map())
+  const setNameInputRef = React.useCallback((key: string, el: HTMLInputElement | null) => {
+    if (el) nameInputRefs.current.set(key, el)
+    else nameInputRefs.current.delete(key)
+  }, [])
+  const [anchorRect, setAnchorRect] = React.useState<{ x: number; y: number; w: number } | null>(null)
+  React.useEffect(() => {
+    if (!openRow) { setAnchorRect(null); return }
+    const measure = () => {
+      const el = nameInputRefs.current.get(openRow)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      setAnchorRect({ x: r.left, y: r.bottom, w: r.width })
+    }
+    measure()
+    window.addEventListener("scroll", measure, true)
+    window.addEventListener("resize", measure)
+    return () => {
+      window.removeEventListener("scroll", measure, true)
+      window.removeEventListener("resize", measure)
+    }
+  }, [openRow, matches])
 
   const loadVariantsForChild = React.useCallback(async (childId: string) => {
     if (variantsByChild[childId]) return
@@ -610,6 +639,7 @@ export default function ItemBomEditorPage() {
                             <td className="px-3 py-2 relative">
                               <div className="relative">
                                 <Input
+                                  ref={(el) => setNameInputRef(d.key, el)}
                                   value={d.childName}
                                   onChange={(e) => onNameChange(d.key, e.target.value)}
                                   onFocus={() => { if (isEditable && d.childName.trim() && !linked) setOpenRow(d.key) }}
@@ -622,8 +652,16 @@ export default function ItemBomEditorPage() {
                                 {linked && (
                                   <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
                                 )}
-                                {rowMatches.length > 0 && (
-                                  <ul className="absolute left-0 top-[calc(100%+2px)] z-50 max-h-56 w-[min(360px,80vw)] overflow-y-auto rounded-lg border border-border bg-popover shadow-xl">
+                                {rowMatches.length > 0 && anchorRect && openRow === d.key && typeof window !== "undefined" && createPortal(
+                                  <ul
+                                    style={{
+                                      position: "fixed",
+                                      top: anchorRect.y + 2,
+                                      left: anchorRect.x,
+                                      width: Math.max(anchorRect.w, 260),
+                                    }}
+                                    className="z-[100] max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl"
+                                  >
                                     {rowMatches.map((r) => (
                                       <li key={r.id}>
                                         <button
@@ -640,7 +678,8 @@ export default function ItemBomEditorPage() {
                                         </button>
                                       </li>
                                     ))}
-                                  </ul>
+                                  </ul>,
+                                  document.body,
                                 )}
                                 {isEditable && !linked && d.childName.trim() && (
                                   <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
