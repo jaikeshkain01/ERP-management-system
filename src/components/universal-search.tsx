@@ -56,14 +56,56 @@ export function UniversalSearch() {
   const { isEnabled } = useModules()
   const d = useData()
   const {
-    products: SEARCH_PRODUCTS,
-    pcbs: SEARCH_PCBS,
+    products: LEGACY_PRODUCTS,
+    pcbs: LEGACY_PCBS,
     components: SEARCH_COMPONENTS,
     brands: SEARCH_BRANDS,
     suppliers: SEARCH_SUPPLIERS,
   } = React.useMemo(() => buildSearchData(d), [d])
+
+  // Universal-items backfill so items created via /items/add (without a
+  // legacy `products` / `pcbs` row) still surface in search. Fetched once
+  // when the dropdown opens; keyed by id so we don't shadow the richer
+  // legacy entries.
+  type ItemRow = { id: string; code: string; name: string; description: string | null; itemType: string; isFinishedGood: boolean }
+  const [universalItems, setUniversalItems] = React.useState<ItemRow[] | null>(null)
+  const SEARCH_PRODUCTS = React.useMemo(() => {
+    if (!universalItems) return LEGACY_PRODUCTS
+    const seen = new Set(LEGACY_PRODUCTS.map((p) => p.id))
+    const extras: SearchProduct[] = universalItems
+      .filter((it) => (it.itemType === "assembled" || it.isFinishedGood) && !seen.has(it.id))
+      .map((it) => ({ id: it.id, name: it.name, code: it.code, description: it.description ?? "", estimatedCost: "", pcbs: [] }))
+    return [...LEGACY_PRODUCTS, ...extras]
+  }, [LEGACY_PRODUCTS, universalItems])
+  const SEARCH_PCBS = React.useMemo(() => {
+    if (!universalItems) return LEGACY_PCBS
+    const seen = new Set(LEGACY_PCBS.map((p) => p.id))
+    const extras: SearchPCB[] = universalItems
+      .filter((it) => it.itemType === "semi_assembled" && !seen.has(it.id))
+      .map((it) => ({ id: it.id, name: it.name, productCode: "", productName: "", components: [] }))
+    return [...LEGACY_PCBS, ...extras]
+  }, [LEGACY_PCBS, universalItems])
   const [isOpen, setIsOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
+
+  // Fetch /api/items the first time the dropdown opens, so universal-only
+  // items (created via /items/add without a legacy pcb/product row) start
+  // appearing in search alongside the legacy-derived entries.
+  React.useEffect(() => {
+    if (!isOpen || universalItems !== null) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch("/api/items", { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (cancelled) return
+        setUniversalItems(res.ok && Array.isArray(body?.data) ? (body.data as ItemRow[]) : [])
+      } catch {
+        if (!cancelled) setUniversalItems([])
+      }
+    })()
+    return () => { cancelled = true }
+  }, [isOpen, universalItems])
   const [activeTab, setActiveTab] = React.useState<"all" | "components" | "products" | "brands">("all")
   
   // Navigation states

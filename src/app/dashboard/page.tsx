@@ -13,7 +13,6 @@ import Link from "next/link"
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from "recharts"
 import type { DashboardSummary } from "@/lib/server/data/dashboard"
 import { useData } from "@/lib/data-provider"
-import { useUserProducts } from "@/lib/user-products"
 import { StatStrip } from "@/components/stat-strip"
 import { useModules } from "@/components/module-provider"
 import type { ModuleId } from "@/lib/modules"
@@ -33,16 +32,19 @@ export default function Dashboard() {
   const { isEnabled } = useModules()
 
   const d = useData()
-  // User-added products (imported BOM / manual) live outside the catalog; count
-  // them alongside catalog products so the tile matches the Product list.
-  const { products: userProducts } = useUserProducts()
-  const totalProducts = d.PRODUCTS.length + userProducts.length
 
   // All dashboard aggregates come from /api/dashboard (computed server-side).
   const [ops, setOps] = React.useState<DashboardSummary | null>(null)
 
   // Sync state on mount to prevent SSR hydration mismatch
   const [expiringLotCount, setExpiringLotCount] = React.useState<number | null>(null)
+
+  // Universal-items counts for the KPI tiles — the "Products" and "PCBs"
+  // tiles now link to /items/list?view=products and /items/list?type=
+  // semi_assembled, so their counts must reflect the same filter. Sourcing
+  // from /api/items keeps them in sync with items created via /items/add
+  // (which don't backfill into legacy `products`/`pcbs` tables).
+  const [itemCounts, setItemCounts] = React.useState<{ total: number; products: number; semiAssembled: number } | null>(null)
 
   React.useEffect(() => {
     setMounted(true)
@@ -67,6 +69,21 @@ export default function Dashboard() {
         setExpiringLotCount(0)
       }
     })()
+    ;(async () => {
+      try {
+        const res = await fetch("/api/items", { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        const items: Array<{ itemType: string; isFinishedGood: boolean }> =
+          res.ok && Array.isArray(body?.data) ? body.data : []
+        setItemCounts({
+          total: items.length,
+          products: items.filter((it) => it.itemType === "assembled" || it.isFinishedGood).length,
+          semiAssembled: items.filter((it) => it.itemType === "semi_assembled").length,
+        })
+      } catch {
+        setItemCounts({ total: 0, products: 0, semiAssembled: 0 })
+      }
+    })()
   }, [])
 
   const realValuation = React.useMemo(() => {
@@ -75,9 +92,9 @@ export default function Dashboard() {
   }, [ops, d])
 
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
-    { title: "Products", value: totalProducts.toLocaleString(), desc: "Total finished items", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
-    { title: "PCBs", value: d.PCBS.length.toLocaleString(), desc: "Board variations", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
-    { title: "Items", value: d.COMPONENTS.length.toLocaleString(), desc: "Active items catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/items/list" },
+    { title: "Products", value: (itemCounts?.products ?? 0).toLocaleString(), desc: "Assembled + finished goods", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
+    { title: "Semi-assembled", value: (itemCounts?.semiAssembled ?? 0).toLocaleString(), desc: "PCBs and sub-assemblies", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
+    { title: "Items", value: (itemCounts?.total ?? d.COMPONENTS.length).toLocaleString(), desc: "Universal items catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/items/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
     { title: "Manufacturers", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
     { title: "Inventory Value", value: compactINR(realValuation), desc: "Physical asset valuation", icon: Landmark, color: "text-success bg-success/10", moduleId: "inventory", href: "/components/inventory" },
