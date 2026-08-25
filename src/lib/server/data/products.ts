@@ -18,6 +18,7 @@ import {
   slugify,
   uniqueSlug,
 } from "@/lib/server/data/util";
+import { mirrorLegacyBomToUniversal } from "@/lib/server/data/items";
 
 export interface ProductView {
   id: string;
@@ -543,6 +544,17 @@ export async function updateProductPcbRevision(
       where: { id: linkId },
       data: { pcb_revision_id: target.id, updated_by: ctx.userId, updated_at: new Date() },
     });
+
+    // B2 dual-write: mirror the repoint into the universal side. The link
+    // sits under the product's Active bom_version — replace item_bom_lines
+    // for that universal version from the current product_pcbs snapshot.
+    const [bvRow] = await tx.$queryRaw<{ id: string }[]>`
+      SELECT bom_version_id AS id FROM product_pcbs
+       WHERE id = ${linkId}::uuid`;
+    if (bvRow) {
+      await mirrorLegacyBomToUniversal(tx, ctx, { kind: "product_bom", bomVersionId: bvRow.id });
+    }
+
     return { linkId, pcbRevision: { id: target.id, rev: target.rev, status: target.status } };
   });
 }
@@ -579,6 +591,19 @@ export async function deleteCatalogProduct(idOrSlug: string): Promise<{ id: stri
       where: { id: product.id },
       data: { deleted_at: now, updated_by: ctx.userId },
     });
+
+    // B2 dual-write: cascade the soft-delete to the universal side so the
+    // product's item_bom_versions and lines don't outlive the product.
+    await tx.$executeRaw`
+      UPDATE item_bom_lines SET deleted_at = ${now}, updated_by = ${ctx.userId}::uuid
+       WHERE bom_version_id IN (
+         SELECT id FROM item_bom_versions
+          WHERE parent_item_id = ${product.id}::uuid AND deleted_at IS NULL
+       ) AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE item_bom_versions SET deleted_at = ${now}, updated_by = ${ctx.userId}::uuid
+       WHERE parent_item_id = ${product.id}::uuid AND deleted_at IS NULL`;
+
     return { id: product.id, slug: product.slug };
   });
 }

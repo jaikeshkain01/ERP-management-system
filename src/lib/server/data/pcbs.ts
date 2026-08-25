@@ -16,6 +16,7 @@ import {
   uniqueSlug,
   type ResolveComponentLine,
 } from "@/lib/server/data/util";
+import { mirrorLegacyBomToUniversal } from "@/lib/server/data/items";
 
 export interface PcbView {
   id: string;
@@ -482,7 +483,14 @@ export async function updatePcbRevision(idOrSlug: string, revId: string, patch: 
     }
 
     // Promoting to Active → demote any current Active first (invariant: at most one).
+    // Capture demoted rev ids so B2 mirror can flip their universal versions too.
+    let demotedSiblings: string[] = [];
     if (patch.status === "Active" && existing.status !== "Active") {
+      const rows = await tx.pcb_revisions.findMany({
+        where: { pcb_id: pcbId, status: "Active", deleted_at: null, id: { not: revId } },
+        select: { id: true },
+      });
+      demotedSiblings = rows.map((r) => r.id);
       await tx.pcb_revisions.updateMany({
         where: { pcb_id: pcbId, status: "Active", deleted_at: null, id: { not: revId } },
         data: { status: "Superseded", updated_by: ctx.userId, updated_at: new Date() },
@@ -521,6 +529,17 @@ export async function updatePcbRevision(idOrSlug: string, revId: string, patch: 
       for (const [componentId, qty] of qtyByComponent) {
         await tx.pcb_lines.create({ data: { ...audit, pcb_revision_id: revId, component_id: componentId, qty } });
       }
+    }
+
+    // B2 dual-write: mirror the legacy edit into universal item_bom_lines so
+    // the universal BOM editor stays live. Runs on every updatePcbRevision
+    // whether or not `patch.lines` was set — status/effective-window changes
+    // still need to reflect. No-op when the revision has no items mirror.
+    // Also flip the universal status for any siblings we just demoted so at
+    // most one universal version stays Active per parent item.
+    await mirrorLegacyBomToUniversal(tx, ctx, { kind: "pcb_revision", revisionId: revId });
+    for (const sibId of demotedSiblings) {
+      await mirrorLegacyBomToUniversal(tx, ctx, { kind: "pcb_revision", revisionId: sibId });
     }
 
     const [view] = await listPcbRevisionsById(tx, pcbId, revId);
@@ -566,6 +585,19 @@ export async function deletePcbRevision(idOrSlug: string, revId: string): Promis
       UPDATE pcb_lines SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
       WHERE pcb_revision_id = ${revId}::uuid AND deleted_at IS NULL`;
     await tx.pcb_revisions.update({ where: { id: revId }, data: { deleted_at: new Date(), updated_by: ctx.userId } });
+
+    // B2 dual-write: cascade the soft-delete to the universal side so a
+    // deleted revision's item_bom_versions + item_bom_lines don't linger.
+    await tx.$executeRaw`
+      UPDATE item_bom_lines SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+       WHERE bom_version_id IN (
+         SELECT id FROM item_bom_versions
+          WHERE legacy_pcb_revision_id = ${revId}::uuid AND deleted_at IS NULL
+       ) AND deleted_at IS NULL`;
+    await tx.$executeRaw`
+      UPDATE item_bom_versions SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
+       WHERE legacy_pcb_revision_id = ${revId}::uuid AND deleted_at IS NULL`;
+
     return { id: revId, rev: existing.rev };
   });
 }
