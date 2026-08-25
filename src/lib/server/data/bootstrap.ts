@@ -75,25 +75,42 @@ export async function getBootstrap(): Promise<DataSet> {
         tx.$queryRaw<{ id: string; name: string; description: string; layers: number | null; status: string }[]>`
           SELECT slug AS id, name, COALESCE(description,'') AS description, layers, status
           FROM pcbs WHERE deleted_at IS NULL ORDER BY name`,
+        // D1: universal-BOM port. Every PCB's Active revision (=universal
+        // item, since F2 mirrored pcb_revisions.id → items.id) has its
+        // BOM in item_bom_versions/item_bom_lines. We key back to the PCB
+        // slug via pcb_revisions → pcbs — legacy pcbs still owns the
+        // "PCB parent + slug" concept; only the BOM lines live universally.
         tx.$queryRaw<{ pcbId: string; componentId: string; qty: number; refDes: string | null; preferredBrandId: string | null; remarks: string | null }[]>`
-          SELECT pc.slug AS "pcbId", COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentId", pl.qty::int AS qty,
-                 pl.ref_des AS "refDes", b.slug AS "preferredBrandId", pl.remarks
+          SELECT pc.slug AS "pcbId",
+                 COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentId",
+                 bl.qty::int AS qty,
+                 bl.ref_des AS "refDes",
+                 b.slug AS "preferredBrandId",
+                 bl.remarks
           FROM pcbs pc
           JOIN pcb_revisions pr ON pr.pcb_id = pc.id AND pr.status = 'Active' AND pr.deleted_at IS NULL
-          JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-          JOIN components c ON c.id = pl.component_id
-          LEFT JOIN brands b ON b.id = pl.preferred_brand_id
+          JOIN item_bom_versions bv ON bv.parent_item_id = pr.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+          JOIN components c ON c.id = bl.child_item_id
+          LEFT JOIN brands b ON b.id = bl.preferred_brand_id
           WHERE pc.deleted_at IS NULL`,
         tx.$queryRaw<{ id: string; name: string; code: string; version: string; description: string; status: string; estimatedCost: number }[]>`
           SELECT slug AS id, name, code, COALESCE(version,'') AS version, COALESCE(description,'') AS description,
                  status, COALESCE(estimated_cost,0)::float8 AS "estimatedCost"
           FROM products WHERE deleted_at IS NULL ORDER BY name`,
+        // D1: universal-BOM port. Product BOMs live in
+        // item_bom_versions/item_bom_lines now (products.id === items.id via
+        // F2). The client's `pcbsByProduct` builder only cares about PCB
+        // children, so we filter child_item_id → pcb_revisions to keep parity
+        // with the legacy shape (raw parts or sub-assemblies in a product BOM
+        // — legal universally but not yet meaningful to the bootstrap client
+        // consumer — are dropped from this projection).
         tx.$queryRaw<{ productId: string; pcbId: string; qty: number; sequence: number | null; remarks: string | null }[]>`
-          SELECT p.slug AS "productId", pc.slug AS "pcbId", pp.qty::int AS qty, pp.sequence, pp.remarks
+          SELECT p.slug AS "productId", pc.slug AS "pcbId", bl.qty::int AS qty, bl.sequence, bl.remarks
           FROM products p
-          JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-          JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
-          JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
+          JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+          JOIN pcb_revisions pr ON pr.id = bl.child_item_id
           JOIN pcbs pc ON pc.id = pr.pcb_id
           WHERE p.deleted_at IS NULL`,
         tx.$queryRaw<{ id: string; parentId: string | null; name: string; slug: string; path: string; defaultItemType: string | null; sortOrder: number }[]>`

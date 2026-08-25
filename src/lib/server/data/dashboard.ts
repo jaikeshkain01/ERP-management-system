@@ -125,33 +125,48 @@ export async function getDashboard(): Promise<DashboardSummary> {
       ) price ON TRUE
       WHERE ib.deleted_at IS NULL`;
 
-    // ── Production blockers: components short of the per-unit demand of any Active BOM ──
+    // ── Production blockers: leaves short of the per-unit demand of any Active BOM ──
+    // D1: ported off pcb_lines/product_pcbs onto the universal BOM. Recursive
+    // walk of item_bom_lines from every assembled item's Active version,
+    // terminating at leaves (items with no Active BOM beneath them). Matches
+    // the shape B3 already uses in production.ts.
     const blockerRows = await tx.$queryRaw<{ product: string; missingComp: string; qty: number }[]>`
-      WITH demand AS (
-        SELECT p.name AS product, pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
-        FROM products p
-        JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
-        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
-        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-        WHERE p.deleted_at IS NULL
-        GROUP BY p.name, pl.component_id
+      WITH RECURSIVE explode(product_id, product_name, child_item_id, qty) AS (
+        SELECT p.id, p.name, bl.child_item_id, bl.qty::numeric
+          FROM items p
+          JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT e.product_id, e.product_name, bl.child_item_id, (e.qty * bl.qty)::numeric
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child_item_id AND cbv.status = 'Active' AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id AND bl.deleted_at IS NULL
+      ),
+      demand AS (
+        SELECT e.product_name AS product, e.child_item_id AS component_id, SUM(e.qty)::numeric AS per_unit
+          FROM explode e
+         WHERE NOT EXISTS (
+           SELECT 1 FROM item_bom_versions bv2
+            WHERE bv2.parent_item_id = e.child_item_id AND bv2.status = 'Active' AND bv2.deleted_at IS NULL
+         )
+         GROUP BY e.product_name, e.child_item_id
       ),
       avail AS (
-        SELECT v.component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
-        FROM component_brand_variants v
-        LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
-        WHERE v.deleted_at IS NULL
-        GROUP BY v.component_id
+        SELECT v.item_id AS component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
+          FROM item_variants v
+          LEFT JOIN inventory_balances ib ON ib.item_variant_id = v.id AND ib.deleted_at IS NULL
+         WHERE v.deleted_at IS NULL
+         GROUP BY v.item_id
       )
-      SELECT d.product, c.name AS "missingComp",
+      SELECT d.product, i.name AS "missingComp",
              CEIL(d.per_unit - COALESCE(a.available, 0))::int AS qty
-      FROM demand d
-      JOIN components c ON c.id = d.component_id
-      LEFT JOIN avail a ON a.component_id = d.component_id
-      WHERE COALESCE(a.available, 0) < d.per_unit
-      ORDER BY qty DESC
-      LIMIT 8`;
+        FROM demand d
+        JOIN items i ON i.id = d.component_id
+        LEFT JOIN avail a ON a.component_id = d.component_id
+       WHERE COALESCE(a.available, 0) < d.per_unit
+       ORDER BY qty DESC
+       LIMIT 8`;
 
     // ── Purchasing pipeline counts ──
     const [{ pendingPRs }] = await tx.$queryRaw<{ pendingPRs: number }[]>`
@@ -220,31 +235,42 @@ export async function getDashboard(): Promise<DashboardSummary> {
       LIMIT 6`;
 
     // ── Product build-readiness: buildable units = min over BOM of ⌊available ÷ per-unit⌋ ──
+    // D1: universal-BOM port. Same recursive-explode shape as blockerRows above.
     const productStatus = await tx.$queryRaw<ProductStatusItem[]>`
-      WITH demand AS (
-        SELECT p.id AS product_id, p.name AS product_name,
-               pl.component_id, SUM(pl.qty * pp.qty)::numeric AS per_unit
-        FROM products p
-        JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
-        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
-        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-        WHERE p.deleted_at IS NULL
-        GROUP BY p.id, p.name, pl.component_id
+      WITH RECURSIVE explode(product_id, product_name, child_item_id, qty) AS (
+        SELECT p.id, p.name, bl.child_item_id, bl.qty::numeric
+          FROM items p
+          JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+        UNION ALL
+        SELECT e.product_id, e.product_name, bl.child_item_id, (e.qty * bl.qty)::numeric
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child_item_id AND cbv.status = 'Active' AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id AND bl.deleted_at IS NULL
+      ),
+      demand AS (
+        SELECT e.product_id, e.product_name, e.child_item_id AS component_id, SUM(e.qty)::numeric AS per_unit
+          FROM explode e
+         WHERE NOT EXISTS (
+           SELECT 1 FROM item_bom_versions bv2
+            WHERE bv2.parent_item_id = e.child_item_id AND bv2.status = 'Active' AND bv2.deleted_at IS NULL
+         )
+         GROUP BY e.product_id, e.product_name, e.child_item_id
       ),
       avail AS (
-        SELECT v.component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
-        FROM component_brand_variants v
-        LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
-        WHERE v.deleted_at IS NULL
-        GROUP BY v.component_id
+        SELECT v.item_id AS component_id, COALESCE(SUM(ib.available), 0)::numeric AS available
+          FROM item_variants v
+          LEFT JOIN inventory_balances ib ON ib.item_variant_id = v.id AND ib.deleted_at IS NULL
+         WHERE v.deleted_at IS NULL
+         GROUP BY v.item_id
       ),
       comp_build AS (
         SELECT d.product_id, d.product_name,
                COALESCE(MIN(FLOOR(COALESCE(a.available, 0) / NULLIF(d.per_unit, 0))), 0)::int AS "buildableQty"
-        FROM demand d
-        LEFT JOIN avail a ON a.component_id = d.component_id
-        GROUP BY d.product_id, d.product_name
+          FROM demand d
+          LEFT JOIN avail a ON a.component_id = d.component_id
+         GROUP BY d.product_id, d.product_name
       )
       SELECT p.name AS product,
              COALESCE(cb."buildableQty", 0)::int AS "buildableQty",
@@ -253,10 +279,10 @@ export async function getDashboard(): Promise<DashboardSummary> {
                WHEN cb."buildableQty" < 10 THEN 'Low Stock'
                ELSE 'Ready'
              END AS status
-      FROM products p
-      LEFT JOIN comp_build cb ON cb.product_id = p.id
-      WHERE p.deleted_at IS NULL
-      ORDER BY p.name`;
+        FROM items p
+        LEFT JOIN comp_build cb ON cb.product_id = p.id
+       WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+       ORDER BY p.name`;
 
     // ── Low-stock components: on-hand below min or out of stock (Critical ≤ 50% of min or 0 stock) ──
     const lowStock = await tx.$queryRaw<LowStockItem[]>`
@@ -294,39 +320,65 @@ export async function getDashboard(): Promise<DashboardSummary> {
       LIMIT 6`;
 
     // ── Top-consumed (by annual consumption or active BOM demand) ──
+    // D1: universal-BOM port. Same "20 units/month" magic multiplier as the
+    // legacy query — used as a rough monthly-usage estimate when no annual
+    // consumption is set. We sum weighted qtys across every parent's Active
+    // BOM (assembled OR semi_assembled — the legacy version didn't filter by
+    // BOM status either).
     const consumedRows = await tx.$queryRaw<{ component: string; monthly: number }[]>`
+      WITH bom_usage AS (
+        SELECT bl.child_item_id AS component_id,
+               SUM(bl.qty)::numeric AS demand
+          FROM item_bom_lines bl
+          JOIN item_bom_versions bv ON bv.id = bl.bom_version_id
+                                    AND bv.status = 'Active'
+                                    AND bv.deleted_at IS NULL
+         WHERE bl.deleted_at IS NULL
+         GROUP BY bl.child_item_id
+      )
       SELECT c.name AS component,
              GREATEST(
                ROUND(c.annual_consumption / 12.0)::int,
-               COALESCE(SUM(pl.qty * COALESCE(pp.qty, 1) * 20), 0)::int
+               COALESCE((u.demand * 20)::int, 0)
              ) AS monthly
-      FROM components c
-      LEFT JOIN pcb_lines pl ON pl.component_id = c.id AND pl.deleted_at IS NULL
-      LEFT JOIN product_pcbs pp ON pp.pcb_revision_id = pl.pcb_revision_id AND pp.deleted_at IS NULL
-      WHERE c.deleted_at IS NULL
-      GROUP BY c.id, c.name, c.annual_consumption
-      ORDER BY monthly DESC, c.name
-      LIMIT 5`;
+        FROM components c
+        LEFT JOIN bom_usage u ON u.component_id = c.id
+       WHERE c.deleted_at IS NULL
+       ORDER BY monthly DESC, c.name
+       LIMIT 5`;
     const topConsumed: ConsumedComponent[] = consumedRows.map((r) => ({
       component: r.component,
       monthlyUsage: r.monthly.toLocaleString(),
     }));
 
     // ── Usage impact: components used across the most products (via Active BOMs) ──
+    // D1: universal-BOM port. Recursive explode from every assembled item's
+    // Active version; leaves counted as distinct products they appear in.
     const usageImpact = await tx.$queryRaw<UsageImpactItem[]>`
-      WITH usage AS (
-        SELECT pl.component_id, COUNT(DISTINCT p.id)::int AS products
-        FROM products p
-        JOIN bom_versions bv ON bv.product_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-        JOIN product_pcbs pp ON pp.bom_version_id = bv.id AND pp.deleted_at IS NULL
-        JOIN pcb_revisions pr ON pr.id = pp.pcb_revision_id
-        JOIN pcb_lines pl ON pl.pcb_revision_id = pr.id AND pl.deleted_at IS NULL
-        WHERE p.deleted_at IS NULL
-        GROUP BY pl.component_id
+      WITH RECURSIVE explode(product_id, child_item_id) AS (
+        SELECT p.id, bl.child_item_id
+          FROM items p
+          JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+        UNION
+        SELECT e.product_id, bl.child_item_id
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child_item_id AND cbv.status = 'Active' AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id AND bl.deleted_at IS NULL
+      ),
+      usage AS (
+        SELECT e.child_item_id AS component_id, COUNT(DISTINCT e.product_id)::int AS products
+          FROM explode e
+         WHERE NOT EXISTS (
+           SELECT 1 FROM item_bom_versions bv2
+            WHERE bv2.parent_item_id = e.child_item_id AND bv2.status = 'Active' AND bv2.deleted_at IS NULL
+         )
+         GROUP BY e.child_item_id
       )
       SELECT c.name AS component, u.products AS "usedInProducts"
-      FROM usage u JOIN components c ON c.id = u.component_id
-      ORDER BY u.products DESC, c.name LIMIT 3`;
+        FROM usage u JOIN components c ON c.id = u.component_id
+       ORDER BY u.products DESC, c.name LIMIT 3`;
 
     return {
       inventoryValue: value,

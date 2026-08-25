@@ -159,10 +159,13 @@ export async function deleteBrand(idOrSlug: string): Promise<{ id: string; slug:
           JOIN components c ON c.id = cbv.component_id AND c.deleted_at IS NULL
           WHERE cbv.brand_id = ${brand.id}::uuid AND cbv.deleted_at IS NULL
         UNION ALL
-        SELECT 1 FROM pcb_lines pl
-          JOIN pcb_revisions pr ON pr.id = pl.pcb_revision_id AND pr.deleted_at IS NULL
-          JOIN pcbs p ON p.id = pr.pcb_id AND p.deleted_at IS NULL
-          WHERE pl.preferred_brand_id = ${brand.id}::uuid AND pl.deleted_at IS NULL
+        -- D1: universal-BOM port. Legacy pcb_lines.preferred_brand_id →
+        -- item_bom_lines.preferred_brand_id. Same shape; join back to the
+        -- BOM version's parent item to only count live parent rows.
+        SELECT 1 FROM item_bom_lines bl
+          JOIN item_bom_versions bv ON bv.id = bl.bom_version_id AND bv.deleted_at IS NULL
+          JOIN items i ON i.id = bv.parent_item_id AND i.deleted_at IS NULL
+          WHERE bl.preferred_brand_id = ${brand.id}::uuid AND bl.deleted_at IS NULL
         UNION ALL
         SELECT 1 FROM purchase_order_items poi
           JOIN purchase_orders po ON po.id = poi.purchase_order_id AND po.deleted_at IS NULL
