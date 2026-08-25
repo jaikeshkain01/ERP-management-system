@@ -19,12 +19,15 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (end of 2026-08-25 session — F6.4 complete + modules consolidated)
+## Where we are RIGHT NOW (end of 2026-08-25 session — F6.4 complete + modules consolidated + F5.6 + cleanup)
 
-The **universal-item transformation critical path (F1→F7) is shipped and pushed**. **F6.4 is complete end-to-end** (B1 → B2 → B3 → B4). The `/pcb-management/*` and `/products/*` modules have been folded into filtered views over `/items/list`. Working tree clean; `main` matches `origin/main`.
+The **universal-item transformation critical path (F1→F7) is shipped**. **F6.4 is complete end-to-end** (B1 → B2 → B3 → B4). The `/pcb-management/*` and `/products/*` modules have been folded into filtered views over `/items/list`. **F5.6 (brand-variant CRUD on `/items/edit`) is shipped** — the P15 gap is closed. Dead-code cleanup pass done. Working tree clean.
 
 Head of `main`:
 
+- `cf2fac6` chore: delete dead code from the pre-universal ledger + form path  ← this session
+- `ba79881` fix(verify): update balances-rollup check for post-F5.4 CBV nullability  ← this session
+- `99e4b5f` feat(items): **brand-variant CRUD on /items/edit (F5.6)**  ← this session
 - `09810c5` fix(items): portal the BOM row typeahead so suggestions don't get clipped
 - `ac1d7fe` feat(dashboard): source module counts + universal search from /api/items
 - `ca28152` feat(items): fold PCB Management / Products modules into filtered item views
@@ -125,13 +128,35 @@ Per user's request:
 
 `09810c5` — the BOM row typeahead dropdown was being clipped by the table's `overflow-x-auto` wrapper on both surfaces. Portalled the suggestions `<ul>` to `<body>` with `position: fixed`, anchored to the input's `getBoundingClientRect()`; repositions on scroll/resize. Applied to `/items/[id]/bom` editor and the `/items/add` Assembly / BOM section.
 
-### Other open items
+### F5.6 — Brand-variant CRUD on /items/edit (SHIPPED this session)
+
+`99e4b5f` — the Manufacturer section on `/items/edit` was rendering rows for context but ignoring changes. Users had to detour through legacy `/components/*` to add, rename, or remove a variant. F5.6 wires proper edit persistence:
+
+- **`updateItemVariant(itemId, variantId, {brand?, partNo?, isDefault?})`** — purchased-only. Brand resolves via `resolveOrCreateBrand`; a change enforces the F1 `(item, brand, purchased)` partial-unique index with a friendly 409. Promoting to default demotes prior default in the same tx. Un-defaulting directly is refused ("promote a sibling instead"). Mirrors `brand_id` + `part_no` onto the legacy `component_brand_variants` row (id shared since F2). CBV has no `is_default` column, so the default flag is universal-only.
+- **`deleteItemVariant(itemId, variantId)`** — purchased-only. Guards: positive on-hand (any location) → 409; open Draft/Sent/Dispatched PO line matching `(component_id, brand_id)` → 409; last-remaining variant → 409. If the deleted row was default, the earliest surviving variant auto-promotes. Soft-deletes on both `item_variants` and the mirror CBV row.
+- **API**: `PATCH` + `DELETE` on `/api/items/[id]/variants/[variantId]`.
+- **Form**: `UniversalItemInitial.variants` widened to include `id` + `brandId`; `MfrRow` gains `id`; amber "not persisted" note replaced with a blue info line explaining the guards + auto-promote. Submit chain in edit mode diffs `mfrRows` against `initial.variants` and fires DELETE → PATCH → POST in that order (deleting the default hands off before a PATCH can fight a sibling). Failures land in the same partial-success toast.
+- Verified against seeded CAP-100UF: three variants, all with stock, one with an open PO — delete guard fires correctly for all three.
+
+### Verifier drift (SHIPPED this session)
+
+`ba79881` — the "balances rollup: same totals whichever variant column keys the sum" check was false-positive-failing post-F5.4 (CBV nullable → NULL-bucket collision on the CBV side). Replaced with two checks that reflect what actually matters now: every live balance carries `item_variant_id`; when CBV is present, it equals `item_variant_id` (F2/F3 identity link). All green.
+
+### Dead-code cleanup (SHIPPED this session)
+
+`cf2fac6` — six files deleted after grep confirmed no live importers outside the cluster:
+- `src/lib/stock-ledger.ts` + `src/lib/use-stock-ledger.ts` (pre-F5.9 CBV-scoped ledger)
+- `src/components/inventory/stock-move-modal.tsx` (replaced by `ItemStockMoveDialog` at F5.9)
+- `src/components/inventory/transaction-history-table.tsx` (legacy history table)
+- `src/app/components/component-form.tsx` (retired at P15c)
+- `._probe.ts` at repo root (Windows-hidden leftover from `2916e7c`)
+Stale header comments on `/components/add/page.tsx` and `item-stock-move-dialog.tsx` refreshed to reflect the deletions.
+
+### Still open
 1. **`pcb_lines` / `product_pcbs` table drops** — deliberately gated in B4. Retire after (a) B3 has driven real production orders for a full session, and (b) the remaining read paths (dashboard, bootstrap, brands, components.usage, `pcbs.ts` detail queries) are ported to universal. That's a standalone slice.
-2. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
-3. **Verifier drift** — `scripts/verify-items-migrations.ts` "balances rollup: same totals whichever variant column keys the sum" now fails because F5.4 made CBV nullable — the CBV-keyed sum lumps all `cbv=NULL` rows under one bucket while the IV-keyed sum splits them by real IV. Not a data bug; the check is obsolete post-F5.4. Update the check to skip NULL CBV keys OR replace it with an IV-keyed equivalent.
-4. **Option B (revisions collapse)** — see Module consolidation section above. Standalone future slice.
-5. **Dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource. Also delete stray `._probe.ts` at the repo root (leftover from a prior commit — Windows hidden file, shouldn't be tracked).
-6. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
+2. **`item_categories` — dedicated perm resource** — still guards on `component.*`. Small slice: mirror `role_permissions` from `component.*` → `item_category.*` (idempotent, same pattern as F5.2), swap the guards in `item-categories.ts`. Blocked on retiring the last legacy `/components/*` category readers, so cleanest post-B4-table-drops.
+3. **Option B (revisions collapse)** — see Module consolidation section above. Standalone future slice.
+4. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
 
 ## DB state right now
 - 4 companies: **StackIOT** (seeded — 17 components, 4 PCBs, ROIP400 product with BOM, stock), StackIOT Technologies Pvt Ltd, Test Co, **Dielectric Technologies Pvt. Ltd.** (user's fresh test tenant — 1 item "Registor 10ohm" with 500 on-hand in WH-01·A13).
@@ -187,8 +212,8 @@ npx tsx scripts/seed-admin.ts && npx tsx scripts/seed-sample.ts && npx tsx scrip
 - Universal items = **single source of truth**; legacy `components`/`products`/`pcbs` stay writable during transition, but every new UI reads via `items`.
 - **Category = one stage** (Slice 1). Bare PCBs and Populated PCBs are separate categories.
 - **Item type ≠ role.** "Assembled" is a stage; "finished good" is a role → will be an `is_finished_good` flag (Slice 3, pending).
-- Legacy Stock In modal (`StockMoveModal`) is deprecated but on disk — the rebuilt inventory page uses `ItemStockMoveDialog` instead. No CBV anywhere in the new write path.
+- Legacy `StockMoveModal` was deleted in the F5.6 cleanup pass — inventory uses `ItemStockMoveDialog` (item-variant-keyed). No CBV in the new write path.
 - `hint` field on `ApiError` is the standard for surfacing remediation.
 
 ## Repo state
-Everything from F1 through Slice 3 is committed on `main`. Working tree is clean. Next commit target is one of the open items above (likely F6.4 or F5.6).
+Everything through F6.4 + module consolidation + F5.6 + verifier + dead-code cleanup is committed on `main`. Working tree is clean. Suggested next target: `pcb_lines` / `product_pcbs` table drops (walks the last legacy readers off, then drops the tables — closes B4 fully). Or start Original Batch A–D (inventory enrichment) if the transformation loop feels done.
