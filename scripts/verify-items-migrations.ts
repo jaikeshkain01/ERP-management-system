@@ -189,17 +189,29 @@ async function main() {
     "mirror unique index on balances (item_variant_id, location_id)",
     `SELECT 1 FROM pg_indexes WHERE indexname = 'uq_inventory_balances_item_variant_location'`,
   );
+  // Post-F5.4 this check was rewritten. Original intent: prove the ledger's
+  // two variant columns give the same balance rollup so the F3 sync trigger
+  // was doing its job. That's no longer meaningful: F5.4 made
+  // `component_brand_variant_id` nullable and flipped the projection key to
+  // `item_variant_id` — manufactured stock now legitimately holds cbv=NULL
+  // rows, and a CBV-keyed sum collapses every NULL under a single bucket.
+  //
+  // What we actually care about now is that every balance row still carries
+  // an item_variant_id (the F5.4 authoritative key). CBV, when present,
+  // must match the row's item_variant_id (identity link from F2/F3);
+  // absence of CBV is legal.
   await expectZero(
-    "balances rollup: same totals whichever variant column keys the sum",
-    `SELECT * FROM (
-       SELECT a.location_id, a.tot AS via_cbv, b.tot AS via_iv FROM (
-         SELECT component_brand_variant_id AS k, location_id, sum(on_hand) AS tot
-         FROM inventory_balances GROUP BY component_brand_variant_id, location_id) a
-       FULL OUTER JOIN (
-         SELECT item_variant_id AS k, location_id, sum(on_hand) AS tot
-         FROM inventory_balances GROUP BY item_variant_id, location_id) b
-         ON a.k = b.k AND a.location_id = b.location_id
-     ) x WHERE via_cbv IS DISTINCT FROM via_iv`,
+    "balances always carry item_variant_id (F5.4 authoritative key)",
+    `SELECT id FROM inventory_balances
+      WHERE item_variant_id IS NULL AND deleted_at IS NULL`,
+  );
+  await expectZero(
+    "balances: cbv (when present) equals item_variant_id (F2/F3 identity link)",
+    `SELECT id FROM inventory_balances
+      WHERE component_brand_variant_id IS NOT NULL
+        AND item_variant_id IS NOT NULL
+        AND component_brand_variant_id <> item_variant_id
+        AND deleted_at IS NULL`,
   );
 
   // ─────────────────────── summary counts (informational) ───────────────────
