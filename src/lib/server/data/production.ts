@@ -153,15 +153,13 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
 
     // B3: source the explosion from the universal BOM (item_bom_versions +
     // recursive item_bom_lines). The product's item mirror (F2) shares its
-    // id, so parent_item_id = product.id. Snapshot the LEGACY bom_versions.id
-    // when the universal Active is a backfilled version — production_orders
-    // still stores that id for historical continuity. A universal-only
-    // product (no legacy bom_versions row for its Active version) records
-    // NULL and can't be built until B2 has ever mirrored — but B2 lazy-
-    // creates a bom_versions row on Activate, so any Active universal
-    // version has a legacy binding.
-    const activeUniv = await tx.$queryRaw<{ id: string; legacyBv: string | null }[]>`
-      SELECT id, legacy_bom_version_id::text AS "legacyBv"
+    // id, so parent_item_id = product.id. `production_orders.bom_version_id`
+    // now snapshots the UNIVERSAL item_bom_versions.id — the legacy
+    // bom_versions table was dropped in the D3/D4 slice. Historical rows
+    // that recorded a legacy uuid stay untouched; the FK constraint was
+    // dropped alongside the table so those orphan pointers are harmless.
+    const activeUniv = await tx.$queryRaw<{ id: string }[]>`
+      SELECT id
         FROM item_bom_versions
        WHERE parent_item_id = ${product.id}::uuid
          AND status = 'Active'
@@ -169,7 +167,7 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
        LIMIT 1`;
     if (!activeUniv[0]) throw Errors.conflict("Product has no Active BOM version to build against");
     const universalVersionId = activeUniv[0].id;
-    const snapshotBomVersionId = activeUniv[0].legacyBv;
+    const snapshotBomVersionId = universalVersionId;
 
     // Recursive explode: walk item_bom_lines from the Active version, recursing
     // into every child that has its own Active BOM. Only leaves (no Active BOM

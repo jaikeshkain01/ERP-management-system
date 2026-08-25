@@ -577,12 +577,15 @@ export async function deleteComponent(idOrSlug: string): Promise<{ id: string; g
 
     // Only count lines that belong to a still-live PCB revision (a deleted PCB
     // leaves its lines behind, so checking the line's own deleted_at is not enough).
+    // D2: universal-BOM port. Any live BOM line (in any parent — PCB
+    // revision OR product OR sub-assembly) referencing this component is
+    // enough to block deletion.
     const inUse = await tx.$queryRaw<{ one: number }[]>`
       SELECT 1 AS one
-      FROM pcb_lines pl
-      JOIN pcb_revisions pr ON pr.id = pl.pcb_revision_id AND pr.deleted_at IS NULL
-      JOIN pcbs p ON p.id = pr.pcb_id AND p.deleted_at IS NULL
-      WHERE pl.component_id = ${comp.id}::uuid AND pl.deleted_at IS NULL
+      FROM item_bom_lines bl
+      JOIN item_bom_versions bv ON bv.id = bl.bom_version_id AND bv.deleted_at IS NULL
+      JOIN items i ON i.id = bv.parent_item_id AND i.deleted_at IS NULL
+      WHERE bl.child_item_id = ${comp.id}::uuid AND bl.deleted_at IS NULL
       LIMIT 1`;
     if (inUse.length) throw Errors.conflict(
       "Component is used in one or more PCB BOMs and cannot be deleted",

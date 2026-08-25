@@ -402,6 +402,10 @@ export interface ItemPcbUsageRow {
 export async function getItemPcbUsage(itemId: string): Promise<ItemPcbUsageRow[]> {
   return guarded("item.view", async (tx) => {
     if (!isUuid(itemId)) throw Errors.badRequest("Invalid item id");
+    // D2: universal-BOM port. Walks item_bom_lines from every parent that is
+    // also a live pcb_revision (F2 identity-reuse). Parent → PCB → slug via
+    // pcb_revisions + pcbs (the "PCB parent + slug" concept still lives on
+    // legacy pcbs; only the BOM lines moved universally in F6).
     return tx.$queryRaw<ItemPcbUsageRow[]>`
       SELECT
         p.id                    AS "pcbId",
@@ -410,13 +414,14 @@ export async function getItemPcbUsage(itemId: string): Promise<ItemPcbUsageRow[]
         pr.id                   AS "pcbRevisionId",
         pr.rev                  AS "rev",
         pr.status::text         AS "revisionStatus",
-        pl.qty::float8          AS "qty",
-        pl.ref_des              AS "refDes"
-      FROM pcb_lines pl
-      JOIN pcb_revisions pr ON pr.id = pl.pcb_revision_id AND pr.deleted_at IS NULL
-      JOIN pcbs         p  ON p.id  = pr.pcb_id           AND p.deleted_at  IS NULL
-      WHERE pl.component_id = ${itemId}::uuid
-        AND pl.deleted_at IS NULL
+        bl.qty::float8          AS "qty",
+        bl.ref_des              AS "refDes"
+      FROM item_bom_lines bl
+      JOIN item_bom_versions bv ON bv.id = bl.bom_version_id AND bv.deleted_at IS NULL
+      JOIN pcb_revisions pr ON pr.id = bv.parent_item_id AND pr.deleted_at IS NULL
+      JOIN pcbs         p  ON p.id  = pr.pcb_id            AND p.deleted_at IS NULL
+      WHERE bl.child_item_id = ${itemId}::uuid
+        AND bl.deleted_at IS NULL
       ORDER BY p.name ASC, pr.rev ASC
     `;
   });
@@ -649,13 +654,6 @@ export interface ItemBomLineView {
   childHasBom: boolean;
 }
 
-/** Which legacy table backs this item, if any. Set by F2 (each PCB revision /
- *  product got an items.id equal to its legacy row's id). Universal-only items
- *  (created via /items/add without any legacy shadow) get `null` — the BOM
- *  editor shows a banner explaining that Activate won't reflect into
- *  production until B3 flips production to universal. */
-export type ParentLegacyKind = "pcb_revision" | "product" | null;
-
 export interface ItemBomView {
   itemId: string;
   versions: ItemBomVersionSummary[];
@@ -663,8 +661,6 @@ export interface ItemBomView {
    *  most recently created. Null when the item has no BOM at all. */
   selectedVersionId: string | null;
   lines: ItemBomLineView[];
-  /** Universal-only detection for the B2 dual-write banner. */
-  parentLegacyKind: ParentLegacyKind;
 }
 
 /** Fetch an item's BOM (universal tables from F6). Returns every version for
@@ -688,10 +684,8 @@ export async function getItemBom(id: string, versionId?: string): Promise<ItemBo
       WHERE bv.parent_item_id = ${id}::uuid AND bv.deleted_at IS NULL
       ORDER BY (bv.status = 'Active') DESC, bv.created_at DESC`;
 
-    const parentLegacyKind = await getParentLegacyKind(tx, id);
-
     if (versions.length === 0) {
-      return { itemId: id, versions: [], selectedVersionId: null, lines: [], parentLegacyKind };
+      return { itemId: id, versions: [], selectedVersionId: null, lines: [] };
     }
 
     // Pick the requested version if valid, else the first (Active-first order).
@@ -715,22 +709,8 @@ export async function getItemBom(id: string, versionId?: string): Promise<ItemBo
       WHERE bl.bom_version_id = ${selected}::uuid AND bl.deleted_at IS NULL
       ORDER BY bl.sequence NULLS LAST, ci.code`;
 
-    return { itemId: id, versions, selectedVersionId: selected, lines, parentLegacyKind };
+    return { itemId: id, versions, selectedVersionId: selected, lines };
   });
-}
-
-/** Which legacy table backs this item (F2 mapping). One of `pcb_revisions.id`
- *  or `products.id` — never both. `null` for items created via /items/add with
- *  no legacy shadow. Reused across the read path (banner detection) and the
- *  B2 mirror write path (route table). */
-async function getParentLegacyKind(tx: TxClient, itemId: string): Promise<ParentLegacyKind> {
-  const [pcb] = await tx.$queryRaw<{ n: number }[]>`
-    SELECT 1 AS n FROM pcb_revisions WHERE id = ${itemId}::uuid AND deleted_at IS NULL LIMIT 1`;
-  if (pcb) return "pcb_revision";
-  const [prod] = await tx.$queryRaw<{ n: number }[]>`
-    SELECT 1 AS n FROM products WHERE id = ${itemId}::uuid AND deleted_at IS NULL LIMIT 1`;
-  if (prod) return "product";
-  return null;
 }
 
 // ── BOM write (F6.4 / Slice B1) ─────────────────────────────────────────────
@@ -1029,294 +1009,15 @@ export async function activateBomVersion(itemId: string, versionId: string): Pro
          SET status = 'Active'::bom_status, updated_by = ${ctx.userId}::uuid
        WHERE id = ${versionId}::uuid`;
 
-    // B2 dual-write: mirror the new Active into the legacy tables so the
-    // production explosion (still reading pcb_lines / product_pcbs until B3)
-    // sees the same BOM. No-op for universal-only parents — the BOM editor
-    // shows a banner explaining Activate won't reflect into production yet.
-    await mirrorUniversalBomToLegacy(tx, ctx, itemId, versionId);
-
     return getItemBomInTx(tx, itemId, versionId);
   });
 }
 
-/** B2: mirror the currently-Active universal BOM into the legacy table for
- *  this parent (pcb_lines for a PCB revision, product_pcbs for a product).
- *  Whole-version replace — soft-deletes existing legacy rows, then inserts
- *  from `item_bom_lines`. For products, also promotes the matching
- *  `bom_versions` row to Active (demoting any prior Active) — lazy-creates
- *  the `bom_versions` row when the universal version has no
- *  `legacy_bom_version_id` (a fresh Draft activated straight from the
- *  universal editor). For PCB revisions, promotes `pcb_revisions.status` to
- *  Active and demotes sibling revisions of the same PCB.
- *
- *  Universal-only parents (no `pcb_revisions` / `products` row for this
- *  item id) get a no-op — nothing to mirror. */
-async function mirrorUniversalBomToLegacy(
-  tx: TxClient, ctx: { userId: string; companyId: string | null },
-  parentItemId: string, versionId: string,
-): Promise<void> {
-  const kind = await getParentLegacyKind(tx, parentItemId);
-  if (kind === null) return;
+// B2 dual-write mirror plumbing (mirrorUniversalBomToLegacy,
+// mirrorLegacyBomToUniversal, ParentLegacyKind, getParentLegacyKind) was
+// deleted alongside the legacy pcb_lines / product_pcbs tables — see the
+// D3 slice that retired /api/pcbs and /api/products.
 
-  if (kind === "pcb_revision") {
-    // Promote the pcb_revision that IS this item; demote sibling revs.
-    const pcbRow = await tx.$queryRaw<{ pcbId: string }[]>`
-      SELECT pcb_id AS "pcbId" FROM pcb_revisions
-       WHERE id = ${parentItemId}::uuid AND deleted_at IS NULL`;
-    if (!pcbRow[0]) return; // race with delete — nothing to mirror
-    await tx.$executeRaw`
-      UPDATE pcb_revisions
-         SET status = 'Superseded'::bom_status, updated_by = ${ctx.userId}::uuid,
-             updated_at = now()
-       WHERE pcb_id = ${pcbRow[0].pcbId}::uuid
-         AND status = 'Active'
-         AND id <> ${parentItemId}::uuid
-         AND deleted_at IS NULL`;
-    await tx.$executeRaw`
-      UPDATE pcb_revisions
-         SET status = 'Active'::bom_status, updated_by = ${ctx.userId}::uuid,
-             updated_at = now()
-       WHERE id = ${parentItemId}::uuid`;
-
-    // Whole-version replace of pcb_lines. Legacy uses component_id, and by
-    // F2 backfill component_id == child_item_id for any child that has a
-    // component mirror. Children that are NOT components (a semi-assembled
-    // child in an assembly BOM, say) can't be mirrored to pcb_lines —
-    // pcb_lines.component_id FKs to components. Skip those with a WHERE
-    // EXISTS guard so mirror stays lossy but non-broken.
-    await tx.$executeRaw`
-      UPDATE pcb_lines
-         SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
-       WHERE pcb_revision_id = ${parentItemId}::uuid AND deleted_at IS NULL`;
-    await tx.$executeRaw`
-      INSERT INTO pcb_lines (
-        company_id, pcb_revision_id, component_id, qty, ref_des,
-        preferred_brand_id, remarks, created_by, updated_by
-      )
-      SELECT ${ctx.companyId!}::uuid, ${parentItemId}::uuid, bl.child_item_id,
-             bl.qty, bl.ref_des, bl.preferred_brand_id, bl.remarks,
-             ${ctx.userId}::uuid, ${ctx.userId}::uuid
-        FROM item_bom_lines bl
-       WHERE bl.bom_version_id = ${versionId}::uuid
-         AND bl.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM components c
-                      WHERE c.id = bl.child_item_id AND c.deleted_at IS NULL)`;
-    return;
-  }
-
-  // kind === "product"
-  // Find (or lazy-create) the matching bom_versions row for this universal
-  // version, then mirror lines into product_pcbs.
-  const linked = await tx.$queryRaw<{ legacyBv: string | null; version: string }[]>`
-    SELECT legacy_bom_version_id::text AS "legacyBv", version
-      FROM item_bom_versions
-     WHERE id = ${versionId}::uuid`;
-  if (!linked[0]) return;
-  let bvId = linked[0].legacyBv;
-  if (!bvId) {
-    const created = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO bom_versions (
-        company_id, product_id, version, status, created_by, updated_by
-      ) VALUES (
-        ${ctx.companyId!}::uuid, ${parentItemId}::uuid, ${linked[0].version},
-        'Draft'::bom_status, ${ctx.userId}::uuid, ${ctx.userId}::uuid
-      ) RETURNING id`;
-    bvId = created[0].id;
-    // Pin the linkage so future edits find the same row.
-    await tx.$executeRaw`
-      UPDATE item_bom_versions
-         SET legacy_bom_version_id = ${bvId}::uuid, updated_by = ${ctx.userId}::uuid
-       WHERE id = ${versionId}::uuid`;
-  }
-  // Promote this bom_version to Active; demote prior Active on the same product.
-  await tx.$executeRaw`
-    UPDATE bom_versions
-       SET status = 'Superseded'::bom_status, updated_by = ${ctx.userId}::uuid,
-           updated_at = now()
-     WHERE product_id = ${parentItemId}::uuid
-       AND status = 'Active'
-       AND id <> ${bvId}::uuid
-       AND deleted_at IS NULL`;
-  await tx.$executeRaw`
-    UPDATE bom_versions
-       SET status = 'Active'::bom_status, updated_by = ${ctx.userId}::uuid,
-           updated_at = now()
-     WHERE id = ${bvId}::uuid`;
-
-  // Whole-version replace of product_pcbs. Children must be pcb_revisions
-  // (product BOMs only link PCBs). Any non-pcb child in the universal BOM is
-  // skipped — the DB FK to pcb_revisions would reject it anyway.
-  await tx.$executeRaw`
-    UPDATE product_pcbs
-       SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
-     WHERE bom_version_id = ${bvId}::uuid AND deleted_at IS NULL`;
-  await tx.$executeRaw`
-    INSERT INTO product_pcbs (
-      company_id, bom_version_id, pcb_revision_id, qty, sequence, remarks,
-      created_by, updated_by
-    )
-    SELECT ${ctx.companyId!}::uuid, ${bvId}::uuid, bl.child_item_id,
-           bl.qty, bl.sequence, bl.remarks,
-           ${ctx.userId}::uuid, ${ctx.userId}::uuid
-      FROM item_bom_lines bl
-     WHERE bl.bom_version_id = ${versionId}::uuid
-       AND bl.deleted_at IS NULL
-       AND EXISTS (SELECT 1 FROM pcb_revisions pr
-                    WHERE pr.id = bl.child_item_id AND pr.deleted_at IS NULL)`;
-}
-
-/** B2: mirror a legacy pcb_lines / product_pcbs edit into item_bom_lines so
- *  the universal BOM stays in sync. Whole-version replace against the
- *  matching `item_bom_versions` row (identified by
- *  `legacy_pcb_revision_id` / `legacy_bom_version_id`). Lazy-creates the
- *  item_bom_versions row when the legacy source was added post-F2 backfill.
- *
- *  Called from pcbs.ts::updatePcbRevision and products.ts helpers. Runs
- *  inside the caller's transaction. */
-export async function mirrorLegacyBomToUniversal(
-  tx: TxClient, ctx: { userId: string; companyId: string | null },
-  input:
-    | { kind: "pcb_revision"; revisionId: string }
-    | { kind: "product_bom"; bomVersionId: string },
-): Promise<void> {
-  if (input.kind === "pcb_revision") {
-    // The pcb_revision IS the parent item (F2 gave them the same id). If no
-    // items row exists, we skip — a rare post-F2 legacy row without a mirror
-    // means universal has no way to represent it.
-    const hasItem = await tx.$queryRaw<{ n: number }[]>`
-      SELECT 1 AS n FROM items WHERE id = ${input.revisionId}::uuid LIMIT 1`;
-    if (!hasItem[0]) return;
-
-    // Find or lazy-create the item_bom_versions row for this revision.
-    const pr = await tx.$queryRaw<{
-      companyId: string; rev: string; status: string;
-      effectiveFrom: Date | null; effectiveTo: Date | null;
-    }[]>`
-      SELECT company_id AS "companyId", rev, status::text AS status,
-             effective_from AS "effectiveFrom", effective_to AS "effectiveTo"
-        FROM pcb_revisions
-       WHERE id = ${input.revisionId}::uuid AND deleted_at IS NULL`;
-    if (!pr[0]) return;
-
-    const existing = await tx.$queryRaw<{ id: string }[]>`
-      SELECT id FROM item_bom_versions
-       WHERE legacy_pcb_revision_id = ${input.revisionId}::uuid
-         AND deleted_at IS NULL
-       LIMIT 1`;
-    let bvId: string;
-    if (existing[0]) {
-      bvId = existing[0].id;
-      // Keep status/effective window in sync — the legacy row is authoritative
-      // for these until B4. Casting via ::text is safe because the two enums
-      // share their values (bom_status).
-      await tx.$executeRaw`
-        UPDATE item_bom_versions
-           SET status = ${pr[0].status}::bom_status,
-               version = ${pr[0].rev},
-               effective_from = ${pr[0].effectiveFrom},
-               effective_to = ${pr[0].effectiveTo},
-               updated_by = ${ctx.userId}::uuid
-         WHERE id = ${bvId}::uuid`;
-    } else {
-      const created = await tx.$queryRaw<{ id: string }[]>`
-        INSERT INTO item_bom_versions (
-          company_id, parent_item_id, version, status,
-          effective_from, effective_to, legacy_pcb_revision_id,
-          created_by, updated_by
-        ) VALUES (
-          ${pr[0].companyId}::uuid, ${input.revisionId}::uuid, ${pr[0].rev},
-          ${pr[0].status}::bom_status,
-          ${pr[0].effectiveFrom}, ${pr[0].effectiveTo}, ${input.revisionId}::uuid,
-          ${ctx.userId}::uuid, ${ctx.userId}::uuid
-        ) RETURNING id`;
-      bvId = created[0].id;
-    }
-
-    // Whole-version replace: wipe existing item_bom_lines for this version,
-    // insert fresh from pcb_lines. Only pcb_lines whose component_id has an
-    // items mirror survive (all do post-F2, but guard defensively).
-    await tx.$executeRaw`
-      UPDATE item_bom_lines
-         SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
-       WHERE bom_version_id = ${bvId}::uuid AND deleted_at IS NULL`;
-    await tx.$executeRaw`
-      INSERT INTO item_bom_lines (
-        company_id, bom_version_id, child_item_id, qty, ref_des,
-        preferred_brand_id, remarks, created_by, updated_by
-      )
-      SELECT pl.company_id, ${bvId}::uuid, pl.component_id, pl.qty, pl.ref_des,
-             pl.preferred_brand_id, pl.remarks,
-             ${ctx.userId}::uuid, ${ctx.userId}::uuid
-        FROM pcb_lines pl
-       WHERE pl.pcb_revision_id = ${input.revisionId}::uuid
-         AND pl.deleted_at IS NULL
-         AND EXISTS (SELECT 1 FROM items i WHERE i.id = pl.component_id)`;
-    return;
-  }
-
-  // input.kind === "product_bom"
-  const bv = await tx.$queryRaw<{
-    companyId: string; productId: string; version: string; status: string;
-    effectiveFrom: Date | null; effectiveTo: Date | null;
-  }[]>`
-    SELECT company_id AS "companyId", product_id AS "productId",
-           version, status::text AS status,
-           effective_from AS "effectiveFrom", effective_to AS "effectiveTo"
-      FROM bom_versions
-     WHERE id = ${input.bomVersionId}::uuid AND deleted_at IS NULL`;
-  if (!bv[0]) return;
-  const hasItem = await tx.$queryRaw<{ n: number }[]>`
-    SELECT 1 AS n FROM items WHERE id = ${bv[0].productId}::uuid LIMIT 1`;
-  if (!hasItem[0]) return;
-
-  const existing = await tx.$queryRaw<{ id: string }[]>`
-    SELECT id FROM item_bom_versions
-     WHERE legacy_bom_version_id = ${input.bomVersionId}::uuid
-       AND deleted_at IS NULL
-     LIMIT 1`;
-  let ubvId: string;
-  if (existing[0]) {
-    ubvId = existing[0].id;
-    await tx.$executeRaw`
-      UPDATE item_bom_versions
-         SET status = ${bv[0].status}::bom_status,
-             version = ${bv[0].version},
-             effective_from = ${bv[0].effectiveFrom},
-             effective_to = ${bv[0].effectiveTo},
-             updated_by = ${ctx.userId}::uuid
-       WHERE id = ${ubvId}::uuid`;
-  } else {
-    const created = await tx.$queryRaw<{ id: string }[]>`
-      INSERT INTO item_bom_versions (
-        company_id, parent_item_id, version, status,
-        effective_from, effective_to, legacy_bom_version_id,
-        created_by, updated_by
-      ) VALUES (
-        ${bv[0].companyId}::uuid, ${bv[0].productId}::uuid, ${bv[0].version},
-        ${bv[0].status}::bom_status,
-        ${bv[0].effectiveFrom}, ${bv[0].effectiveTo}, ${input.bomVersionId}::uuid,
-        ${ctx.userId}::uuid, ${ctx.userId}::uuid
-      ) RETURNING id`;
-    ubvId = created[0].id;
-  }
-
-  await tx.$executeRaw`
-    UPDATE item_bom_lines
-       SET deleted_at = now(), updated_by = ${ctx.userId}::uuid
-     WHERE bom_version_id = ${ubvId}::uuid AND deleted_at IS NULL`;
-  await tx.$executeRaw`
-    INSERT INTO item_bom_lines (
-      company_id, bom_version_id, child_item_id, qty, sequence, remarks,
-      created_by, updated_by
-    )
-    SELECT pp.company_id, ${ubvId}::uuid, pp.pcb_revision_id,
-           pp.qty, pp.sequence, pp.remarks,
-           ${ctx.userId}::uuid, ${ctx.userId}::uuid
-      FROM product_pcbs pp
-     WHERE pp.bom_version_id = ${input.bomVersionId}::uuid
-       AND pp.deleted_at IS NULL
-       AND EXISTS (SELECT 1 FROM items i WHERE i.id = pp.pcb_revision_id)`;
-}
 
 /** Soft-delete a Draft version + its lines. Active/Superseded/Obsolete
  *  versions are refused — they carry historical context that production
@@ -1367,9 +1068,8 @@ async function getItemBomInTx(tx: TxClient, id: string, versionId?: string): Pro
      WHERE bv.parent_item_id = ${id}::uuid AND bv.deleted_at IS NULL
      ORDER BY (bv.status = 'Active') DESC, bv.created_at DESC`;
 
-  const parentLegacyKind = await getParentLegacyKind(tx, id);
   if (versions.length === 0) {
-    return { itemId: id, versions: [], selectedVersionId: null, lines: [], parentLegacyKind };
+    return { itemId: id, versions: [], selectedVersionId: null, lines: [] };
   }
   const selected = (versionId && versions.find((v) => v.id === versionId)?.id) ?? versions[0].id;
 
@@ -1391,7 +1091,7 @@ async function getItemBomInTx(tx: TxClient, id: string, versionId?: string): Pro
      WHERE bl.bom_version_id = ${selected}::uuid AND bl.deleted_at IS NULL
      ORDER BY bl.sequence NULLS LAST, ci.code`;
 
-  return { itemId: id, versions, selectedVersionId: selected, lines, parentLegacyKind };
+  return { itemId: id, versions, selectedVersionId: selected, lines };
 }
 
 // ── create ───────────────────────────────────────────────────────────────────

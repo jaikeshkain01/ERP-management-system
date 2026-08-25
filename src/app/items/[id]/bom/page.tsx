@@ -16,13 +16,12 @@
  *   • Superseded / Obsolete — read-only historical snapshots.
  *
  * Raw items have no BOM by definition — the page shows an empty state.
- * Legacy /pcb-management/structure + /products/structure still write to
- * pcb_lines / product_pcbs and stay live during the B2 dual-write phase.
+ * Post-D3, this is the only BOM editor in the app — the legacy PCB / product
+ * structure pages have been retired and their tables dropped.
  */
 
 import * as React from "react"
 import { createPortal } from "react-dom"
-import Link from "next/link"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -57,12 +56,8 @@ interface Line {
   preferredBrandSlug: string | null; sequence: number | null; remarks: string | null
   childHasBom: boolean
 }
-type ParentLegacyKind = "pcb_revision" | "product" | null
 interface Bom {
   itemId: string; versions: Version[]; selectedVersionId: string | null; lines: Line[]
-  /** From server: null when the parent item has no legacy PCB/product row and
-   *  Activate won't mirror to production until B3 flips. Drives the banner. */
-  parentLegacyKind: ParentLegacyKind
 }
 
 // Local editing shape — new/edited rows share this. `id` is undefined for
@@ -504,20 +499,6 @@ export default function ItemBomEditorPage() {
         </div>
       </div>
 
-      {bom && bom.parentLegacyKind === null && !isRaw && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 px-3 py-2 text-sm">
-          <div className="flex items-center gap-2 font-semibold">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>Not yet visible to production</span>
-          </div>
-          <div className="text-xs mt-1 opacity-90">
-            This item was created outside the legacy PCB/Product tables, so activating a BOM here
-            won&apos;t drive production orders yet. Production still explodes BOMs from the legacy
-            tables until the B3 cutover.
-          </div>
-        </div>
-      )}
-
       {toast && (
         <div className={`rounded-lg border px-3 py-2 text-sm ${
           toast.type === "error"   ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300" :
@@ -822,8 +803,7 @@ export default function ItemBomEditorPage() {
 
           <p className="text-[11px] text-muted-foreground">
             <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item ·{" "}
-            <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created on save (zero opening stock, min stock 10). ·{" "}
-            Legacy <Link href="/pcb-management/structure" className="underline">PCB structure</Link> and <Link href="/products/structure" className="underline">product structure</Link> pages still write to their own tables during the B2 dual-write phase.
+            <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created on save (zero opening stock, min stock 10).
           </p>
         </>
       )}
