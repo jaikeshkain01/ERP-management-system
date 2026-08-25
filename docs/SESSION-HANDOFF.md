@@ -19,16 +19,23 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (end of 2026-08-25 session — Slices 1–3 committed)
+## Where we are RIGHT NOW (end of 2026-08-25 session — Slices 1–3 + F6.4 B1 committed)
 
-The **universal-item transformation critical path (F1→F7) is shipped and COMMITTED**. Slices 1–3 of the Stage/Category model are also committed on `main`:
+The **universal-item transformation critical path (F1→F7) is shipped and COMMITTED**. Slices 1–3 of the Stage/Category model AND **F6.4 B1 (universal BOM editor)** are also committed on `main`:
 
+- `66f290b` feat(items): typeahead + inline child creation on the BOM editor page  ← this session
+- `29e9f6c` feat(items): create-child-on-submit for unlinked BOM rows              ← this session
+- `c30ca37` refactor(items): match PCB Add-Manually UX for BOM row picker           ← this session
+- `9835463` feat(items): add BOM section to the item add form                        ← this session
+- `67168bf` fix(items): make Edit/Create BOM button reachable on details page        ← this session
+- `91a8d32` feat(items): **universal BOM editor (F6.4 / B1)**                        ← this session
+- `36f109b` docs: refresh SESSION-HANDOFF after Slices 1–3 land
 - `d197125` feat(items): is_finished_good flag (Slice 3)
 - `0bfa509` feat(items): Stage-driven category picker (Slice 2)
 - `5363bf1` feat(items): categories require a stage (Slice 1)
 - `2916e7c` Refactor code structure and remove redundant changes  ← F1–F7 landed here
 
-Working tree is clean.
+Working tree is clean. **7 commits ahead of `origin/main` — not pushed.**
 
 The ERP now has:
 
@@ -59,6 +66,21 @@ The ERP now has:
 - `20260824000000_categories_require_stage` (Slice 1) — every category has a stage, seeded Bare/Populated PCBs
 - `20260825000000_items_is_finished_good` (Slice 3) — items.is_finished_good NOT NULL DEFAULT false, backfilled from products
 
+### F6.4 B1 shipped this session — universal BOM editor
+- **Data layer** (`src/lib/server/data/items.ts`):
+  - `createItemBomVersion(itemId, {version?, effectiveFrom?, effectiveTo?, copyLinesFromVersionId?})` — new Draft, optional seed-from copy. Auto-numbers `vN`.
+  - `saveBomLines(itemId, versionId, lines[])` — whole-version replace on Draft only. Server diffs by `(versionId, childItemId)`.
+  - `activateBomVersion(itemId, versionId)` — Draft → Active, supersedes prior Active in same tx.
+  - `deleteBomVersion(itemId, versionId)` — Draft-only soft-delete.
+  - `assertNoCycles` — recursive CTE over Active/Draft BOMs; blocks self-loops fast-path.
+  - `assertParentIsBomCapable` — refuses raw items.
+- **API**: `POST /api/items/[id]/bom`, `PATCH /api/items/[id]/bom/[versionId]`, `POST /api/items/[id]/bom/[versionId]/activate`, `DELETE /api/items/[id]/bom/[versionId]`.
+- **UI editor** at `/items/[id]/bom` — version dropdown, activate/delete/new-revision, whole-version save with typeahead-in-row child picker.
+- **Add-form BOM section** on `/items/add` — optional "Assembly / BOM" chip, add-mode only, chained after item POST + variant POSTs to seed a Draft, then flip redirect target to the BOM editor to Activate.
+- **Details page**: "No BOM yet — Create BOM" empty-state for non-raw items without a BOM; primary "Edit BOM" button when a BOM exists.
+- **Inline child creation on both surfaces**: type a name that doesn't match → sparkles marker → on save/submit, POST `/api/items` creates the new item (with `minStock: 10` default, zero opening stock), then its id feeds the BOM lines. Legend: Link2 = existing catalog item; Sparkles = new item that will be created.
+- UX mirrors `src/components/pcb/pcb-form.tsx` (the "Add Manually" pattern from `/pcb-management`).
+
 ### Slice 1 + Slice 2 shipped this session (the Stage/Category model)
 Per user's request:
 
@@ -69,8 +91,34 @@ Per user's request:
 `items.is_finished_good boolean NOT NULL DEFAULT false` + a "This is a finished good (we sell it)" checkbox in Section 1 of the add/edit form. Independent of stage — a Populated PCB can be `semi_assembled` **and** sellable. Backfilled `true` for every product-backed item (that WAS the finished-goods master). Threaded through `ItemView` / API bodies / form state / duplicate-from. Partial index `(company_id) WHERE is_finished_good` for the future "list sellable items" query. Verified: 26 items → 1 finished good (ROIP400), 25 non-finished.
 
 ## Open items — user's roadmap
-1. **F6.4** — BOM write cutover: repoint PCB-structure + product-structure editors + production's demand explosion onto `item_bom_*`; then retire `pcb_lines`/`product_pcbs`.
-2. **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
+
+### F6.4 — BOM write cutover (B1 done; B2 → B3 → B4 remain)
+
+- **B2 — Legacy ↔ universal dual-write.** Scoped and waiting on two decisions before code:
+  1. **Direction:** bidirectional (agent-recommended — universal editor becomes trustworthy immediately) vs legacy→universal-only (safer, keeps universal editor "preview").
+  2. **Universal-only parents** (items created via `/items/add` with a BOM, no legacy pcb_revision/product row): show a "not yet visible to production" banner until B3, or reject the save?
+  - **Concrete changes** (bidirectional path):
+    - Legacy PCB structure save on `/pcb-management/structure` → after writing `pcb_lines`, mirror the diff into `item_bom_lines` for the same Active universal version (lazy-create if missing).
+    - Legacy product structure save on `/products/structure` → same shape for `product_pcbs`.
+    - Extend `saveBomLines` + `activateBomVersion` in `items.ts` — on activate of a backfilled parent, mirror Active lines back into `pcb_lines`/`product_pcbs`. Drafts don't touch legacy.
+    - Single new helper `mirrorBom(tx, parentItemId, {toUniversal | toLegacy}, lines)` to keep logic in one place.
+  - **Rule that falls out of the design:** legacy always reflects the currently-Active universal BOM. Nothing else.
+  - **Edge cases named:** cross-editor races (last-writer-wins, killed by B4); universal-only parents (banner or reject); solder/footprint on legacy rows resolved from the child item at write time; sequence and ref_des mirror 1:1.
+
+- **B3 — Production explosion cutover.** `createProductionOrder` in `src/lib/server/data/production.ts` currently reads `pcb_lines` + `product_pcbs`. Switch to `item_bom_versions (Active)` + recursive `item_bom_lines`. Verify same demand shape against ROIP400. Cheap once B2 is stable.
+
+- **B4 — Legacy retirement.** `/pcb-management/structure` + `/products/structure` become server-redirects to `/items/[id]/bom`. Migration drops `pcb_lines` and `product_pcbs`. One-way; do it only after B3 runs against real production orders for a session.
+
+- **B5 (optional)** — Version workflow polish: effective dates, supersede workflow, diff between versions.
+
+### Architectural discussion — open (not yet committed)
+
+**End of 2026-08-25**: user proposed retiring the `/pcb-management/*` and `/products/*` modules as separate surfaces and folding them into first-class **Semi-assembled Products** and **Assembled/Finished Products** views over `/items/list`. Agent concurs — PCBs and Products are already `items` rows (F2), the legacy modules are the last pre-universal holdouts, and their differentiation (PCB metadata, sellable-ness) already lives on the item.
+- **Open decision:** revisions model. Today `pcb_revisions.id → items.id` — each revision IS a separate item. Alternative: collapse to one item-per-PCB with the revision history captured by `item_bom_versions` (Rev A = Active, Rev B = new Draft → activate → prior becomes Superseded). Cleaner mental model, but a real data migration.
+- Feeds naturally out of B4 — once legacy structure pages retire, the nav labels change ("PCB Management" → "Semi-assembled" filter chip on `/items/list`).
+
+### Other open items
+- **F5.6** — Brand-variant CRUD on `/items/edit` (the P15 gap — currently the Manufacturer section on edit shows a note that variant changes aren't persisted).
 3. **Verifier drift** — `scripts/verify-items-migrations.ts` "balances rollup: same totals whichever variant column keys the sum" now fails because F5.4 made CBV nullable — the CBV-keyed sum lumps all `cbv=NULL` rows under one bucket while the IV-keyed sum splits them by real IV. Not a data bug; the check is obsolete post-F5.4. Update the check to skip NULL CBV keys OR replace it with an IV-keyed equivalent.
 4. **Legacy retirement + dead-code cleanup** — delete `useStockLedger`, `stock-ledger.ts`, `StockMoveModal`, `TransactionHistoryTable`, `buildInventory`; eventually `component-form.tsx`; give `item_categories` its own perm resource. Also delete stray `._probe.ts` at the repo root (leftover from a prior commit — Windows hidden file, shouldn't be tracked).
 5. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
