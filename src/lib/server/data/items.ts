@@ -1744,6 +1744,262 @@ export async function addItemVariant(id: string, input: AddItemVariantInput): Pr
   });
 }
 
+// ── variant update / delete (F5.6) ──────────────────────────────────────────
+// Completes the P15 gap: the Manufacturer section on `/items/edit` can now
+// rename brand, edit MPN, toggle default, and remove variants — with real
+// delete-guards (positive stock, open POs) and the "exactly one default per
+// item" invariant preserved through every path.
+
+export interface UpdateItemVariantInput {
+  /** Change the variant's brand. Resolved (and created if missing) by name.
+   *  Only meaningful for purchased variants; manufactured variants ignore
+   *  this because the F1 partial index forces brand=NULL on those. */
+  brand?: string;
+  /** Change the MPN. Empty string clears it. */
+  partNo?: string | null;
+  /** Promote this variant to default. Cannot unset default here — the
+   *  invariant "an item with variants has a default" is preserved by
+   *  auto-promoting a sibling when the current default is deleted. */
+  isDefault?: boolean;
+}
+
+/** Patch a variant's brand / MPN / default flag. Purchased-only in this slice
+ *  (manufactured variants live and die with the item itself; see createItem). */
+export async function updateItemVariant(
+  itemId: string,
+  variantId: string,
+  input: UpdateItemVariantInput,
+): Promise<ItemVariantView> {
+  return guarded("item.edit", async (tx, ctx) => {
+    if (!isUuid(itemId) || !isUuid(variantId)) throw Errors.notFound("Variant");
+
+    const rows = await tx.$queryRaw<{
+      id: string; itemId: string; brandId: string | null; partNo: string | null;
+      isDefault: boolean; sourceKind: ItemVariantSource;
+    }[]>`
+      SELECT id, item_id AS "itemId", brand_id AS "brandId", part_no AS "partNo",
+             is_default AS "isDefault", source_kind::text AS "sourceKind"
+        FROM item_variants
+       WHERE id = ${variantId}::uuid AND deleted_at IS NULL`;
+    const v = rows[0];
+    if (!v) throw Errors.notFound("Variant");
+    if (v.itemId !== itemId) throw Errors.badRequest("Variant does not belong to this item", { itemId, variantId });
+    if (v.sourceKind !== "purchased") {
+      throw Errors.badRequest("Only purchased variants can be edited here", { sourceKind: v.sourceKind });
+    }
+
+    // Resolve the target brand id (may be unchanged, changed to existing, or
+    // created new). Empty string / whitespace-only reads as "unchanged".
+    let nextBrandId = v.brandId;
+    if (input.brand !== undefined) {
+      const brandName = input.brand.trim();
+      if (!brandName) throw Errors.badRequest("Brand name cannot be empty");
+      nextBrandId = await resolveOrCreateBrand(tx, ctx, brandName);
+
+      if (nextBrandId !== v.brandId) {
+        // Enforce the (item, brand, purchased) partial-unique index (F1) with
+        // a friendly 409 instead of the raw Postgres constraint error.
+        const dupe = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM item_variants
+           WHERE company_id = ${ctx.companyId!}::uuid
+             AND item_id = ${itemId}::uuid
+             AND brand_id = ${nextBrandId}::uuid
+             AND source_kind = 'purchased'::item_variant_source
+             AND deleted_at IS NULL
+             AND id <> ${variantId}::uuid
+           LIMIT 1`;
+        if (dupe[0]) throw Errors.conflict(
+          "Another variant on this item already uses this brand",
+          { brand: brandName },
+          "Delete the other variant first, or edit its MPN instead of adding a duplicate.",
+        );
+      }
+    }
+
+    // Build the SET clause. updated_by / updated_at always bump.
+    const sets: Prisma.Sql[] = [
+      Prisma.sql`updated_by = ${ctx.userId}::uuid`,
+      Prisma.sql`updated_at = now()`,
+    ];
+    if (nextBrandId !== v.brandId) sets.push(Prisma.sql`brand_id = ${nextBrandId}::uuid`);
+    if (input.partNo !== undefined) sets.push(Prisma.sql`part_no = ${input.partNo?.trim() || null}`);
+
+    // Default promotion: demote current default (if any) then flip this one.
+    // We DON'T allow "unset default" here — an item with variants must always
+    // have a default (the invariant behind the F1 partial unique index).
+    if (input.isDefault === true && !v.isDefault) {
+      await tx.$executeRaw`
+        UPDATE item_variants
+           SET is_default = false, updated_by = ${ctx.userId}::uuid, updated_at = now()
+         WHERE company_id = ${ctx.companyId!}::uuid
+           AND item_id = ${itemId}::uuid
+           AND is_default = true
+           AND deleted_at IS NULL`;
+      sets.push(Prisma.sql`is_default = true`);
+    } else if (input.isDefault === false && v.isDefault) {
+      throw Errors.badRequest(
+        "Cannot un-default a variant directly",
+        undefined,
+        "Promote another variant to default instead — the old default demotes automatically.",
+      );
+    }
+
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE item_variants SET ${Prisma.join(sets, ", ")}
+       WHERE id = ${variantId}::uuid`);
+
+    // Mirror onto the legacy `component_brand_variants` row when the variant's
+    // id was reused from CBV at F2 (purchased variants only, component-backed
+    // items — pcb_revisions/products never had CBV rows). Keeps legacy
+    // `/components/*` reads coherent through the transition; universal-only
+    // variants don't have a CBV row and the UPDATE silently matches nothing.
+    //
+    // CBV shape is narrower than item_variants: brand_id (NOT NULL) + part_no
+    // (NOT NULL text) + deleted_at. No is_default, no status. So we only
+    // mirror brand_id and part_no here; the default flag is universal-only.
+    const legacyMirror: Prisma.Sql[] = [
+      Prisma.sql`updated_at = now()`,
+    ];
+    if (nextBrandId !== v.brandId) legacyMirror.push(Prisma.sql`brand_id = ${nextBrandId}::uuid`);
+    if (input.partNo !== undefined) {
+      // CBV.part_no is NOT NULL — coalesce a cleared MPN to empty string.
+      legacyMirror.push(Prisma.sql`part_no = ${input.partNo?.trim() || ""}`);
+    }
+    if (legacyMirror.length > 1) {
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE component_brand_variants SET ${Prisma.join(legacyMirror, ", ")}
+         WHERE id = ${variantId}::uuid AND deleted_at IS NULL`);
+    }
+
+    // Reload for the response.
+    const fresh = await tx.$queryRaw<VariantRow[]>`
+      SELECT v.id, v.item_id AS "itemId",
+             v.source_kind::text AS "sourceKind",
+             v.brand_id AS "brandId",
+             b.slug AS "brandSlug",
+             v.part_no AS "partNo",
+             v.is_default AS "isDefault",
+             v.status::text AS "status"
+        FROM item_variants v
+        LEFT JOIN brands b ON b.id = v.brand_id
+       WHERE v.id = ${variantId}::uuid`;
+    return fresh[0];
+  });
+}
+
+/** Soft-delete a purchased variant. Guards against destroying data or
+ *  breaking downstream refs:
+ *   • positive on-hand at any location  → 409
+ *   • any open (Draft/Sent/Dispatched) PO line  → 409
+ *   • last remaining variant (would leave the item with none)  → 409
+ *  If the variant was the item's default, the earliest surviving variant
+ *  auto-promotes so the "one default per item" invariant holds. Manufactured
+ *  variants are refused — they die with the item (F1 partial-unique index
+ *  enforces at most one manufactured per item; killing it would strand the
+ *  item's ledger). */
+export async function deleteItemVariant(itemId: string, variantId: string): Promise<{ itemId: string; deletedId: string; newDefaultId: string | null }> {
+  return guarded("item.delete", async (tx, ctx) => {
+    if (!isUuid(itemId) || !isUuid(variantId)) throw Errors.notFound("Variant");
+
+    const rows = await tx.$queryRaw<{
+      id: string; itemId: string; brandId: string | null; isDefault: boolean;
+      sourceKind: ItemVariantSource;
+    }[]>`
+      SELECT id, item_id AS "itemId", brand_id AS "brandId",
+             is_default AS "isDefault", source_kind::text AS "sourceKind"
+        FROM item_variants
+       WHERE id = ${variantId}::uuid AND deleted_at IS NULL`;
+    const v = rows[0];
+    if (!v) throw Errors.notFound("Variant");
+    if (v.itemId !== itemId) throw Errors.badRequest("Variant does not belong to this item", { itemId, variantId });
+    if (v.sourceKind !== "purchased") {
+      throw Errors.badRequest(
+        "Manufactured variants can't be removed independently",
+        { sourceKind: v.sourceKind },
+        "Delete the item itself — the manufactured variant retires with it.",
+      );
+    }
+
+    // Stock guard: any inventory_balances row with on_hand > 0 for this variant.
+    const stock = await tx.$queryRaw<{ n: number; total: number }[]>`
+      SELECT count(*)::int AS n, COALESCE(SUM(on_hand), 0)::float8 AS total
+        FROM inventory_balances
+       WHERE item_variant_id = ${variantId}::uuid
+         AND on_hand > 0
+         AND deleted_at IS NULL`;
+    if (stock[0]?.n > 0) {
+      throw Errors.conflict(
+        `Cannot delete a variant with ${stock[0].total} on hand`,
+        { onHand: stock[0].total },
+        "Move stock off this variant first (Stock Out or Transfer), then retry.",
+      );
+    }
+
+    // Open-PO guard: any PO line with the same component_id + brand_id on a
+    // PO that isn't Cancelled/Completed. Uses the legacy identity (F2 reused
+    // the same uuid for items.id and components.id), so this covers both
+    // legacy and universal PO writes.
+    const pos = await tx.$queryRaw<{ n: number }[]>`
+      SELECT count(*)::int AS n
+        FROM purchase_order_items pi
+        JOIN purchase_orders     po ON po.id = pi.purchase_order_id
+       WHERE pi.company_id = ${ctx.companyId!}::uuid
+         AND pi.component_id = ${itemId}::uuid
+         AND pi.brand_id     = ${v.brandId}::uuid
+         AND pi.deleted_at IS NULL
+         AND po.deleted_at IS NULL
+         AND po.status IN ('Draft','Sent','Dispatched')`;
+    if (pos[0]?.n > 0) {
+      throw Errors.conflict(
+        `Cannot delete — ${pos[0].n} open PO line(s) reference this variant`,
+        { openPoLines: pos[0].n },
+        "Cancel or receive the open POs first, then retry.",
+      );
+    }
+
+    // Last-variant guard: refuse to leave the item with zero variants.
+    const others = await tx.$queryRaw<{ id: string; isDefault: boolean; createdAt: string }[]>`
+      SELECT id, is_default AS "isDefault", to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt"
+        FROM item_variants
+       WHERE item_id = ${itemId}::uuid
+         AND id <> ${variantId}::uuid
+         AND deleted_at IS NULL
+       ORDER BY created_at ASC`;
+    if (others.length === 0) {
+      throw Errors.conflict(
+        "Cannot delete the last variant on an item",
+        undefined,
+        "Add a replacement variant first, or delete the item itself if it's no longer needed.",
+      );
+    }
+
+    // Soft-delete the variant + mirror onto legacy CBV (id shared since F2).
+    await tx.$executeRaw`
+      UPDATE item_variants
+         SET deleted_at = now(), updated_by = ${ctx.userId}::uuid, updated_at = now()
+       WHERE id = ${variantId}::uuid`;
+    await tx.$executeRaw`
+      UPDATE component_brand_variants
+         SET deleted_at = now(), updated_at = now()
+       WHERE id = ${variantId}::uuid AND deleted_at IS NULL`;
+
+    // Default hand-off: if the deleted row was the default, promote the
+    // earliest surviving variant on the universal side. CBV has no
+    // is_default column (see mirror note above) so nothing to touch there.
+    let newDefaultId: string | null = null;
+    if (v.isDefault) {
+      const heir = others[0];
+      newDefaultId = heir.id;
+      await tx.$executeRaw`
+        UPDATE item_variants
+           SET is_default = true, updated_by = ${ctx.userId}::uuid, updated_at = now()
+         WHERE id = ${heir.id}::uuid`;
+    }
+
+    return { itemId, deletedId: variantId, newDefaultId };
+  });
+}
+
 // ── update (F5.1) ────────────────────────────────────────────────────────────
 
 /** Source of a backfilled item — which legacy table it mirrors. Products and

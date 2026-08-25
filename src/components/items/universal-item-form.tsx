@@ -102,7 +102,7 @@ export interface UniversalItemInitial {
   salvageValue: number | null;
   depreciationMethod: "none" | "straight_line" | "reducing_balance" | null;
   conditionKind: "new" | "good" | "fair" | "poor" | "retired" | null;
-  variants: { sourceKind: "purchased" | "manufactured"; brandSlug: string | null; partNo: string | null; isDefault: boolean }[];
+  variants: { id: string; sourceKind: "purchased" | "manufactured"; brandId: string | null; brandSlug: string | null; partNo: string | null; isDefault: boolean }[];
 }
 
 export interface UniversalItemFormProps {
@@ -355,16 +355,18 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   // ── Section: Manufacturer variants (P3) ──
   //  Brand + MPN + default toggle. Opening stock is deferred until F5.4 lets
   //  the ledger accept rows keyed only on item_variant_id.
-  interface MfrRow { brand: string; partNo: string; isDefault: boolean }
+  // `id` is the server variant id when the row is loaded from `initial`;
+  // empty string on new rows the user just added (they land as POSTs on
+  // submit). The diff on submit uses id to route each row to PATCH / DELETE
+  // / POST — see the F5.6 chain below the mfr POSTs block.
+  interface MfrRow { id: string; brand: string; partNo: string; isDefault: boolean }
   const [mfrRows, setMfrRows] = React.useState<MfrRow[]>(() => {
-    // Seed from existing purchased variants when editing; otherwise start
-    // with a single empty row (matches add-form default).
     const seeded = (initial?.variants ?? [])
       .filter((v) => v.sourceKind === "purchased")
-      .map((v) => ({ brand: v.brandSlug ?? "", partNo: v.partNo ?? "", isDefault: v.isDefault }))
-    return seeded.length > 0 ? seeded : [{ brand: "", partNo: "", isDefault: true }]
+      .map((v) => ({ id: v.id, brand: v.brandSlug ?? "", partNo: v.partNo ?? "", isDefault: v.isDefault }))
+    return seeded.length > 0 ? seeded : [{ id: "", brand: "", partNo: "", isDefault: true }]
   })
-  const addMfr    = () => setMfrRows([...mfrRows, { brand: "", partNo: "", isDefault: false }])
+  const addMfr    = () => setMfrRows([...mfrRows, { id: "", brand: "", partNo: "", isDefault: false }])
   const removeMfr = (i: number) => setMfrRows(mfrRows.filter((_, j) => j !== i))
   const updateMfr = (i: number, field: keyof MfrRow, val: string | boolean) => {
     const next = [...mfrRows]
@@ -663,25 +665,79 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
       if (!res.ok) return showToast({ ...extractError(body, isEdit ? "Failed to save item" : "Failed to create item"), type: "error" })
       const savedId = (body?.data?.id as string | undefined) ?? initial?.id
 
-      // Variant POSTs are ADD-mode only. In edit mode users manage variants
-      // via a dedicated flow (F5.6 territory) — blindly POSTing existing
-      // brand pairs would 409, and diffing add-vs-remove is a full feature
-      // of its own. So we skip the block on edit.
+      // Variant chain.
+      //   ADD mode  → POST /variants for every non-empty row.
+      //   EDIT mode → diff mfrRows against initial.variants (F5.6):
+      //     • rows whose id vanished from mfrRows           → DELETE /variants/[vId]
+      //     • rows whose brand/partNo/default changed       → PATCH  /variants/[vId]
+      //     • new rows (id === "" with a brand filled in)   → POST   /variants
+      //   The order is DELETE → PATCH → POST so default-toggle propagation
+      //   never fights a stale row (a deleted default has already handed off
+      //   by the time a PATCH tries to flip a different sibling).
       const failed: string[] = []
-      if (!isEdit && mfrOpen && savedId && cleanedMfrs.length) {
-        for (const r of cleanedMfrs) {
-          const vr = await fetch(`/api/items/${savedId}/variants`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              brand: r.brand.trim(),
-              partNo: r.partNo.trim() || null,
-              isDefault: r.isDefault,
-            }),
-          })
-          if (!vr.ok) {
-            const vb = await vr.json().catch(() => null)
-            failed.push(`${r.brand.trim()}: ${extractError(vb, "failed").message}`)
+      if (mfrOpen && savedId) {
+        if (!isEdit) {
+          for (const r of cleanedMfrs) {
+            const vr = await fetch(`/api/items/${savedId}/variants`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                brand: r.brand.trim(),
+                partNo: r.partNo.trim() || null,
+                isDefault: r.isDefault,
+              }),
+            })
+            if (!vr.ok) {
+              const vb = await vr.json().catch(() => null)
+              failed.push(`${r.brand.trim()}: ${extractError(vb, "failed").message}`)
+            }
+          }
+        } else {
+          const originals = (initial?.variants ?? []).filter((v) => v.sourceKind === "purchased")
+          const kept = new Set(mfrRows.map((r) => r.id).filter((id) => id))
+          const removed = originals.filter((v) => !kept.has(v.id))
+          for (const v of removed) {
+            const dr = await fetch(`/api/items/${savedId}/variants/${v.id}`, { method: "DELETE" })
+            if (!dr.ok) {
+              const db = await dr.json().catch(() => null)
+              failed.push(`Delete ${v.brandSlug ?? "variant"}: ${extractError(db, "failed").message}`)
+            }
+          }
+          for (const r of mfrRows) {
+            const brand = r.brand.trim()
+            if (r.id) {
+              const orig = originals.find((v) => v.id === r.id)
+              if (!orig) continue
+              const patch: { brand?: string; partNo?: string | null; isDefault?: boolean } = {}
+              if (brand && brand !== (orig.brandSlug ?? "")) patch.brand = brand
+              const nextPn = r.partNo.trim() || null
+              if (nextPn !== (orig.partNo ?? null)) patch.partNo = nextPn
+              if (r.isDefault && !orig.isDefault) patch.isDefault = true
+              if (Object.keys(patch).length === 0) continue
+              const pr = await fetch(`/api/items/${savedId}/variants/${r.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(patch),
+              })
+              if (!pr.ok) {
+                const pb = await pr.json().catch(() => null)
+                failed.push(`Update ${orig.brandSlug ?? brand}: ${extractError(pb, "failed").message}`)
+              }
+            } else if (brand) {
+              const cr = await fetch(`/api/items/${savedId}/variants`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  brand,
+                  partNo: r.partNo.trim() || null,
+                  isDefault: r.isDefault,
+                }),
+              })
+              if (!cr.ok) {
+                const cb = await cr.json().catch(() => null)
+                failed.push(`Add ${brand}: ${extractError(cb, "failed").message}`)
+              }
+            }
           }
         }
       }
@@ -1369,18 +1425,19 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               </div>
             </CardHeader>
             <CardContent className="p-6 space-y-3">
-              {isEdit ? (
+              {!isEdit && (
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
                   <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>
-                    Existing brand rows shown for context. In edit mode, changes here are <b>not</b> saved yet — brand-variant add/remove/rename lives in a dedicated flow (F5.6). Use the details page's variants panel for now.
+                    Opening stock isn&apos;t captured here — add the item first, then use <b>Inventory → Stock In</b> to seed quantities.
                   </span>
                 </div>
-              ) : (
-                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+              )}
+              {isEdit && (
+                <div className="rounded-md border border-sky-500/30 bg-sky-500/5 px-3 py-2 text-[11px] text-sky-800 dark:text-sky-300 flex items-start gap-2">
                   <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                   <span>
-                    Opening stock is not accepted here yet — the ledger's dual-column invariant is still one-way (F5.4 removes that). Add the item now, then use <b>Inventory → Stock In</b> to seed opening quantities once F5.4 ships.
+                    Add, edit or remove brand variants freely. Removals require zero on-hand and no open POs — the server refuses otherwise. Removing the current default auto-promotes the earliest surviving variant.
                   </span>
                 </div>
               )}
