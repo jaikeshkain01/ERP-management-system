@@ -31,7 +31,7 @@ import {
   ArrowLeft, Save, AlertCircle, CheckCircle2, Info,
   Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory, ShoppingBag,
   Lock, Plus, Trash2, ChevronDown, ChevronRight, Sliders,
-  Copy, Search, Eye, Layers,
+  Copy, Search, Eye, Layers, Link2,
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { CategoryCascade } from "@/components/category-cascade"
@@ -361,49 +361,62 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   //  Users can seed the item's first BOM Draft directly from this form —
   //  saves a round-trip to /items/[id]/bom after creation. On submit we
   //  chain: item POST → POST /bom (Draft) → PATCH /bom/[versionId] (lines).
+  //
+  //  UX modeled on the PCB "Add Manually" modal (PcbForm) — typeahead
+  //  in-row on the Name field, matches appear in an absolute dropdown
+  //  as you type, click to link. A green Link2 icon marks a linked row;
+  //  typing edits the name and clears the link (back to unlinked).
+  //
+  //  KEY DIFFERENCE FROM PCB FORM: `item_bom_lines.child_item_id` is a
+  //  NOT NULL FK — we cannot ship "new part will be created" on the fly.
+  //  Unlinked rows are refused at submit with a clear "pick a match" hint.
+  //
   //  Deliberately narrower than the full editor: child + qty + ref-des.
   //  Preferred brand / sequence / remarks are added later in the editor.
   const [bomLines, setBomLines]        = React.useState<BomDraftLine[]>([])
-  const [bomPickerOpenKey, setBomPickerOpenKey] = React.useState<string | null>(null)
-  const [bomQuery,   setBomQuery]      = React.useState("")
-  const [bomResults, setBomResults]    = React.useState<BomChildSearchResult[]>([])
-  const [bomSearching, setBomSearching] = React.useState(false)
+  const [bomOpenRow, setBomOpenRow]    = React.useState<string | null>(null)  // key of the row whose typeahead is open
+  const [bomMatches, setBomMatches]    = React.useState<Record<string, BomChildSearchResult[]>>({})
   const bomApplicable = itemType !== "raw"
 
-  const addBomLine = () => {
-    const key = `bom-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))}`
-    setBomLines((prev) => [...prev, { key, childItemId: "", childCode: "", childName: "", childItemType: "raw", qty: "1", refDes: "" }])
-    setBomPickerOpenKey(key)
-    setBomQuery("")
-  }
+  const newBomLine = (): BomDraftLine => ({
+    key: `bom-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))}`,
+    childItemId: "", childCode: "", childName: "", childItemType: "raw",
+    qty: "1", refDes: "",
+  })
+  const addBomLine = () => setBomLines((prev) => [...prev, newBomLine()])
   const removeBomLine = (key: string) => setBomLines((prev) => prev.filter((l) => l.key !== key))
   const patchBomLine = (key: string, patch: Partial<BomDraftLine>) =>
     setBomLines((prev) => prev.map((l) => l.key === key ? { ...l, ...patch } : l))
 
-  // Typeahead against /api/items — same shape as the /items/[id]/bom picker.
+  // Typing in Name: update text, clear any prior link. Query drives the
+  // typeahead dropdown for THIS row only (openRow gates visibility).
+  const onBomNameChange = (key: string, value: string) => {
+    patchBomLine(key, { childName: value, childItemId: "", childCode: "", childItemType: "raw" })
+    setBomOpenRow(value.trim() ? key : null)
+  }
+
+  // Debounced /api/items lookup per open row. Cheap — one query at a time.
   React.useEffect(() => {
-    if (!bomPickerOpenKey) return
-    const q = bomQuery.trim()
+    if (!bomOpenRow) return
+    const row = bomLines.find((l) => l.key === bomOpenRow)
+    if (!row) return
+    const q = row.childName.trim()
+    if (!q) { setBomMatches((prev) => ({ ...prev, [bomOpenRow]: [] })); return }
     let cancelled = false
-    setBomSearching(true)
     const t = window.setTimeout(async () => {
-      const url = `/api/items?${new URLSearchParams(q ? { q } : {}).toString()}`
-      const res = await fetch(url, { cache: "no-store" })
+      const res = await fetch(`/api/items?q=${encodeURIComponent(q)}`, { cache: "no-store" })
       if (cancelled) return
       if (res.ok) {
         const b = await res.json() as { data: BomChildSearchResult[] }
-        // In add-mode the parent doesn't exist yet, so no self-filter needed.
-        setBomResults(b.data)
+        setBomMatches((prev) => ({ ...prev, [bomOpenRow]: b.data.slice(0, 8) }))
       }
-      setBomSearching(false)
-    }, 200)
+    }, 180)
     return () => { cancelled = true; window.clearTimeout(t) }
-  }, [bomQuery, bomPickerOpenKey])
+  }, [bomOpenRow, bomLines])
 
   const pickBomChild = (key: string, picked: BomChildSearchResult) => {
     patchBomLine(key, { childItemId: picked.id, childCode: picked.code, childName: picked.name, childItemType: picked.itemType })
-    setBomPickerOpenKey(null)
-    setBomQuery("")
+    setBomOpenRow(null)
   }
 
   // Auto-close the section if the stage flips to raw (nothing there is valid).
@@ -474,8 +487,23 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     const packagingOpen = openSections.has("packaging")
     const storageOpen = openSections.has("storage")
     const assetOpen   = openSections.has("asset") && assetApplicable
+    const bomOpen     = openSections.has("bom") && bomApplicable && !isEdit
     const cleanedSpecs = specs.filter((s) => s.key.trim() !== "")
     const cleanedMfrs  = mfrRows.filter((r) => r.brand.trim() !== "")
+
+    // BOM guard: any row where the user typed a name but never picked a
+    // match from the typeahead is a hard error — item_bom_lines.child_item_id
+    // is a NOT NULL FK, we cannot ship those to the server.
+    if (bomOpen) {
+      const unlinked = bomLines.filter((l) => l.childName.trim() !== "" && !l.childItemId)
+      if (unlinked.length > 0) {
+        return showToast({
+          message: `Pick a catalog match for ${unlinked.length} BOM line${unlinked.length === 1 ? "" : "s"}`,
+          hint: unlinked.map((l) => `"${l.childName}"`).join(", ") + " — start typing again to pick from the dropdown, or remove the row.",
+          type: "error",
+        })
+      }
+    }
 
     // Identity guard: every item must be identifiable by SOMETHING beyond its
     // internal SKU — either a generic part number OR at least one manufacturer
@@ -1318,98 +1346,116 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="p-6 space-y-4">
-              {bomLines.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No lines yet. Click <b>Add line</b> to pick a child item.
-                </p>
-              ) : (
-                <div className="border border-border rounded-lg overflow-x-auto">
-                  <table className="w-full text-sm min-w-[720px]">
-                    <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-bold">Child item</th>
-                        <th className="px-3 py-2 text-right font-bold w-24">Qty</th>
-                        <th className="px-3 py-2 text-left font-bold w-48">Ref des</th>
-                        <th className="w-10" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {bomLines.map((l) => {
-                        const isPicking = bomPickerOpenKey === l.key
-                        return (
-                          <tr key={l.key} className="hover:bg-muted/10 align-top">
-                            <td className="px-3 py-2 relative">
-                              {isPicking ? (
-                                <div className="space-y-1">
-                                  <Input autoFocus value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} placeholder="Search by code or name…" className="h-8 text-sm" />
-                                  <div className="absolute z-20 top-full left-2 right-2 mt-1 border border-border rounded-lg bg-background shadow-lg max-h-64 overflow-y-auto">
-                                    {bomSearching && <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>}
-                                    {!bomSearching && bomResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>}
-                                    {bomResults.map((r) => (
-                                      <button
-                                        key={r.id}
-                                        type="button"
-                                        className="w-full text-left px-3 py-1.5 hover:bg-muted/40 cursor-pointer flex items-center gap-2"
-                                        onClick={() => pickBomChild(l.key, r)}
-                                      >
-                                        <span className="font-semibold text-sm">{r.name}</span>
-                                        <span className="font-mono text-[11px] text-muted-foreground">{r.code}</span>
-                                        <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground/70">{r.itemType.replace("_", " ")}</span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : l.childItemId ? (
-                                <button
-                                  type="button"
-                                  onClick={() => { setBomPickerOpenKey(l.key); setBomQuery("") }}
-                                  className="flex items-center gap-2 text-left"
-                                  title="Click to change"
-                                >
-                                  <span className="font-semibold text-foreground">{l.childName}</span>
-                                  <span className="font-mono text-[11px] text-muted-foreground">{l.childCode}</span>
-                                </button>
-                              ) : (
-                                <button type="button" onClick={() => { setBomPickerOpenKey(l.key); setBomQuery("") }} className="text-xs text-primary hover:underline">
-                                  Pick a child item…
-                                </button>
+            <CardContent className="p-6 space-y-3">
+              <div className="border border-border rounded-lg overflow-visible">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
+                    <tr>
+                      <th className="px-2 py-2 min-w-[260px]">Name</th>
+                      <th className="px-2 py-2 w-28">Code</th>
+                      <th className="px-2 py-2 w-24">Type</th>
+                      <th className="px-2 py-2 w-16 text-center">Qty</th>
+                      <th className="px-2 py-2 w-40">Ref des</th>
+                      <th className="px-2 py-2 w-8" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {bomLines.map((l) => {
+                      const linked  = !!l.childItemId
+                      const matches = bomOpenRow === l.key ? (bomMatches[l.key] ?? []) : []
+                      return (
+                        <tr key={l.key} className="hover:bg-muted/10">
+                          <td className="px-2 py-1.5">
+                            <div className="relative">
+                              <Input
+                                value={l.childName}
+                                onChange={(e) => onBomNameChange(l.key, e.target.value)}
+                                onFocus={() => { if (l.childName.trim() && !linked) setBomOpenRow(l.key) }}
+                                onBlur={() => window.setTimeout(() => setBomOpenRow((r) => (r === l.key ? null : r)), 150)}
+                                placeholder="Search catalog — type a code or name…"
+                                className={`h-8 text-xs ${linked ? "pr-7" : ""}`}
+                                autoComplete="off"
+                              />
+                              {linked && (
+                                <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
                               )}
-                            </td>
-                            <td className="px-3 py-2">
-                              <Input
-                                value={l.qty}
-                                onChange={(e) => patchBomLine(l.key, { qty: e.target.value })}
-                                inputMode="decimal"
-                                className="h-8 text-sm text-right font-mono"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <Input
-                                value={l.refDes}
-                                onChange={(e) => patchBomLine(l.key, { refDes: e.target.value })}
-                                placeholder="R1, R2, C3…"
-                                className="h-8 text-sm font-mono"
-                              />
-                            </td>
-                            <td className="px-2 py-2">
-                              <button
-                                type="button"
-                                onClick={() => removeBomLine(l.key)}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-500/10"
-                                title="Remove line"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p className="text-[11px] text-muted-foreground">
+                              {matches.length > 0 && (
+                                <ul className="absolute left-0 top-[calc(100%+2px)] z-50 max-h-56 w-[min(360px,80vw)] overflow-y-auto rounded-lg border border-border bg-popover shadow-xl">
+                                  {matches.map((r) => (
+                                    <li key={r.id}>
+                                      <button
+                                        type="button"
+                                        onMouseDown={(e) => { e.preventDefault(); pickBomChild(l.key, r) }}
+                                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-muted/60"
+                                      >
+                                        <span className="min-w-0">
+                                          <span className="block truncate font-medium">{r.name}</span>
+                                          <span className="block truncate text-[10px] text-muted-foreground">
+                                            {r.code} · {r.itemType.replace("_", " ")}
+                                          </span>
+                                        </span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                              {!linked && l.childName.trim() && (
+                                <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
+                                  <AlertCircle className="h-3 w-3" /> Pick a match — BOM lines must reference an existing item
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input value={l.childCode} readOnly className="h-8 text-xs font-mono bg-muted/20" disabled={!linked} />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input value={linked ? l.childItemType.replace("_", " ") : ""} readOnly className="h-8 text-xs bg-muted/20" disabled={!linked} />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={l.qty}
+                              onChange={(e) => patchBomLine(l.key, { qty: e.target.value })}
+                              className="h-8 text-xs text-center font-mono"
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <Input
+                              value={l.refDes}
+                              onChange={(e) => patchBomLine(l.key, { refDes: e.target.value })}
+                              placeholder="R1, R2, C3…"
+                              className="h-8 text-xs font-mono"
+                            />
+                          </td>
+                          <td className="px-1 py-1.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeBomLine(l.key)}
+                              aria-label="Remove line"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {bomLines.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
+                          No lines. Click <b>Add line</b> to start.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              <p className="text-[10px] text-muted-foreground">
+                <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item.
                 Preferred brand, sequence and remarks aren&apos;t captured here — pick them up in the BOM editor after creation.
               </p>
             </CardContent>
