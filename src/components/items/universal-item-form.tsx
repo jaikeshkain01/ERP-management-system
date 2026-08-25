@@ -31,7 +31,7 @@ import {
   ArrowLeft, Save, AlertCircle, CheckCircle2, Info,
   Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory, ShoppingBag,
   Lock, Plus, Trash2, ChevronDown, ChevronRight, Sliders,
-  Copy, Search, Eye,
+  Copy, Search, Eye, Layers,
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { CategoryCascade } from "@/components/category-cascade"
@@ -129,8 +129,31 @@ function initialOpenSections(i: UniversalItemInitial): SectionKey[] {
   return open
 }
 
-/** SectionKey — declared here so `initialOpenSections` above can name it. */
-type SectionKey = "stock" | "specs" | "mfr" | "board" | "packaging" | "storage" | "asset"
+/** SectionKey — declared here so `initialOpenSections` above can name it.
+ *  "bom" is add-mode only — edit-mode uses the dedicated /items/[id]/bom
+ *  editor because existing BOMs require Draft/Active version workflow. */
+type SectionKey = "stock" | "specs" | "mfr" | "board" | "packaging" | "storage" | "asset" | "bom"
+
+// Local BOM draft line — one row in the inline "Assembly / BOM" section on
+// the add form. Persisted after item POST via a two-step chain:
+//   POST  /api/items/[id]/bom                → creates a Draft version
+//   PATCH /api/items/[id]/bom/[versionId]    → replaces lines
+// Deliberately narrower than the /items/[id]/bom editor: no preferred-brand
+// picker (per-child variants aren't loaded yet in the add flow), no
+// sequence, no remarks. Users add those fields later in the editor.
+interface BomDraftLine {
+  key: string
+  childItemId: string
+  childCode: string
+  childName: string
+  childItemType: string
+  qty: string
+  refDes: string
+}
+
+interface BomChildSearchResult {
+  id: string; code: string; name: string; itemType: string
+}
 
 export default function UniversalItemForm({ mode, initial }: UniversalItemFormProps) {
   const router = useRouter()
@@ -334,6 +357,62 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setMfrRows(next)
   }
 
+  // ── Section: Assembly / BOM (add-mode only, F6.4 B1 hook) ──
+  //  Users can seed the item's first BOM Draft directly from this form —
+  //  saves a round-trip to /items/[id]/bom after creation. On submit we
+  //  chain: item POST → POST /bom (Draft) → PATCH /bom/[versionId] (lines).
+  //  Deliberately narrower than the full editor: child + qty + ref-des.
+  //  Preferred brand / sequence / remarks are added later in the editor.
+  const [bomLines, setBomLines]        = React.useState<BomDraftLine[]>([])
+  const [bomPickerOpenKey, setBomPickerOpenKey] = React.useState<string | null>(null)
+  const [bomQuery,   setBomQuery]      = React.useState("")
+  const [bomResults, setBomResults]    = React.useState<BomChildSearchResult[]>([])
+  const [bomSearching, setBomSearching] = React.useState(false)
+  const bomApplicable = itemType !== "raw"
+
+  const addBomLine = () => {
+    const key = `bom-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))}`
+    setBomLines((prev) => [...prev, { key, childItemId: "", childCode: "", childName: "", childItemType: "raw", qty: "1", refDes: "" }])
+    setBomPickerOpenKey(key)
+    setBomQuery("")
+  }
+  const removeBomLine = (key: string) => setBomLines((prev) => prev.filter((l) => l.key !== key))
+  const patchBomLine = (key: string, patch: Partial<BomDraftLine>) =>
+    setBomLines((prev) => prev.map((l) => l.key === key ? { ...l, ...patch } : l))
+
+  // Typeahead against /api/items — same shape as the /items/[id]/bom picker.
+  React.useEffect(() => {
+    if (!bomPickerOpenKey) return
+    const q = bomQuery.trim()
+    let cancelled = false
+    setBomSearching(true)
+    const t = window.setTimeout(async () => {
+      const url = `/api/items?${new URLSearchParams(q ? { q } : {}).toString()}`
+      const res = await fetch(url, { cache: "no-store" })
+      if (cancelled) return
+      if (res.ok) {
+        const b = await res.json() as { data: BomChildSearchResult[] }
+        // In add-mode the parent doesn't exist yet, so no self-filter needed.
+        setBomResults(b.data)
+      }
+      setBomSearching(false)
+    }, 200)
+    return () => { cancelled = true; window.clearTimeout(t) }
+  }, [bomQuery, bomPickerOpenKey])
+
+  const pickBomChild = (key: string, picked: BomChildSearchResult) => {
+    patchBomLine(key, { childItemId: picked.id, childCode: picked.code, childName: picked.name, childItemType: picked.itemType })
+    setBomPickerOpenKey(null)
+    setBomQuery("")
+  }
+
+  // Auto-close the section if the stage flips to raw (nothing there is valid).
+  React.useEffect(() => {
+    if (!bomApplicable && openSections.has("bom")) {
+      setOpenSections((prev) => { const n = new Set(prev); n.delete("bom"); return n })
+    }
+  }, [bomApplicable, openSections])
+
   // ── Section: Specifications (P2) — free-form key/value bag ──
   interface Spec { key: string; value: string }
   const [specs, setSpecs] = React.useState<Spec[]>(() => {
@@ -512,9 +591,51 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
         }
       }
 
+      // Chain BOM POST + PATCH — add-mode only. Any valid line in the
+      // section seeds a Draft version. On any failure we surface it in the
+      // toast but the item itself stays created (partial success).
+      let bomVersionId: string | null = null
+      const validBomLines = bomLines.filter(
+        (l) => l.childItemId && Number.isFinite(Number(l.qty)) && Number(l.qty) > 0,
+      )
+      if (!isEdit && bomApplicable && openSections.has("bom") && savedId && validBomLines.length > 0) {
+        try {
+          const cRes = await fetch(`/api/items/${savedId}/bom`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          })
+          const cBody = await cRes.json().catch(() => null)
+          if (!cRes.ok) {
+            failed.push(`BOM version: ${extractError(cBody, "failed to create version").message}`)
+          } else {
+            bomVersionId = (cBody?.data?.selectedVersionId as string | null) ?? null
+            if (bomVersionId) {
+              const pRes = await fetch(`/api/items/${savedId}/bom/${bomVersionId}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  lines: validBomLines.map((l) => ({
+                    childItemId: l.childItemId,
+                    qty: Number(l.qty),
+                    refDes: l.refDes.trim() || null,
+                  })),
+                }),
+              })
+              if (!pRes.ok) {
+                const pBody = await pRes.json().catch(() => null)
+                failed.push(`BOM lines: ${extractError(pBody, "failed to save lines").message}`)
+              }
+            }
+          }
+        } catch (err) {
+          failed.push(`BOM: ${err instanceof Error ? err.message : "unexpected error"}`)
+        }
+      }
+
       if (failed.length) {
         showToast({
-          message: `Item created, but ${failed.length} variant(s) failed`,
+          message: `Item created, but ${failed.length} follow-up step(s) failed`,
           hint: failed.join(" · "),
           type: "error",
         })
@@ -528,9 +649,13 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           type: "success",
         })
       }
-      const target = isEdit && savedId
-        ? `/items/details/${savedId}`
-        : savedId ? `/items/list?id=${savedId}` : "/items/list"
+      // If we seeded a BOM Draft, drop the user in the BOM editor to Activate.
+      // Otherwise fall back to the usual details-in-list or details page.
+      const target = bomVersionId && savedId
+        ? `/items/${savedId}/bom`
+        : isEdit && savedId
+          ? `/items/details/${savedId}`
+          : savedId ? `/items/list?id=${savedId}` : "/items/list"
       window.setTimeout(() => router.push(target), failed.length ? 2500 : 700)
     } finally {
       setBusy(false)
@@ -990,6 +1115,9 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               { key: "packaging", shipped: true, label: "Packaging Info",     icon: Package, phase: "P6", disabled: false },
               { key: "storage",   shipped: true, label: "Storage / MSL",      icon: Wrench,  phase: "P7", disabled: false },
               { key: "asset",     shipped: true, label: "Asset Details",      icon: Laptop,  phase: "P8", disabled: !assetApplicable },
+              // BOM chip is add-mode only. Edit-mode uses the dedicated
+              // /items/[id]/bom editor because live BOMs need version workflow.
+              ...(isEdit ? [] : [{ key: "bom" as const, shipped: true as const, label: "Assembly / BOM", icon: Layers, phase: "B1", disabled: !bomApplicable }]),
             ] as { key: SectionKey; shipped: true; label: string; icon: React.ComponentType<{ className?: string }>; phase: string; disabled: boolean }[]).map(({ key, label, icon: Icon, disabled }) => {
               const open = openSections.has(key)
               return (
@@ -1161,6 +1289,128 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               </div>
               <p className="text-[11px] text-muted-foreground">
                 Assets like <i>MSI Prestige 14</i> typically have one manufacturer; consumables with multiple approved brands can list several.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ─── Section: Assembly / BOM (F6.4 B1, add-mode only) ─── */}
+        {!isEdit && openSections.has("bom") && bomApplicable && (
+          <Card className="border border-border shadow-sm">
+            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-primary" />
+                  <div>
+                    <CardTitle className="text-lg font-bold text-foreground">Assembly / BOM</CardTitle>
+                    <CardDescription>
+                      Optional. Any lines you add here seed a Draft BOM version — after creation we&apos;ll drop you on the BOM editor to Activate. You can also skip this and add lines later.
+                    </CardDescription>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="button" size="sm" variant="outline" onClick={addBomLine} className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5" /> Add line
+                  </Button>
+                  <button type="button" onClick={() => toggleSection("bom")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
+                    Remove section
+                  </button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-6 space-y-4">
+              {bomLines.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No lines yet. Click <b>Add line</b> to pick a child item.
+                </p>
+              ) : (
+                <div className="border border-border rounded-lg overflow-x-auto">
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-bold">Child item</th>
+                        <th className="px-3 py-2 text-right font-bold w-24">Qty</th>
+                        <th className="px-3 py-2 text-left font-bold w-48">Ref des</th>
+                        <th className="w-10" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {bomLines.map((l) => {
+                        const isPicking = bomPickerOpenKey === l.key
+                        return (
+                          <tr key={l.key} className="hover:bg-muted/10 align-top">
+                            <td className="px-3 py-2 relative">
+                              {isPicking ? (
+                                <div className="space-y-1">
+                                  <Input autoFocus value={bomQuery} onChange={(e) => setBomQuery(e.target.value)} placeholder="Search by code or name…" className="h-8 text-sm" />
+                                  <div className="absolute z-20 top-full left-2 right-2 mt-1 border border-border rounded-lg bg-background shadow-lg max-h-64 overflow-y-auto">
+                                    {bomSearching && <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>}
+                                    {!bomSearching && bomResults.length === 0 && <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>}
+                                    {bomResults.map((r) => (
+                                      <button
+                                        key={r.id}
+                                        type="button"
+                                        className="w-full text-left px-3 py-1.5 hover:bg-muted/40 cursor-pointer flex items-center gap-2"
+                                        onClick={() => pickBomChild(l.key, r)}
+                                      >
+                                        <span className="font-semibold text-sm">{r.name}</span>
+                                        <span className="font-mono text-[11px] text-muted-foreground">{r.code}</span>
+                                        <span className="ml-auto text-[9px] font-bold uppercase text-muted-foreground/70">{r.itemType.replace("_", " ")}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : l.childItemId ? (
+                                <button
+                                  type="button"
+                                  onClick={() => { setBomPickerOpenKey(l.key); setBomQuery("") }}
+                                  className="flex items-center gap-2 text-left"
+                                  title="Click to change"
+                                >
+                                  <span className="font-semibold text-foreground">{l.childName}</span>
+                                  <span className="font-mono text-[11px] text-muted-foreground">{l.childCode}</span>
+                                </button>
+                              ) : (
+                                <button type="button" onClick={() => { setBomPickerOpenKey(l.key); setBomQuery("") }} className="text-xs text-primary hover:underline">
+                                  Pick a child item…
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={l.qty}
+                                onChange={(e) => patchBomLine(l.key, { qty: e.target.value })}
+                                inputMode="decimal"
+                                className="h-8 text-sm text-right font-mono"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <Input
+                                value={l.refDes}
+                                onChange={(e) => patchBomLine(l.key, { refDes: e.target.value })}
+                                placeholder="R1, R2, C3…"
+                                className="h-8 text-sm font-mono"
+                              />
+                            </td>
+                            <td className="px-2 py-2">
+                              <button
+                                type="button"
+                                onClick={() => removeBomLine(l.key)}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-rose-600 hover:bg-rose-500/10"
+                                title="Remove line"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Preferred brand, sequence and remarks aren&apos;t captured here — pick them up in the BOM editor after creation.
               </p>
             </CardContent>
           </Card>
