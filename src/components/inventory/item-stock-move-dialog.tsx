@@ -3,8 +3,8 @@
 /**
  * Universal Stock In / Stock Out dialog — operates on `item_variant_id`, so it
  * services every item type (legacy component-backed AND universal-only). Posts
- * to POST /api/inventory/transactions. Replaces the legacy CBV-scoped
- * StockMoveModal on the rebuilt inventory page.
+ * to POST /api/inventory/transactions. Replaced the legacy CBV-scoped
+ * `stock-move-modal.tsx`, which was deleted in the F5.6 cleanup pass.
  */
 import * as React from "react"
 import { Button } from "@/components/ui/button"

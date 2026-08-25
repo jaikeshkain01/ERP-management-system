@@ -3,9 +3,8 @@
  * /items/add form. This module preserves the URL so old bookmarks and
  * in-flight nav links keep working; a fresh render immediately redirects.
  *
- * The legacy form component (`@/app/components/component-form`) is still
- * used by /components/edit and stays around; only this add entrypoint is
- * gone.
+ * The legacy `component-form.tsx` was deleted in the F5.6 cleanup pass
+ * (no importers remained after P15c retired /components/edit).
  */
 import { redirect } from "next/navigation"
 
