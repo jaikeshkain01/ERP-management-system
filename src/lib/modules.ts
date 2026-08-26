@@ -112,6 +112,13 @@ export type Workspace = {
   href: string
   /** Empty array = single-page workspace (no tab bar rendered). */
   tabs: WorkspaceTab[]
+  /** Route prefixes this workspace owns for path-based resolution. Deep
+   *  detail pages (details, edit, per-id BOM) that don't match a tab href
+   *  fall back to these so the tab bar keeps rendering under the right
+   *  workspace. Use `?from=<id>` to override when a page is legitimately
+   *  reached from more than one workspace (e.g. Assembled Products → an
+   *  item detail page that also belongs to Items). */
+  routePrefixes?: string[]
 }
 
 export const WORKSPACES: Workspace[] = [
@@ -121,6 +128,7 @@ export const WORKSPACES: Workspace[] = [
     icon: LayoutDashboard,
     href: "/dashboard",
     tabs: [],
+    routePrefixes: ["/dashboard"],
   },
   {
     id: "components",
@@ -136,6 +144,10 @@ export const WORKSPACES: Workspace[] = [
       { title: "Item List", href: "/items/list" },
       { title: "Add Item", href: "/items/add" },
     ],
+    // Owns every deep /items/* path: details, edit, and the per-id BOM
+    // editor. Reached from another workspace (Products, PCB) with a
+    // `?from=<id>` hint that override this fallback.
+    routePrefixes: ["/items"],
   },
   {
     id: "inventory",
@@ -148,6 +160,7 @@ export const WORKSPACES: Workspace[] = [
       { title: "Warehouses", href: "/components/inventory/warehouses" },
       { title: "Usage Analysis", href: "/components/usage" },
     ],
+    routePrefixes: ["/components/inventory", "/components/usage"],
   },
   // Both workspaces are now single-page — the "Structure" tabs were dropped
   // in the module-consolidation slice because /products/structure and
@@ -160,6 +173,7 @@ export const WORKSPACES: Workspace[] = [
     icon: Package,
     href: "/products/list",
     tabs: [],
+    routePrefixes: ["/products"],
   },
   {
     id: "pcb",
@@ -167,6 +181,7 @@ export const WORKSPACES: Workspace[] = [
     icon: Cpu,
     href: "/pcb-management/list",
     tabs: [],
+    routePrefixes: ["/pcb-management"],
   },
   {
     id: "production",
@@ -179,6 +194,7 @@ export const WORKSPACES: Workspace[] = [
       { title: "Readiness", href: "/production/readiness" },
       { title: "Orders", href: "/production/orders" },
     ],
+    routePrefixes: ["/production"],
   },
   {
     id: "purchasing",
@@ -190,6 +206,7 @@ export const WORKSPACES: Workspace[] = [
       { title: "Requests", href: "/purchases/requests" },
       { title: "Orders", href: "/purchases/orders" },
     ],
+    routePrefixes: ["/purchases"],
   },
   {
     id: "suppliers",
@@ -201,6 +218,7 @@ export const WORKSPACES: Workspace[] = [
       { title: "Supplier Details", href: "/suppliers/details" },
       { title: "Manufacturers", href: "/brands/list" },
     ],
+    routePrefixes: ["/suppliers", "/brands"],
   },
   {
     id: "reports",
@@ -209,6 +227,7 @@ export const WORKSPACES: Workspace[] = [
     moduleId: "reports",
     href: "/reports",
     tabs: [],
+    routePrefixes: ["/reports"],
   },
 ]
 
@@ -243,15 +262,30 @@ export function isWorkspaceReachable(
   return !workspace.moduleId || isEnabled(workspace.moduleId)
 }
 
+// Every declared routePrefix, longest-first, so a nested prefix (e.g.
+// /components/inventory under Inventory) resolves before a broader one
+// (nothing owns /components broadly, but the sort keeps future entries safe).
+const WORKSPACE_ROUTE_PREFIX_INDEX: Array<{ prefix: string; workspace: Workspace }> = WORKSPACES.flatMap(
+  (w) => (w.routePrefixes ?? []).map((prefix) => ({ prefix, workspace: w })),
+).sort((a, b) => b.prefix.length - a.prefix.length)
+
 /** Resolves the workspace a path belongs to, or null (home, settings, unknown). */
 export function workspaceForPath(pathname: string): Workspace | null {
+  // 1) Exact-tab match wins: e.g. `/items/list` resolves to Items via its tab
+  //    rather than via a broader prefix.
   for (const { href, workspace } of WORKSPACE_TAB_INDEX) {
     if (pathMatchesPrefix(pathname, href)) return workspace
   }
-  // Fallback for single-page workspaces and entry hrefs (e.g. /reports, /purchases redirect).
+  // 2) Workspace entry hrefs (single-page workspaces and their landing links).
   const byHref = [...WORKSPACES].sort((a, b) => b.href.length - a.href.length)
   for (const w of byHref) {
     if (pathMatchesPrefix(pathname, w.href)) return w
+  }
+  // 3) Deep-path fallback: pages like `/items/details/<id>` or `/items/<id>/bom`
+  //    that don't match a tab still belong to a workspace. Without this the
+  //    tab bar disappears on every detail / edit / per-id BOM route.
+  for (const { prefix, workspace } of WORKSPACE_ROUTE_PREFIX_INDEX) {
+    if (pathMatchesPrefix(pathname, prefix)) return workspace
   }
   return null
 }

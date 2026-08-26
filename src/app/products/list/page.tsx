@@ -210,7 +210,7 @@ export default function AssembledProductsListPage() {
             <Card
               key={it.id}
               className="flex flex-col transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 border border-border bg-card group relative overflow-hidden cursor-pointer"
-              onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}`)}
+              onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}?from=products`)}
             >
               <div className={`absolute top-0 right-0 h-16 w-16 -mr-4 -mt-4 rounded-full transition-all group-hover:scale-110 ${isAssembled ? "bg-primary/5" : "bg-sky-500/5"}`} />
               <CardHeader className="pb-3">
@@ -257,7 +257,7 @@ export default function AssembledProductsListPage() {
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <Button
-                    render={<Link href={`/items/${encodeURIComponent(it.id)}/bom`} />}
+                    render={<Link href={`/items/${encodeURIComponent(it.id)}/bom?from=products`} />}
                     variant="outline"
                     size="sm"
                     className="flex-1 gap-1.5"
@@ -266,7 +266,7 @@ export default function AssembledProductsListPage() {
                     <Layers className="h-3.5 w-3.5" /> BOM
                   </Button>
                   <Button
-                    render={<Link href={`/items/details/${encodeURIComponent(it.id)}`} />}
+                    render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=products`} />}
                     variant="ghost"
                     size="sm"
                     className="gap-1.5"

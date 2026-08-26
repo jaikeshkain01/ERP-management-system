@@ -40,7 +40,7 @@ export default function EditUniversalItemPage() {
   }, [id])
 
   if (loading) return (
-    <div className="max-w-6xl mx-auto pb-12 space-y-6">
+    <div className="pb-12 space-y-6">
       <div className="space-y-2">
         <Skeleton className="h-4 w-40" />
         <Skeleton className="h-8 w-72" />

@@ -2,7 +2,7 @@ import { Launchpad } from "@/components/launchpad"
 
 export default function HomePage() {
   return (
-    <div className="mx-auto max-w-6xl space-y-7">
+    <div className="space-y-7">
       <div className="flex flex-col gap-2">
         <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">
           Enterprise Suite

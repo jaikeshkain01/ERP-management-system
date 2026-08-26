@@ -30,7 +30,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeft, Plus, Trash2, Layers, GitBranch, CheckCircle2, AlertCircle,
   Cpu, Nut, Package, Boxes, Wrench, Laptop, Save, Undo2, Copy,
-  Link2, Sparkles, ListTree, Table2,
+  Link2, Sparkles, ListTree, Table2, ChevronRight, ChevronDown, Loader2,
 } from "lucide-react"
 import { extractError } from "@/lib/api-error"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
@@ -142,6 +142,90 @@ export default function ItemBomEditorPage() {
   // Per-child variants cache — populated lazily when a child is picked so its
   // preferred-brand dropdown can show real options.
   const [variantsByChild, setVariantsByChild] = React.useState<Record<string, Variant[]>>({})
+
+  // Sub-BOM cache and expand set for the Tree view. Each entry is the child
+  // item's Active BOM lines (recursive expansion re-uses this cache). We cap
+  // recursion depth so a rogue self-referencing cycle can't blow the render.
+  const MAX_TREE_DEPTH = 8
+  const [subBomByChild, setSubBomByChild] = React.useState<Record<string, Line[]>>({})
+  const [loadingSubBom, setLoadingSubBom] = React.useState<Set<string>>(new Set())
+  const [expandedChildren, setExpandedChildren] = React.useState<Set<string>>(new Set())
+
+  // "Does this child have any BOM version?" cache, keyed by childItemId.
+  // The server flag on saved BOM lines is the source of truth, but freshly
+  // added draft rows (or rows on an unsaved parent) don't have a server line
+  // yet — so we check the child directly and cache the answer.
+  const [childHasBomCache, setChildHasBomCache] = React.useState<Record<string, boolean>>({})
+
+  const loadSubBom = React.useCallback(async (childItemId: string) => {
+    if (!childItemId) return
+    if (subBomByChild[childItemId] || loadingSubBom.has(childItemId)) return
+    setLoadingSubBom((prev) => new Set(prev).add(childItemId))
+    try {
+      const res = await fetch(`/api/items/${encodeURIComponent(childItemId)}/bom`, { cache: "no-store" })
+      if (res.ok) {
+        const b = await res.json() as { data: Bom }
+        setSubBomByChild((prev) => ({ ...prev, [childItemId]: b.data.lines }))
+      }
+    } finally {
+      setLoadingSubBom((prev) => { const next = new Set(prev); next.delete(childItemId); return next })
+    }
+  }, [subBomByChild, loadingSubBom])
+
+  const toggleExpand = React.useCallback((childItemId: string) => {
+    if (!childItemId) return
+    setExpandedChildren((prev) => {
+      const next = new Set(prev)
+      if (next.has(childItemId)) next.delete(childItemId)
+      else { next.add(childItemId); void loadSubBom(childItemId) }
+      return next
+    })
+  }, [loadSubBom])
+
+  const collapseAll = React.useCallback(() => setExpandedChildren(new Set()), [])
+
+  // Seed the has-BOM cache from server lines (source of truth), then lazy-fill
+  // any linked child that we don't yet have an answer for by asking that
+  // child's BOM endpoint. `versions.length > 0` means the child carries a BOM.
+  React.useEffect(() => {
+    if (!bom) return
+    setChildHasBomCache((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const l of bom.lines) {
+        if (l.childItemId && next[l.childItemId] === undefined) {
+          next[l.childItemId] = l.childHasBom
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [bom])
+
+  React.useEffect(() => {
+    const linkedIds = new Set<string>()
+    for (const d of draftLines) {
+      if (!d.childItemId) continue
+      if (childHasBomCache[d.childItemId] !== undefined) continue
+      linkedIds.add(d.childItemId)
+    }
+    if (linkedIds.size === 0) return
+    let cancelled = false
+    ;(async () => {
+      for (const cid of linkedIds) {
+        const res = await fetch(`/api/items/${encodeURIComponent(cid)}/bom`, { cache: "no-store" })
+        if (cancelled) return
+        if (res.ok) {
+          const b = await res.json() as { data: { versions: unknown[] } }
+          setChildHasBomCache((prev) => ({ ...prev, [cid]: b.data.versions.length > 0 }))
+        } else {
+          // Cache a negative so we don't loop; a later reload after linking will refresh.
+          setChildHasBomCache((prev) => ({ ...prev, [cid]: false }))
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [draftLines, childHasBomCache])
 
   const selectedVersion = React.useMemo(
     () => bom?.versions.find((v) => v.id === selectedVersionId) ?? null,
@@ -498,7 +582,7 @@ export default function ItemBomEditorPage() {
   }
 
   return (
-    <div className="p-6 space-y-5 max-w-6xl mx-auto">
+    <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -653,118 +737,18 @@ export default function ItemBomEditorPage() {
               {draftLines.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">No lines yet. {isEditable && "Click \"Add line\" to start."}</p>
               ) : viewMode === "tree" ? (
-                <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
-                  {/* Root Item Node */}
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
-                      <ParentIcon className="h-5 w-5 text-primary" />
-                      <span className="font-extrabold text-primary text-sm uppercase tracking-wider">{parent.name}</span>
-                      <span className="font-mono text-[10px] font-bold text-primary/80 bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
-                        {parent.code}
-                      </span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border">
-                        {TYPE_META[parent.itemType].label}
-                      </span>
-                    </div>
-
-                    {/* Child Lines */}
-                    <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:bg-border/60">
-                      {draftLines.map((d, idx) => {
-                        const ChildIcon = TYPE_META[d.childItemType].icon
-                        const linked = !!d.childItemId
-                        // childHasBom lives on server lines only, so cross-ref
-                        // by id to flag sub-assemblies without losing draft edits.
-                        const serverLine = d.id ? bom?.lines.find((l) => l.id === d.id) : undefined
-                        const hasSubBom = serverLine?.childHasBom ?? false
-                        return (
-                          <div key={d.key} className="relative">
-                            {/* Connector line into the row */}
-                            <div className="absolute -left-6 top-5 w-6 h-[2px] border-t-2 border-dashed border-border" />
-                            <div className="flex flex-col gap-1.5 w-full max-w-md bg-background border border-border/80 rounded-xl p-3.5 relative z-10 shadow-2xs hover:border-primary/40 transition-all">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <ChildIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                  {linked ? (
-                                    <a
-                                      href={`/items/details/${d.childItemId}`}
-                                      className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
-                                    >
-                                      {d.childName || d.childCode || `Line ${idx + 1}`}
-                                    </a>
-                                  ) : (
-                                    <span className="font-bold text-foreground text-xs truncate">
-                                      {d.childName || d.childCode || `Line ${idx + 1}`}
-                                    </span>
-                                  )}
-                                  {hasSubBom && (
-                                    <span
-                                      className="text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5"
-                                      title="This child has its own BOM"
-                                    >
-                                      sub-BOM
-                                    </span>
-                                  )}
-                                  {!linked && (
-                                    <span
-                                      className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1 py-0.5"
-                                      title="New item — will be created on save"
-                                    >
-                                      <Sparkles className="h-2.5 w-2.5" /> new
-                                    </span>
-                                  )}
-                                </div>
-                                <span className="font-mono text-xs font-bold text-primary shrink-0">× {d.qty || "0"}</span>
-                              </div>
-
-                              {/* Parity with the Table view: every column shows,
-                                  so the tree card is a full read of the line. */}
-                              <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2 pt-2 border-t border-border/40 text-[10px]">
-                                <div className="flex flex-col">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Code</span>
-                                  <span className="font-mono font-bold text-primary truncate">{d.childCode || "—"}</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Type</span>
-                                  <span className="font-bold text-foreground">{TYPE_META[d.childItemType].label}</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Generic PN</span>
-                                  <span className="font-mono text-foreground truncate">{d.childGenericPn || "—"}</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Qty</span>
-                                  <span className="font-mono font-bold text-primary">{d.qty || "0"}</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Ref des</span>
-                                  <span className="font-mono text-foreground truncate">{d.refDes || "—"}</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Preferred brand</span>
-                                  <span className="font-semibold text-foreground truncate">{d.preferredBrandSlug ?? "—"}</span>
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Seq</span>
-                                  <span className="font-mono text-foreground">{d.sequence || "—"}</span>
-                                </div>
-                                <div className="flex flex-col items-end">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Linked</span>
-                                  <span className={`font-bold ${linked ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                                    {linked ? "catalog" : "new item"}
-                                  </span>
-                                </div>
-                                <div className="col-span-2 flex flex-col">
-                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Remarks</span>
-                                  <span className="text-foreground/80 whitespace-normal break-words">{d.remarks || "—"}</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </DragScrollArea>
+                <TreeViewBody
+                  parent={parent}
+                  draftLines={draftLines}
+                  bomLines={bom?.lines ?? []}
+                  childHasBomCache={childHasBomCache}
+                  subBomByChild={subBomByChild}
+                  loadingSubBom={loadingSubBom}
+                  expandedChildren={expandedChildren}
+                  toggleExpand={toggleExpand}
+                  collapseAll={collapseAll}
+                  maxDepth={MAX_TREE_DEPTH}
+                />
               ) : (
                 <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
                   <table className="w-full text-sm min-w-[1200px]">
@@ -787,6 +771,15 @@ export default function ItemBomEditorPage() {
                         const linked = !!d.childItemId
                         const variants = linked ? (variantsByChild[d.childItemId] ?? []) : []
                         const rowMatches = openRow === d.key ? (matches[d.key] ?? []) : []
+                        // Sub-BOM flag mirrors the Tree view: cross-ref the
+                        // draft to its server line by id so edits keep the
+                        // chip stable instead of flickering. For unsaved rows
+                        // (no server line yet) fall back to the has-BOM cache
+                        // populated from a direct lookup on the child.
+                        const serverLine = d.id ? bom?.lines.find((l) => l.id === d.id) : undefined
+                        const hasSubBom = serverLine?.childHasBom
+                          ?? (d.childItemId ? childHasBomCache[d.childItemId] : undefined)
+                          ?? false
                         return (
                           <tr key={d.key} className="hover:bg-muted/10 align-top">
                             <td className="px-3 py-2 relative">
@@ -804,6 +797,30 @@ export default function ItemBomEditorPage() {
                                 />
                                 {linked && (
                                   <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
+                                )}
+                                {/* Sub-BOM signpost — sits under the input so
+                                    it doesn't fight for row height. Chip flags
+                                    that the child carries its own BOM; the
+                                    arrow opens that child's BOM in a new tab
+                                    so the current draft isn't lost. */}
+                                {hasSubBom && (
+                                  <span className="mt-0.5 flex items-center gap-1 text-[10px]">
+                                    <span
+                                      className="inline-flex items-center rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 text-[9px] font-bold uppercase"
+                                      title="This child has its own BOM"
+                                    >
+                                      sub-BOM
+                                    </span>
+                                    <a
+                                      href={`/items/${encodeURIComponent(d.childItemId)}/bom`}
+                                      target="_blank"
+                                      rel="noopener"
+                                      className="inline-flex items-center gap-0.5 text-sky-600 dark:text-sky-400 hover:underline font-semibold"
+                                      title="Open this child's BOM in a new tab"
+                                    >
+                                      view <ChevronRight className="h-2.5 w-2.5" />
+                                    </a>
+                                  </span>
                                 )}
                                 {rowMatches.length > 0 && anchorRect && openRow === d.key && typeof window !== "undefined" && createPortal(
                                   <ul
@@ -978,6 +995,326 @@ export default function ItemBomEditorPage() {
             <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created on save (zero opening stock, min stock 10).
           </p>
         </>
+      )}
+    </div>
+  )
+}
+
+// ── Tree view helpers ──────────────────────────────────────────────────────
+// A normalized shape both top-level draft lines and expanded sub-BOM lines
+// render as. Keeps the recursive renderer type-clean and lets the top level
+// still surface "unlinked / new" cards that the server hasn't seen.
+interface TreeLine {
+  key: string
+  childItemId: string
+  childCode: string
+  childName: string
+  childGenericPn: string
+  childItemType: ItemType
+  qty: string
+  refDes: string
+  preferredBrandSlug: string | null
+  sequence: string
+  remarks: string
+  hasSubBom: boolean
+  linked: boolean
+}
+
+function draftLinesToTree(
+  draftLines: DraftLine[],
+  bomLines: Line[],
+  childHasBomCache: Record<string, boolean>,
+): TreeLine[] {
+  return draftLines.map((d) => {
+    const linked = !!d.childItemId
+    const serverLine = d.id ? bomLines.find((l) => l.id === d.id) : undefined
+    const hasSubBom = serverLine?.childHasBom
+      ?? (d.childItemId ? childHasBomCache[d.childItemId] : undefined)
+      ?? false
+    return {
+      key: d.key,
+      childItemId: d.childItemId,
+      childCode: d.childCode,
+      childName: d.childName,
+      childGenericPn: d.childGenericPn,
+      childItemType: d.childItemType,
+      qty: d.qty,
+      refDes: d.refDes,
+      preferredBrandSlug: d.preferredBrandSlug,
+      sequence: d.sequence,
+      remarks: d.remarks,
+      hasSubBom,
+      linked,
+    }
+  })
+}
+
+function serverLinesToTree(lines: Line[]): TreeLine[] {
+  return lines.map((l) => ({
+    key: l.id,
+    childItemId: l.childItemId,
+    childCode: l.childCode,
+    childName: l.childName,
+    childGenericPn: l.childGenericPn ?? "",
+    childItemType: l.childItemType,
+    qty: String(l.qty),
+    refDes: l.refDes ?? "",
+    preferredBrandSlug: l.preferredBrandSlug,
+    sequence: l.sequence == null ? "" : String(l.sequence),
+    remarks: l.remarks ?? "",
+    hasSubBom: l.childHasBom,
+    linked: true,
+  }))
+}
+
+interface TreeViewBodyProps {
+  parent: ParentItem
+  draftLines: DraftLine[]
+  bomLines: Line[]
+  childHasBomCache: Record<string, boolean>
+  subBomByChild: Record<string, Line[]>
+  loadingSubBom: Set<string>
+  expandedChildren: Set<string>
+  toggleExpand: (childItemId: string) => void
+  collapseAll: () => void
+  maxDepth: number
+}
+
+function TreeViewBody({
+  parent, draftLines, bomLines, childHasBomCache, subBomByChild, loadingSubBom, expandedChildren, toggleExpand, collapseAll, maxDepth,
+}: TreeViewBodyProps) {
+  const ParentIcon = TYPE_META[parent.itemType].icon
+  const roots = React.useMemo(
+    () => draftLinesToTree(draftLines, bomLines, childHasBomCache),
+    [draftLines, bomLines, childHasBomCache],
+  )
+  const anyExpanded = expandedChildren.size > 0
+
+  return (
+    <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
+      <div className="space-y-6">
+        {/* Collapse-all control (only surfaced when something is open —
+            we skip an "expand-all" since walking every sub-BOM eagerly
+            can fan into dozens of requests; users expand what they care
+            about). */}
+        {anyExpanded && (
+          <div className="flex justify-end -mt-2">
+            <button
+              type="button"
+              onClick={collapseAll}
+              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ChevronRight className="h-3 w-3" /> Collapse all
+            </button>
+          </div>
+        )}
+
+        {/* Root Item Node */}
+        <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
+          <ParentIcon className="h-5 w-5 text-primary" />
+          <span className="font-extrabold text-primary text-sm uppercase tracking-wider">{parent.name}</span>
+          <span className="font-mono text-[10px] font-bold text-primary/80 bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
+            {parent.code}
+          </span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border">
+            {TYPE_META[parent.itemType].label}
+          </span>
+        </div>
+
+        <TreeChildren
+          lines={roots}
+          depth={0}
+          maxDepth={maxDepth}
+          subBomByChild={subBomByChild}
+          loadingSubBom={loadingSubBom}
+          expandedChildren={expandedChildren}
+          toggleExpand={toggleExpand}
+        />
+      </div>
+    </DragScrollArea>
+  )
+}
+
+interface TreeChildrenProps {
+  lines: TreeLine[]
+  depth: number
+  maxDepth: number
+  subBomByChild: Record<string, Line[]>
+  loadingSubBom: Set<string>
+  expandedChildren: Set<string>
+  toggleExpand: (childItemId: string) => void
+}
+
+function TreeChildren({ lines, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand }: TreeChildrenProps) {
+  if (lines.length === 0) {
+    return <p className="pl-6 text-[11px] italic text-muted-foreground">No lines on this sub-BOM.</p>
+  }
+  return (
+    <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:bg-border/60">
+      {lines.map((l, idx) => (
+        <TreeCard
+          key={l.key}
+          line={l}
+          idx={idx}
+          depth={depth}
+          maxDepth={maxDepth}
+          subBomByChild={subBomByChild}
+          loadingSubBom={loadingSubBom}
+          expandedChildren={expandedChildren}
+          toggleExpand={toggleExpand}
+        />
+      ))}
+    </div>
+  )
+}
+
+interface TreeCardProps {
+  line: TreeLine
+  idx: number
+  depth: number
+  maxDepth: number
+  subBomByChild: Record<string, Line[]>
+  loadingSubBom: Set<string>
+  expandedChildren: Set<string>
+  toggleExpand: (childItemId: string) => void
+}
+
+function TreeCard({ line, idx, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand }: TreeCardProps) {
+  const ChildIcon = TYPE_META[line.childItemType].icon
+  const isExpanded = !!line.childItemId && expandedChildren.has(line.childItemId)
+  const isLoading = !!line.childItemId && loadingSubBom.has(line.childItemId)
+  const subLines = line.childItemId ? subBomByChild[line.childItemId] : undefined
+  const canExpand = line.hasSubBom && line.linked && depth < maxDepth
+  const atMaxDepth = line.hasSubBom && depth >= maxDepth
+  const subTree = React.useMemo(() => (subLines ? serverLinesToTree(subLines) : []), [subLines])
+
+  return (
+    <div className="relative">
+      {/* Connector line into the row */}
+      <div className="absolute -left-6 top-5 w-6 h-[2px] border-t-2 border-dashed border-border" />
+      <div className="flex flex-col gap-1.5 w-full max-w-md bg-background border border-border/80 rounded-xl p-3.5 relative z-10 shadow-2xs hover:border-primary/40 transition-all">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {canExpand ? (
+              <button
+                type="button"
+                onClick={() => toggleExpand(line.childItemId)}
+                className="inline-flex h-4 w-4 items-center justify-center rounded hover:bg-muted/60 text-muted-foreground shrink-0"
+                title={isExpanded ? "Collapse sub-BOM" : "Expand sub-BOM"}
+              >
+                {isLoading
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : isExpanded
+                    ? <ChevronDown className="h-3 w-3" />
+                    : <ChevronRight className="h-3 w-3" />}
+              </button>
+            ) : (
+              <span className="w-4 shrink-0" />
+            )}
+            <ChildIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            {line.linked ? (
+              <a
+                href={`/items/details/${line.childItemId}`}
+                className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
+              >
+                {line.childName || line.childCode || `Line ${idx + 1}`}
+              </a>
+            ) : (
+              <span className="font-bold text-foreground text-xs truncate">
+                {line.childName || line.childCode || `Line ${idx + 1}`}
+              </span>
+            )}
+            {line.hasSubBom && (
+              <span
+                className="text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5"
+                title="This child has its own BOM"
+              >
+                sub-BOM
+              </span>
+            )}
+            {!line.linked && (
+              <span
+                className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1 py-0.5"
+                title="New item — will be created on save"
+              >
+                <Sparkles className="h-2.5 w-2.5" /> new
+              </span>
+            )}
+          </div>
+          <span className="font-mono text-xs font-bold text-primary shrink-0">× {line.qty || "0"}</span>
+        </div>
+
+        {/* Parity with the Table view: every column shows,
+            so the tree card is a full read of the line. */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2 pt-2 border-t border-border/40 text-[10px]">
+          <div className="flex flex-col">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Code</span>
+            <span className="font-mono font-bold text-primary truncate">{line.childCode || "—"}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Type</span>
+            <span className="font-bold text-foreground">{TYPE_META[line.childItemType].label}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Generic PN</span>
+            <span className="font-mono text-foreground truncate">{line.childGenericPn || "—"}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Qty</span>
+            <span className="font-mono font-bold text-primary">{line.qty || "0"}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Ref des</span>
+            <span className="font-mono text-foreground truncate">{line.refDes || "—"}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Preferred brand</span>
+            <span className="font-semibold text-foreground truncate">{line.preferredBrandSlug ?? "—"}</span>
+          </div>
+          <div className="flex flex-col">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Seq</span>
+            <span className="font-mono text-foreground">{line.sequence || "—"}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Linked</span>
+            <span className={`font-bold ${line.linked ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+              {line.linked ? "catalog" : "new item"}
+            </span>
+          </div>
+          <div className="col-span-2 flex flex-col">
+            <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Remarks</span>
+            <span className="text-foreground/80 whitespace-normal break-words">{line.remarks || "—"}</span>
+          </div>
+        </div>
+
+        {atMaxDepth && (
+          <p className="text-[10px] italic text-muted-foreground mt-2">
+            Max depth reached — open the child&apos;s own BOM page to keep drilling.
+          </p>
+        )}
+      </div>
+
+      {/* Recursive sub-tree render */}
+      {isExpanded && (
+        <div className="mt-3 ml-6">
+          {isLoading && !subLines ? (
+            <p className="pl-6 text-[11px] italic text-muted-foreground inline-flex items-center gap-1.5">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading sub-BOM…
+            </p>
+          ) : subLines ? (
+            <TreeChildren
+              lines={subTree}
+              depth={depth + 1}
+              maxDepth={maxDepth}
+              subBomByChild={subBomByChild}
+              loadingSubBom={loadingSubBom}
+              expandedChildren={expandedChildren}
+              toggleExpand={toggleExpand}
+            />
+          ) : (
+            <p className="pl-6 text-[11px] italic text-muted-foreground">Failed to load sub-BOM.</p>
+          )}
+        </div>
       )}
     </div>
   )

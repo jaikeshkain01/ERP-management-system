@@ -50,9 +50,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <OperatorBanner />
       <WorkspaceTabs />
       <main className="flex-1 overflow-y-auto p-6 md:p-8">
-        <DataGate>
-          <ModuleGate>{children}</ModuleGate>
-        </DataGate>
+        {/* App-wide max width. Matches /items/details so BOM tables and other
+            wide sections get real room on desktop while staying centered. */}
+        <div className="mx-auto w-full max-w-[1600px]">
+          <DataGate>
+            <ModuleGate>{children}</ModuleGate>
+          </DataGate>
+        </div>
       </main>
     </div>
   )

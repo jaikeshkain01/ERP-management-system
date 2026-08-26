@@ -21,7 +21,9 @@ import {
   ArrowLeft, Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory,
   Pencil, Trash2, AlertCircle, AlertTriangle, CheckCircle2, Info,
   ShoppingBag, Sliders, Layers, GitBranch, PackagePlus, History,
+  ListTree, Table2, ChevronRight,
 } from "lucide-react"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { extractError } from "@/lib/api-error"
 
 // ── shapes (mirror src/lib/server/data/items.ts ItemView) ─────────────────
@@ -91,7 +93,7 @@ interface ItemBom {
   versions: { id: string; version: string; status: string; effectiveFrom: string | null; effectiveTo: string | null; lineCount: number }[]
   selectedVersionId: string | null
   lines: {
-    id: string; childItemId: string; childCode: string; childName: string; childItemType: ItemType
+    id: string; childItemId: string; childCode: string; childName: string; childGenericPn: string | null; childItemType: ItemType
     qty: number; refDes: string | null; preferredBrandSlug: string | null; sequence: number | null; remarks: string | null
     childHasBom: boolean
   }[]
@@ -135,6 +137,7 @@ export default function ItemDetailsPage() {
   const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" | "info" } | null>(null)
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
+  const [bomViewMode, setBomViewMode] = React.useState<"table" | "tree">("table")
 
   const showToast = React.useCallback((info: { message: string; hint?: string; type: "success" | "error" | "info" }) => {
     setToast(info); window.setTimeout(() => setToast(null), info.type === "error" ? 6000 : 3000)
@@ -236,7 +239,7 @@ export default function ItemDetailsPage() {
                        || item.salvageValue != null || !!item.depreciationMethod || !!item.conditionKind
 
   return (
-    <div className="max-w-6xl mx-auto pb-12 space-y-6">
+    <div className="pb-12 space-y-6">
       {toast && (
         <div className={`fixed bottom-5 right-5 z-[70] max-w-md flex items-start gap-2 px-4 py-3 rounded-lg border shadow-lg bg-background animate-in fade-in slide-in-from-bottom-5 ${
           toast.type === "success" ? "border-emerald-500/35 text-emerald-600 dark:text-emerald-400"
@@ -335,29 +338,32 @@ export default function ItemDetailsPage() {
         </Card>
       )}
 
-      {/* KPI strip — inventory rollup (only shown when stock endpoint returned something) */}
-      {stock && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: "On hand",   value: stock.onHand.toLocaleString(),  tone: "text-primary" },
-            { label: "Available", value: stock.available.toLocaleString(), tone: "text-emerald-600 dark:text-emerald-400" },
-            { label: "Reserved",  value: stock.reserved.toLocaleString(),  tone: "text-amber-600 dark:text-amber-400" },
-            { label: "Damaged",   value: stock.damaged.toLocaleString(),   tone: "text-destructive" },
-          ].map((k) => (
-            <Card key={k.label} className="border border-border shadow-xs">
-              <CardContent className="p-3.5">
-                <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{k.label}</div>
-                <div className={`mt-1 text-2xl font-extrabold ${k.tone} font-mono`}>{k.value}</div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">{item.baseUom}</div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Grid: main sections left, side panel right */}
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-6">
+      {/* Grid: main sections left, tall Inventory panel right.
+          KPIs live INSIDE the left column so the right Inventory panel
+          stretches from KPI level down to the BOM section start. */}
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start">
         <div className="space-y-6 min-w-0">
+          {/* KPI strip — inventory rollup. Damaged folded into the right
+              Inventory panel so this row only carries the three headline
+              figures a user scans first. */}
+          {stock && (
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "On hand",   value: stock.onHand.toLocaleString(),  tone: "text-primary" },
+                { label: "Available", value: stock.available.toLocaleString(), tone: "text-emerald-600 dark:text-emerald-400" },
+                { label: "Reserved",  value: stock.reserved.toLocaleString(),  tone: "text-amber-600 dark:text-amber-400" },
+              ].map((k) => (
+                <Card key={k.label} className="border border-border shadow-xs">
+                  <CardContent className="p-3.5">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{k.label}</div>
+                    <div className={`mt-1 text-2xl font-extrabold ${k.tone} font-mono`}>{k.value}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{item.baseUom}</div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
           {/* Identity / master */}
           <SectionCard icon={Layers} title="Master">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
@@ -548,94 +554,6 @@ export default function ItemDetailsPage() {
             </SectionCard>
           )}
 
-          {/* Bill of Materials — visible for every non-raw item.
-              With versions:  full render + prominent "Edit BOM" button.
-              Without one:    "No BOM yet" empty state with a "Create BOM" CTA.
-              Raw items skip the section entirely (raw = foundational, no BOM). */}
-          {item.itemType !== "raw" && (!bom || bom.versions.length === 0) && (
-            <SectionCard icon={Layers} title="Bill of Materials">
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
-                  No BOM defined yet. Create the first version to list the child items that make up this {TYPE_META[item.itemType].label.toLowerCase()}.
-                </p>
-                <Link
-                  href={`/items/${encodeURIComponent(id)}/bom`}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold hover:opacity-90"
-                >
-                  <Pencil className="h-3.5 w-3.5" /> Create BOM
-                </Link>
-              </div>
-            </SectionCard>
-          )}
-          {bom && bom.versions.length > 0 && (() => {
-            const active = bom.versions.find((v) => v.id === bom.selectedVersionId)
-            return (
-              <SectionCard icon={Layers} title="Bill of Materials">
-                <div className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/items/${encodeURIComponent(id)}/bom`}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-bold hover:opacity-90"
-                    >
-                      <Pencil className="h-3.5 w-3.5" /> Edit BOM
-                    </Link>
-                    <div className="flex flex-wrap items-center gap-2 text-xs ml-2">
-                      <span className="text-muted-foreground">Version:</span>
-                      <span className="font-mono font-bold text-foreground">{active?.version ?? "—"}</span>
-                      {active && (
-                        <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold border ${
-                          active.status === "Active"
-                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
-                            : "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20"
-                        }`}>{active.status}</span>
-                      )}
-                      {bom.versions.length > 1 && (
-                        <span className="text-muted-foreground/70">· {bom.versions.length} versions</span>
-                      )}
-                    </div>
-                    <span className="ml-auto text-xs text-muted-foreground font-mono">{bom.lines.length} line{bom.lines.length === 1 ? "" : "s"}</span>
-                  </div>
-                  <div className="border border-border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
-                        <tr>
-                          <th className="px-4 py-2 text-left font-bold">Child item</th>
-                          <th className="px-4 py-2 text-left font-bold w-28">Ref des</th>
-                          <th className="px-4 py-2 text-right font-bold w-20">Qty</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {bom.lines.map((l) => {
-                          const cMeta = TYPE_META[l.childItemType]
-                          return (
-                            <tr key={l.id} className="hover:bg-muted/10">
-                              <td className="px-4 py-2">
-                                <div className="flex items-center gap-2">
-                                  <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                                  <Link href={`/items/details/${l.childItemId}`} className="min-w-0">
-                                    <span className="font-semibold text-primary hover:underline">{l.childName}</span>
-                                    <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{l.childCode}</span>
-                                  </Link>
-                                  {l.childHasBom && (
-                                    <span className="text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5" title="This child is a sub-assembly with its own BOM">
-                                      sub-BOM
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{l.refDes ?? "—"}</td>
-                              <td className="px-4 py-2 text-right font-mono font-semibold">{l.qty.toLocaleString()}</td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </SectionCard>
-            )
-          })()}
-
           {/* Specifications */}
           {specsArr.length > 0 && (
             <SectionCard icon={Sliders} title="Specifications">
@@ -707,58 +625,349 @@ export default function ItemDetailsPage() {
           )}
         </div>
 
-        {/* Right side: inventory breakdown */}
-        <aside className="space-y-4">
-          {stock && stock.byWarehouse.length > 0 && (
-            <SectionCard icon={Boxes} title="Stock by warehouse" dense>
-              <ul className="text-sm divide-y divide-border">
-                {stock.byWarehouse.map((w) => (
-                  <li key={w.warehouseId} className="flex items-center justify-between py-1.5">
-                    <span className="font-semibold">{w.code}</span>
-                    <span className="font-mono">{w.onHand.toLocaleString()}</span>
-                  </li>
-                ))}
-              </ul>
-            </SectionCard>
-          )}
-          {stock && stock.byLot.length > 0 && (
-            <SectionCard icon={Layers} title="Lots (FEFO)" dense>
-              <div className="max-h-96 overflow-y-auto">
-                <ul className="divide-y divide-border">
-                  {stock.byLot.map((l, i) => (
-                    <li key={i} className="py-2 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-mono font-semibold text-xs truncate">{l.lotNo}</span>
-                        <span className="font-mono text-sm font-bold">{l.onHand.toLocaleString()}</span>
-                      </div>
-                      <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-                        {l.brandSlug && <><dt className="font-semibold">Mfr</dt><dd className="text-right truncate">{l.brandSlug}</dd></>}
-                        {l.partNo && <><dt className="font-semibold">MPN</dt><dd className="text-right font-mono truncate">{l.partNo}</dd></>}
-                        <dt className="font-semibold">Supplier</dt><dd className="text-right truncate">{l.supplierName ?? "—"}</dd>
-                        <dt className="font-semibold">Arrived</dt><dd className="text-right">{l.receivedDate ?? "—"}</dd>
-                        <dt className="font-semibold">Expiry</dt>
-                        <dd className={`text-right ${l.expiryDate ? "" : "text-muted-foreground/60"}`}>{l.expiryDate ?? "no expiry"}</dd>
-                        {l.unitCost != null && <><dt className="font-semibold">Unit cost</dt><dd className="text-right font-mono">{formatINR(l.unitCost)}</dd></>}
-                        {l.value > 0 && <><dt className="font-semibold">Value</dt><dd className="text-right font-mono">{formatINR(l.value)}</dd></>}
-                      </dl>
-                    </li>
-                  ))}
-                </ul>
+        {/* Right side: one tall Inventory panel. Stretches to the height of
+            the left column (KPI strip + sections) via `self-stretch`, so it
+            sits flush with the BOM section start regardless of how many
+            left-hand sections render. */}
+        <aside className="self-stretch">
+          <Card className="border border-border shadow-sm overflow-hidden h-full flex flex-col">
+            <CardHeader className="border-b border-border bg-muted/10 px-4 py-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <Boxes className="h-4 w-4 text-primary" />
+                <CardTitle className="text-sm font-bold">Inventory</CardTitle>
               </div>
-            </SectionCard>
-          )}
-          {stock && stock.onHand === 0 && (
-            <SectionCard icon={Info} title="Inventory" dense>
-              <p className="text-xs text-muted-foreground">
-                No stock on hand yet. {item.itemType === "assembled" || item.itemType === "semi_assembled"
-                  ? "Post a production run to project into the ledger."
-                  : "Receive a PO or add an opening quantity to start tracking."}
-              </p>
-            </SectionCard>
-          )}
+            </CardHeader>
+            <CardContent className="p-4 space-y-4 flex-1 min-h-0 overflow-y-auto">
+              {stock ? (
+                <>
+                  {/* Damaged summary — folded in here from the removed top KPI. */}
+                  <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-3">
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-destructive/80">Damaged</div>
+                    <div className="mt-0.5 flex items-baseline gap-1.5">
+                      <span className={`text-2xl font-extrabold font-mono ${stock.damaged > 0 ? "text-destructive" : "text-muted-foreground/60"}`}>
+                        {stock.damaged.toLocaleString()}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">{item.baseUom}</span>
+                    </div>
+                  </div>
+
+                  {stock.byWarehouse.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        <Boxes className="h-3.5 w-3.5" /> By warehouse
+                      </div>
+                      <ul className="text-sm divide-y divide-border rounded-lg border border-border/60">
+                        {stock.byWarehouse.map((w) => (
+                          <li key={w.warehouseId} className="flex items-center justify-between px-3 py-1.5">
+                            <span className="font-semibold">{w.code}</span>
+                            <span className="font-mono">{w.onHand.toLocaleString()}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {stock.byLot.length > 0 && (
+                    <div>
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
+                        <Layers className="h-3.5 w-3.5" /> Lots (FEFO)
+                      </div>
+                      <ul className="divide-y divide-border rounded-lg border border-border/60">
+                        {stock.byLot.map((l, i) => (
+                          <li key={i} className="py-2 px-3 space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono font-semibold text-xs truncate">{l.lotNo}</span>
+                              <span className="font-mono text-sm font-bold">{l.onHand.toLocaleString()}</span>
+                            </div>
+                            <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+                              {l.brandSlug && <><dt className="font-semibold">Mfr</dt><dd className="text-right truncate">{l.brandSlug}</dd></>}
+                              {l.partNo && <><dt className="font-semibold">MPN</dt><dd className="text-right font-mono truncate">{l.partNo}</dd></>}
+                              <dt className="font-semibold">Supplier</dt><dd className="text-right truncate">{l.supplierName ?? "—"}</dd>
+                              <dt className="font-semibold">Arrived</dt><dd className="text-right">{l.receivedDate ?? "—"}</dd>
+                              <dt className="font-semibold">Expiry</dt>
+                              <dd className={`text-right ${l.expiryDate ? "" : "text-muted-foreground/60"}`}>{l.expiryDate ?? "no expiry"}</dd>
+                              {l.unitCost != null && <><dt className="font-semibold">Unit cost</dt><dd className="text-right font-mono">{formatINR(l.unitCost)}</dd></>}
+                              {l.value > 0 && <><dt className="font-semibold">Value</dt><dd className="text-right font-mono">{formatINR(l.value)}</dd></>}
+                            </dl>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {stock.onHand === 0 && (
+                    <div className="rounded-lg border border-border/60 bg-muted/20 p-3 flex items-start gap-2">
+                      <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                      <p className="text-xs text-muted-foreground">
+                        No stock on hand yet. {item.itemType === "assembled" || item.itemType === "semi_assembled"
+                          ? "Post a production run to project into the ledger."
+                          : "Receive a PO or add an opening quantity to start tracking."}
+                      </p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-3 flex items-start gap-2">
+                  <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    No inventory data — this item type doesn&apos;t hold stock.
+                  </p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </aside>
       </div>
+
+      {/* Bill of Materials — full-width, so wide columns and the assembly
+          tree get the room they need. Raw items skip the section entirely
+          (raw = foundational, no BOM). */}
+      {item.itemType !== "raw" && (!bom || bom.versions.length === 0) && (
+        <SectionCard icon={Layers} title="Bill of Materials">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
+              No BOM defined yet. Create the first version to list the child items that make up this {TYPE_META[item.itemType].label.toLowerCase()}.
+            </p>
+            <Link
+              href={`/items/${encodeURIComponent(id)}/bom`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold hover:opacity-90"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Create BOM
+            </Link>
+          </div>
+        </SectionCard>
+      )}
+      {bom && bom.versions.length > 0 && (
+        <BomSection
+          itemId={id}
+          bom={bom}
+          viewMode={bomViewMode}
+          setViewMode={setBomViewMode}
+        />
+      )}
     </div>
+  )
+}
+
+// ── BOM section — full-width, view-mode toggle, wider table + tree ─────────
+type BomLine = ItemBom["lines"][number]
+
+function BomSection({
+  itemId, bom, viewMode, setViewMode,
+}: {
+  itemId: string
+  bom: ItemBom
+  viewMode: "table" | "tree"
+  setViewMode: (m: "table" | "tree") => void
+}) {
+  const active = bom.versions.find((v) => v.id === bom.selectedVersionId)
+  const totalQty = bom.lines.reduce((s, l) => s + l.qty, 0)
+  return (
+    <Card className="border border-border shadow-sm overflow-hidden">
+      <CardHeader className="border-b border-border bg-muted/10 px-4 py-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2">
+            {viewMode === "tree" ? <ListTree className="h-4 w-4 text-primary" /> : <Table2 className="h-4 w-4 text-primary" />}
+            <CardTitle className="text-sm font-bold">Bill of Materials</CardTitle>
+            <div className="flex items-center gap-2 text-xs ml-2">
+              <span className="text-muted-foreground">Version:</span>
+              <span className="font-mono font-bold text-foreground">{active?.version ?? "—"}</span>
+              {active && (
+                <span className={`inline-flex items-center rounded px-2 py-0.5 text-[10px] font-bold border ${
+                  active.status === "Active"
+                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
+                    : "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20"
+                }`}>{active.status}</span>
+              )}
+              {bom.versions.length > 1 && (
+                <span className="text-muted-foreground/70">· {bom.versions.length} versions</span>
+              )}
+              <span className="text-muted-foreground/70">· {bom.lines.length} line{bom.lines.length === 1 ? "" : "s"} · Σ qty {totalQty.toLocaleString()}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            {/* View mode switch */}
+            <div className="inline-flex shrink-0 items-center rounded-lg border border-border bg-background p-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setViewMode("tree")}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                  viewMode === "tree" ? "bg-primary text-primary-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <ListTree className="h-3.5 w-3.5" /><span>Tree</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("table")}
+                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                  viewMode === "table" ? "bg-primary text-primary-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Table2 className="h-3.5 w-3.5" /><span>Table</span>
+              </button>
+            </div>
+            <Link
+              href={`/items/${encodeURIComponent(itemId)}/bom`}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-bold hover:opacity-90"
+            >
+              <Pencil className="h-3.5 w-3.5" /> Edit BOM
+            </Link>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {bom.lines.length === 0 ? (
+          <p className="text-sm text-muted-foreground p-6 text-center">This version has no lines.</p>
+        ) : viewMode === "table" ? (
+          <BomTableView lines={bom.lines} />
+        ) : (
+          <BomTreeView lines={bom.lines} />
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function BomTableView({ lines }: { lines: BomLine[] }) {
+  return (
+    <DragScrollArea className="overflow-x-auto">
+      <table className="w-full text-sm min-w-[1100px]">
+        <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
+          <tr>
+            <th className="px-3 py-2 text-center font-bold w-10">#</th>
+            <th className="px-3 py-2 text-left font-bold min-w-[220px]">Child item</th>
+            <th className="px-3 py-2 text-left font-bold w-32">Code</th>
+            <th className="px-3 py-2 text-left font-bold w-32">Generic PN</th>
+            <th className="px-3 py-2 text-left font-bold w-28">Type</th>
+            <th className="px-3 py-2 text-right font-bold w-20">Qty</th>
+            <th className="px-3 py-2 text-left font-bold w-32">Ref des</th>
+            <th className="px-3 py-2 text-left font-bold w-32">Preferred brand</th>
+            <th className="px-3 py-2 text-right font-bold w-16">Seq</th>
+            <th className="px-3 py-2 text-left font-bold">Remarks</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {lines.map((l, idx) => {
+            const cMeta = TYPE_META[l.childItemType]
+            return (
+              <tr key={l.id} className="hover:bg-muted/10">
+                <td className="px-3 py-2 text-center font-mono text-muted-foreground">{idx + 1}</td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <Link href={`/items/details/${l.childItemId}`} className="font-semibold text-primary hover:underline truncate">
+                      {l.childName}
+                    </Link>
+                    {l.childHasBom && (
+                      <Link
+                        href={`/items/${encodeURIComponent(l.childItemId)}/bom`}
+                        className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
+                        title="This child is a sub-assembly — click to view its BOM"
+                      >
+                        sub-BOM <ChevronRight className="h-2.5 w-2.5" />
+                      </Link>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childCode}</td>
+                <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childGenericPn ?? "—"}</td>
+                <td className="px-3 py-2">
+                  <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
+                    {cMeta.label}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right font-mono font-bold text-primary">{l.qty.toLocaleString()}</td>
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{l.refDes ?? "—"}</td>
+                <td className="px-3 py-2 text-xs">{l.preferredBrandSlug ?? <span className="text-muted-foreground/60 italic">—</span>}</td>
+                <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">{l.sequence ?? "—"}</td>
+                <td className="px-3 py-2 text-xs text-muted-foreground whitespace-normal">{l.remarks ?? "—"}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </DragScrollArea>
+  )
+}
+
+function BomTreeView({ lines }: { lines: BomLine[] }) {
+  return (
+    <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
+      <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:bg-border/60">
+        {lines.map((l) => {
+          const cMeta = TYPE_META[l.childItemType]
+          return (
+            <div key={l.id} className="relative">
+              <div className="absolute -left-6 top-5 w-6 h-[2px] border-t-2 border-dashed border-border" />
+              <div className="flex flex-col gap-1.5 w-full max-w-md bg-background border border-border/80 rounded-xl p-3.5 relative z-10 shadow-2xs hover:border-primary/40 transition-all">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                    <Link
+                      href={`/items/details/${l.childItemId}`}
+                      className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
+                    >
+                      {l.childName}
+                    </Link>
+                    {l.childHasBom && (
+                      <Link
+                        href={`/items/${encodeURIComponent(l.childItemId)}/bom`}
+                        className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
+                        title="This child is a sub-assembly — click to view its BOM"
+                      >
+                        sub-BOM <ChevronRight className="h-2.5 w-2.5" />
+                      </Link>
+                    )}
+                  </div>
+                  <span className="font-mono text-xs font-bold text-primary shrink-0">× {l.qty.toLocaleString()}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2 pt-2 border-t border-border/40 text-[10px]">
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Code</span>
+                    <span className="font-mono font-bold text-primary truncate">{l.childCode}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Type</span>
+                    <span className="font-bold text-foreground">{cMeta.label}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Generic PN</span>
+                    <span className="font-mono text-foreground truncate">{l.childGenericPn ?? "—"}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Qty</span>
+                    <span className="font-mono font-bold text-primary">{l.qty.toLocaleString()}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Ref des</span>
+                    <span className="font-mono text-foreground truncate">{l.refDes ?? "—"}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Preferred brand</span>
+                    <span className="font-semibold text-foreground truncate">{l.preferredBrandSlug ?? "—"}</span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Seq</span>
+                    <span className="font-mono text-foreground">{l.sequence ?? "—"}</span>
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Sub-BOM</span>
+                    <span className={`font-bold ${l.childHasBom ? "text-sky-600 dark:text-sky-400" : "text-muted-foreground/60"}`}>
+                      {l.childHasBom ? "yes" : "—"}
+                    </span>
+                  </div>
+                  <div className="col-span-2 flex flex-col">
+                    <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Remarks</span>
+                    <span className="text-foreground/80 whitespace-normal break-words">{l.remarks ?? "—"}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </DragScrollArea>
   )
 }
 
@@ -792,7 +1001,7 @@ function KV({ label, value, mono }: { label: string; value: React.ReactNode; mon
 
 function DetailSkeleton() {
   return (
-    <div className="max-w-6xl mx-auto pb-12 space-y-6">
+    <div className="pb-12 space-y-6">
       <div className="flex gap-3">
         <Skeleton className="h-14 w-14 rounded-2xl" />
         <div className="flex-1 space-y-2">
