@@ -30,9 +30,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   ArrowLeft, Plus, Trash2, Layers, GitBranch, CheckCircle2, AlertCircle,
   Cpu, Nut, Package, Boxes, Wrench, Laptop, Save, Undo2, Copy,
-  Link2, Sparkles,
+  Link2, Sparkles, ListTree, Table2,
 } from "lucide-react"
 import { extractError } from "@/lib/api-error"
+import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 // ── shapes (mirror src/lib/server/data/items.ts) ─────────────────────────────
 type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
@@ -41,6 +42,7 @@ type BomStatus = "Draft" | "Active" | "Superseded" | "Obsolete"
 interface ParentItem {
   id: string; code: string; name: string; itemType: ItemType
   baseUom: string
+  genericPn: string | null
 }
 interface Variant {
   id: string; brandId: string | null; brandSlug: string | null; partNo: string | null
@@ -52,6 +54,7 @@ interface Version {
 }
 interface Line {
   id: string; childItemId: string; childCode: string; childName: string
+  childGenericPn: string | null
   childItemType: ItemType; qty: number; refDes: string | null
   preferredBrandSlug: string | null; sequence: number | null; remarks: string | null
   childHasBom: boolean
@@ -110,7 +113,7 @@ function toDraft(l: Line): DraftLine {
     childCode: l.childCode,
     childName: l.childName,
     childItemType: l.childItemType,
-    childGenericPn: "",
+    childGenericPn: l.childGenericPn ?? "",
     qty: String(l.qty),
     refDes: l.refDes ?? "",
     preferredBrandId: "",
@@ -132,6 +135,7 @@ export default function ItemBomEditorPage() {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [busy, setBusy] = React.useState(false)  // create-version / activate / delete
+  const [viewMode, setViewMode] = React.useState<"table" | "tree">("table")
   const [toast, setToast] = React.useState<{ type: "error" | "success" | "info"; message: string; hint?: string } | null>(null)
   const showToast = (t: typeof toast) => { setToast(t); window.setTimeout(() => setToast(null), t?.type === "error" ? 6000 : 3000) }
 
@@ -145,6 +149,13 @@ export default function ItemBomEditorPage() {
   )
   const isEditable = selectedVersion?.status === "Draft"
   const isRaw = parent?.itemType === "raw"
+
+  // Read-only versions default to the tree (assembly-style) view, editable
+  // drafts default to the table so a Save is one click away. Runs when the
+  // selected version's editability flips — not on every keystroke.
+  React.useEffect(() => {
+    if (selectedVersion) setViewMode(isEditable ? "table" : "tree")
+  }, [isEditable, selectedVersion])
 
   // ── load ──────────────────────────────────────────────────────────────────
   const reload = React.useCallback(async (versionIdHint?: string | null) => {
@@ -257,7 +268,14 @@ export default function ItemBomEditorPage() {
   const pickChild = (draftKey: string, picked: ParentItem) => {
     setDraftLines((prev) => prev.map((d) =>
       d.key === draftKey
-        ? { ...d, childItemId: picked.id, childCode: picked.code, childName: picked.name, childItemType: picked.itemType }
+        ? {
+            ...d,
+            childItemId: picked.id,
+            childCode: picked.code,
+            childName: picked.name,
+            childItemType: picked.itemType,
+            childGenericPn: picked.genericPn ?? "",
+          }
         : d
     ))
     void loadVariantsForChild(picked.id)
@@ -575,24 +593,178 @@ export default function ItemBomEditorPage() {
 
           {/* Lines editor */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-base">Lines</CardTitle>
-                <CardDescription>
-                  {isEditable
-                    ? "Whole-version replace: add, edit or remove lines, then Save."
-                    : `${selectedVersion?.status ?? ""} versions are read-only — click "New revision from this" to edit.`}
-                </CardDescription>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                {viewMode === "tree" ? (
+                  <ListTree className="h-5 w-5 text-primary" />
+                ) : (
+                  <Table2 className="h-5 w-5 text-primary" />
+                )}
+                <div>
+                  <CardTitle className="text-base">
+                    {viewMode === "tree" ? "Assembly Tree" : "Lines"}
+                  </CardTitle>
+                  <CardDescription>
+                    {viewMode === "tree"
+                      ? `Visual breakdown of ${parent.name}. Sub-BOM children are marked so you can drill in.`
+                      : isEditable
+                        ? "Whole-version replace: add, edit or remove lines, then Save."
+                        : `${selectedVersion?.status ?? ""} versions are read-only — click "New revision from this" to edit.`}
+                  </CardDescription>
+                </div>
               </div>
-              {isEditable && (
-                <Button size="sm" onClick={addLine} disabled={saving} className="gap-1.5">
-                  <Plus className="h-3.5 w-3.5" /> Add line
-                </Button>
-              )}
+
+              <div className="flex items-center gap-2 self-start sm:self-auto">
+                {/* View mode switch */}
+                <div className="inline-flex shrink-0 items-center rounded-lg border border-border bg-background p-0.5 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("tree")}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                      viewMode === "tree"
+                        ? "bg-primary text-primary-foreground shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <ListTree className="h-3.5 w-3.5" />
+                    <span>Tree</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("table")}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors cursor-pointer ${
+                      viewMode === "table"
+                        ? "bg-primary text-primary-foreground shadow-2xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Table2 className="h-3.5 w-3.5" />
+                    <span>Table</span>
+                  </button>
+                </div>
+                {isEditable && viewMode === "table" && (
+                  <Button size="sm" onClick={addLine} disabled={saving} className="gap-1.5">
+                    <Plus className="h-3.5 w-3.5" /> Add line
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               {draftLines.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-6 text-center">No lines yet. {isEditable && "Click \"Add line\" to start."}</p>
+              ) : viewMode === "tree" ? (
+                <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
+                  {/* Root Item Node */}
+                  <div className="space-y-6">
+                    <div className="flex items-center gap-3 bg-primary/10 border border-primary/20 p-3 rounded-lg w-fit shadow-xs">
+                      <ParentIcon className="h-5 w-5 text-primary" />
+                      <span className="font-extrabold text-primary text-sm uppercase tracking-wider">{parent.name}</span>
+                      <span className="font-mono text-[10px] font-bold text-primary/80 bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded">
+                        {parent.code}
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/40 px-1.5 py-0.5 rounded border border-border">
+                        {TYPE_META[parent.itemType].label}
+                      </span>
+                    </div>
+
+                    {/* Child Lines */}
+                    <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:bg-border/60">
+                      {draftLines.map((d, idx) => {
+                        const ChildIcon = TYPE_META[d.childItemType].icon
+                        const linked = !!d.childItemId
+                        // childHasBom lives on server lines only, so cross-ref
+                        // by id to flag sub-assemblies without losing draft edits.
+                        const serverLine = d.id ? bom?.lines.find((l) => l.id === d.id) : undefined
+                        const hasSubBom = serverLine?.childHasBom ?? false
+                        return (
+                          <div key={d.key} className="relative">
+                            {/* Connector line into the row */}
+                            <div className="absolute -left-6 top-5 w-6 h-[2px] border-t-2 border-dashed border-border" />
+                            <div className="flex flex-col gap-1.5 w-full max-w-md bg-background border border-border/80 rounded-xl p-3.5 relative z-10 shadow-2xs hover:border-primary/40 transition-all">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <ChildIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                                  {linked ? (
+                                    <a
+                                      href={`/items/details/${d.childItemId}`}
+                                      className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
+                                    >
+                                      {d.childName || d.childCode || `Line ${idx + 1}`}
+                                    </a>
+                                  ) : (
+                                    <span className="font-bold text-foreground text-xs truncate">
+                                      {d.childName || d.childCode || `Line ${idx + 1}`}
+                                    </span>
+                                  )}
+                                  {hasSubBom && (
+                                    <span
+                                      className="text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5"
+                                      title="This child has its own BOM"
+                                    >
+                                      sub-BOM
+                                    </span>
+                                  )}
+                                  {!linked && (
+                                    <span
+                                      className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1 py-0.5"
+                                      title="New item — will be created on save"
+                                    >
+                                      <Sparkles className="h-2.5 w-2.5" /> new
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="font-mono text-xs font-bold text-primary shrink-0">× {d.qty || "0"}</span>
+                              </div>
+
+                              {/* Parity with the Table view: every column shows,
+                                  so the tree card is a full read of the line. */}
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-2 mt-2 pt-2 border-t border-border/40 text-[10px]">
+                                <div className="flex flex-col">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Code</span>
+                                  <span className="font-mono font-bold text-primary truncate">{d.childCode || "—"}</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Type</span>
+                                  <span className="font-bold text-foreground">{TYPE_META[d.childItemType].label}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Generic PN</span>
+                                  <span className="font-mono text-foreground truncate">{d.childGenericPn || "—"}</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Qty</span>
+                                  <span className="font-mono font-bold text-primary">{d.qty || "0"}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Ref des</span>
+                                  <span className="font-mono text-foreground truncate">{d.refDes || "—"}</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Preferred brand</span>
+                                  <span className="font-semibold text-foreground truncate">{d.preferredBrandSlug ?? "—"}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Seq</span>
+                                  <span className="font-mono text-foreground">{d.sequence || "—"}</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Linked</span>
+                                  <span className={`font-bold ${linked ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                    {linked ? "catalog" : "new item"}
+                                  </span>
+                                </div>
+                                <div className="col-span-2 flex flex-col">
+                                  <span className="text-muted-foreground/60 font-semibold uppercase tracking-wider text-[8px]">Remarks</span>
+                                  <span className="text-foreground/80 whitespace-normal break-words">{d.remarks || "—"}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </DragScrollArea>
               ) : (
                 <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
                   <table className="w-full text-sm min-w-[1200px]">
@@ -782,7 +954,7 @@ export default function ItemBomEditorPage() {
                 </div>
               )}
 
-              {isEditable && (
+              {isEditable && viewMode === "table" && (
                 <div className="flex items-center justify-end gap-2 pt-4 mt-4 border-t border-border">
                   <Button
                     variant="outline"

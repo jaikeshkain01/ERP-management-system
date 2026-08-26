@@ -645,6 +645,7 @@ export interface ItemBomLineView {
   childItemId: string;
   childCode: string;
   childName: string;
+  childGenericPn: string | null;
   childItemType: ItemType;
   qty: number;
   refDes: string | null;
@@ -696,6 +697,7 @@ export async function getItemBom(id: string, versionId?: string): Promise<ItemBo
              bl.child_item_id AS "childItemId",
              ci.code          AS "childCode",
              ci.name          AS "childName",
+             ci.generic_pn    AS "childGenericPn",
              ci.item_type::text AS "childItemType",
              bl.qty::float8   AS qty,
              bl.ref_des       AS "refDes",
@@ -1078,6 +1080,7 @@ async function getItemBomInTx(tx: TxClient, id: string, versionId?: string): Pro
            bl.child_item_id AS "childItemId",
            ci.code          AS "childCode",
            ci.name          AS "childName",
+           ci.generic_pn    AS "childGenericPn",
            ci.item_type::text AS "childItemType",
            bl.qty::float8   AS qty,
            bl.ref_des       AS "refDes",
