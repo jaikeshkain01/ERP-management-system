@@ -905,16 +905,16 @@ function BomSection({
         {bom.lines.length === 0 ? (
           <p className="text-sm text-muted-foreground p-6 text-center">This version has no lines.</p>
         ) : viewMode === "table" ? (
-          <BomTableView lines={bom.lines} />
+          <BomTableView lines={bom.lines} fromId={fromId} />
         ) : (
-          <BomTreeView lines={bom.lines} />
+          <BomTreeView lines={bom.lines} fromId={fromId} />
         )}
       </CardContent>
     </Card>
   )
 }
 
-function BomTableView({ lines }: { lines: BomLine[] }) {
+function BomTableView({ lines, fromId }: { lines: BomLine[]; fromId: string | null }) {
   return (
     <DragScrollArea className="overflow-x-auto">
       <table className="w-full text-sm min-w-[1100px]">
@@ -941,12 +941,12 @@ function BomTableView({ lines }: { lines: BomLine[] }) {
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <Link href={`/items/details/${l.childItemId}`} className="font-semibold text-primary hover:underline truncate">
+                    <Link href={withFromParam(`/items/details/${l.childItemId}`, fromId)} className="font-semibold text-primary hover:underline truncate">
                       {l.childName}
                     </Link>
                     {l.childHasBom && (
                       <Link
-                        href={`/items/${encodeURIComponent(l.childItemId)}/bom`}
+                        href={withFromParam(`/items/${encodeURIComponent(l.childItemId)}/bom`, fromId)}
                         className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
                         title="This child is a sub-assembly — click to view its BOM"
                       >
@@ -976,7 +976,7 @@ function BomTableView({ lines }: { lines: BomLine[] }) {
   )
 }
 
-function BomTreeView({ lines }: { lines: BomLine[] }) {
+function BomTreeView({ lines, fromId }: { lines: BomLine[]; fromId: string | null }) {
   return (
     <DragScrollArea className="p-6 md:p-8 overflow-x-auto">
       <div className="relative pl-6 space-y-5 before:absolute before:left-3.5 before:top-0 before:bottom-3 before:w-[2px] before:bg-border/60">
@@ -990,14 +990,14 @@ function BomTreeView({ lines }: { lines: BomLine[] }) {
                   <div className="flex items-center gap-1.5 min-w-0">
                     <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                     <Link
-                      href={`/items/details/${l.childItemId}`}
+                      href={withFromParam(`/items/details/${l.childItemId}`, fromId)}
                       className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
                     >
                       {l.childName}
                     </Link>
                     {l.childHasBom && (
                       <Link
-                        href={`/items/${encodeURIComponent(l.childItemId)}/bom`}
+                        href={withFromParam(`/items/${encodeURIComponent(l.childItemId)}/bom`, fromId)}
                         className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
                         title="This child is a sub-assembly — click to view its BOM"
                       >

@@ -751,6 +751,7 @@ export default function ItemBomEditorPage() {
                   toggleExpand={toggleExpand}
                   collapseAll={collapseAll}
                   maxDepth={MAX_TREE_DEPTH}
+                  fromId={fromId}
                 />
               ) : (
                 <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
@@ -815,7 +816,7 @@ export default function ItemBomEditorPage() {
                                       sub-BOM
                                     </span>
                                     <a
-                                      href={`/items/${encodeURIComponent(d.childItemId)}/bom`}
+                                      href={withFromParam(`/items/${encodeURIComponent(d.childItemId)}/bom`, fromId)}
                                       target="_blank"
                                       rel="noopener"
                                       className="inline-flex items-center gap-0.5 text-sky-600 dark:text-sky-400 hover:underline font-semibold"
@@ -1081,10 +1082,11 @@ interface TreeViewBodyProps {
   toggleExpand: (childItemId: string) => void
   collapseAll: () => void
   maxDepth: number
+  fromId: string | null
 }
 
 function TreeViewBody({
-  parent, draftLines, bomLines, childHasBomCache, subBomByChild, loadingSubBom, expandedChildren, toggleExpand, collapseAll, maxDepth,
+  parent, draftLines, bomLines, childHasBomCache, subBomByChild, loadingSubBom, expandedChildren, toggleExpand, collapseAll, maxDepth, fromId,
 }: TreeViewBodyProps) {
   const ParentIcon = TYPE_META[parent.itemType].icon
   const roots = React.useMemo(
@@ -1132,6 +1134,7 @@ function TreeViewBody({
           loadingSubBom={loadingSubBom}
           expandedChildren={expandedChildren}
           toggleExpand={toggleExpand}
+          fromId={fromId}
         />
       </div>
     </DragScrollArea>
@@ -1146,9 +1149,10 @@ interface TreeChildrenProps {
   loadingSubBom: Set<string>
   expandedChildren: Set<string>
   toggleExpand: (childItemId: string) => void
+  fromId: string | null
 }
 
-function TreeChildren({ lines, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand }: TreeChildrenProps) {
+function TreeChildren({ lines, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand, fromId }: TreeChildrenProps) {
   if (lines.length === 0) {
     return <p className="pl-6 text-[11px] italic text-muted-foreground">No lines on this sub-BOM.</p>
   }
@@ -1165,6 +1169,7 @@ function TreeChildren({ lines, depth, maxDepth, subBomByChild, loadingSubBom, ex
           loadingSubBom={loadingSubBom}
           expandedChildren={expandedChildren}
           toggleExpand={toggleExpand}
+          fromId={fromId}
         />
       ))}
     </div>
@@ -1180,9 +1185,10 @@ interface TreeCardProps {
   loadingSubBom: Set<string>
   expandedChildren: Set<string>
   toggleExpand: (childItemId: string) => void
+  fromId: string | null
 }
 
-function TreeCard({ line, idx, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand }: TreeCardProps) {
+function TreeCard({ line, idx, depth, maxDepth, subBomByChild, loadingSubBom, expandedChildren, toggleExpand, fromId }: TreeCardProps) {
   const ChildIcon = TYPE_META[line.childItemType].icon
   const isExpanded = !!line.childItemId && expandedChildren.has(line.childItemId)
   const isLoading = !!line.childItemId && loadingSubBom.has(line.childItemId)
@@ -1217,7 +1223,7 @@ function TreeCard({ line, idx, depth, maxDepth, subBomByChild, loadingSubBom, ex
             <ChildIcon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             {line.linked ? (
               <a
-                href={`/items/details/${line.childItemId}`}
+                href={withFromParam(`/items/details/${line.childItemId}`, fromId)}
                 className="font-bold text-foreground text-xs hover:text-primary hover:underline truncate"
               >
                 {line.childName || line.childCode || `Line ${idx + 1}`}
@@ -1313,6 +1319,7 @@ function TreeCard({ line, idx, depth, maxDepth, subBomByChild, loadingSubBom, ex
               loadingSubBom={loadingSubBom}
               expandedChildren={expandedChildren}
               toggleExpand={toggleExpand}
+              fromId={fromId}
             />
           ) : (
             <p className="pl-6 text-[11px] italic text-muted-foreground">Failed to load sub-BOM.</p>
