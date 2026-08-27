@@ -15,6 +15,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation"
 import { backTargetForDetail, withFromParam } from "@/lib/modules"
+import { ItemOpeningBalanceDialog } from "@/components/inventory/item-opening-balance-dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -146,6 +147,7 @@ export default function ItemDetailsPage() {
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [bomViewMode, setBomViewMode] = React.useState<"table" | "tree">("table")
+  const [openingBalanceOpen, setOpeningBalanceOpen] = React.useState(false)
   // Floating "Jump to BOM" pill — visible while a BOM section exists and the
   // user hasn't scrolled it into view yet. An IntersectionObserver on the
   // anchor flips it off once the section crosses the viewport, so it doesn't
@@ -329,6 +331,21 @@ export default function ItemDetailsPage() {
               title="Stock In / Out is done from the Inventory screen">
               <PackagePlus className="h-4 w-4" /> Stock actions
             </Link>
+          )}
+          {/* Opening balance — writes into the Made-in-house variant, the
+              slot the Stock In dialog intentionally hides. Shown for any
+              manufactured item type with the variant present, so dual-sourced
+              items (vendor variant + Made in-house) can still seed the made
+              side separately from a Stock In receipt. */}
+          {manufactured && (item.itemType === "semi_assembled" || item.itemType === "assembled") && (
+            <Button
+              variant="outline"
+              onClick={() => setOpeningBalanceOpen(true)}
+              className="gap-1.5 border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-400"
+              title="Record units built before ERP tracking, or from a physical-count correction"
+            >
+              <Factory className="h-4 w-4" /> Record opening qty
+            </Button>
           )}
           <Button variant="outline" onClick={() => router.push(withFromParam(`/items/edit/${item.id}`, fromId))} className="gap-1.5">
             <Pencil className="h-4 w-4" /> Edit
@@ -790,6 +807,27 @@ export default function ItemDetailsPage() {
           <span>View BOM</span>
           <ArrowDown className="h-3.5 w-3.5 opacity-80" />
         </button>
+      )}
+
+      {/* Opening-balance dialog for made-in-house items. Reload the page's
+          stock rollup after a successful record so KPI + Inventory panel
+          reflect the new on-hand immediately. */}
+      {openingBalanceOpen && manufactured && (
+        <ItemOpeningBalanceDialog
+          item={{
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            baseUom: item.baseUom,
+            manufacturedVariantId: manufactured.id,
+          }}
+          onClose={() => setOpeningBalanceOpen(false)}
+          onDone={(msg) => {
+            setOpeningBalanceOpen(false)
+            showToast({ message: msg, type: "success" })
+            void load()
+          }}
+        />
       )}
     </div>
   )
