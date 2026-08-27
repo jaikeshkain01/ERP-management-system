@@ -2,8 +2,10 @@
  * Item categories (Postgres) — the tenant-scoped category TREE introduced in
  * Phase 2A. Accessed via raw SQL because `item_categories` is a post-baseline
  * table not present in the generated Prisma client (same convention as
- * `preferred_supplier_id` / custom_products). Guarded by the component perms —
- * categories are part of the item master.
+ * `preferred_supplier_id` / custom_products). Guarded by the dedicated
+ * `item_category.*` perm resource (mirror migration
+ * 20260827000000_role_permissions_item_category_mirror), so an org can grant
+ * category management separately from item CRUD.
  */
 import { Prisma } from "@/generated/prisma/client";
 import { withTenant, type TenantContext, type TxClient } from "@/lib/prisma";
@@ -41,7 +43,7 @@ const SELECT_COLS = `id, parent_id AS "parentId", name, slug, path,
   default_item_type::text AS "defaultItemType", sort_order AS "sortOrder"`;
 
 export async function listItemCategories(): Promise<ItemCategoryView[]> {
-  return guarded("component.view", async (tx) => {
+  return guarded("item_category.view", async (tx) => {
     return tx.$queryRawUnsafe<ItemCategoryView[]>(
       `SELECT ${SELECT_COLS} FROM item_categories WHERE deleted_at IS NULL ORDER BY path`,
     );
@@ -57,7 +59,7 @@ export interface CreateItemCategoryInput {
 
 /** Create a category node. `path` is derived from the parent's path + this slug. */
 export async function createItemCategory(input: CreateItemCategoryInput): Promise<ItemCategoryView> {
-  return guarded("component.edit", async (tx, ctx) => {
+  return guarded("item_category.edit", async (tx, ctx) => {
     const name = input.name.trim();
     if (!name) throw Errors.badRequest("Category name is required");
     const slug = slugify(name);
@@ -113,7 +115,7 @@ interface CatRow {
  * Re-parenting under the node's own subtree is rejected (would create a cycle).
  */
 export async function updateItemCategory(id: string, patch: UpdateItemCategoryInput): Promise<ItemCategoryView> {
-  return guarded("component.edit", async (tx, ctx) => {
+  return guarded("item_category.edit", async (tx, ctx) => {
     if (!isUuid(id)) throw Errors.notFound("Category");
     const cur = await tx.$queryRaw<CatRow[]>`
       SELECT id, parent_id AS "parentId", slug, path FROM item_categories
@@ -191,7 +193,7 @@ export async function updateItemCategory(id: string, patch: UpdateItemCategoryIn
 // ── delete ─────────────────────────────────────────────────────────────────
 /** Soft-delete a leaf category. Blocked if it has live children or any items assigned. */
 export async function deleteItemCategory(id: string): Promise<{ id: string; path: string }> {
-  return guarded("component.edit", async (tx, ctx) => {
+  return guarded("item_category.edit", async (tx, ctx) => {
     if (!isUuid(id)) throw Errors.notFound("Category");
     const cur = await tx.$queryRaw<{ id: string; path: string }[]>`
       SELECT id, path FROM item_categories WHERE id = ${id}::uuid AND deleted_at IS NULL`;

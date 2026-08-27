@@ -30,6 +30,12 @@ export const PERMISSION_MATRIX = {
   // that had a matching `component.*` grant was mirrored at migration time,
   // so no role loses access when items.ts flips its guards over.
   item: CRUD,
+  // 2026-08-27: `item_category.*` guards the category tree (item-categories.ts).
+  // Split off from `component.*` so a role can be granted category management
+  // separately from item CRUD. Mirror migration
+  // `20260827000000_role_permissions_item_category_mirror` seeded existing
+  // roles with the same actions they had on `component.*`.
+  item_category: CRUD,
   brand: CRUD,
   supplier: CRUD,
   warehouse: CRUD,
