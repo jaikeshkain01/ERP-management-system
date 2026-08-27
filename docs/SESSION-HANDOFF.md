@@ -19,14 +19,25 @@ StackIOT ERP — electronics/PCB contract-manufacturing ERP. **Next.js 16 (App R
 - `memory/project_transformation_plan.md` — full history: F1–F7 + Slices for the add-form and stage/category work.
 - `memory/feedback_incremental_rollout.md` — plan first, ship one slice at a time, everything demoable and non-breaking.
 
-## Where we are RIGHT NOW (end of 2026-08-25 session — legacy retirement complete)
+## Where we are RIGHT NOW (end of 2026-08-27 session — BOM UX + made-in-house lifecycle + workspace-aware nav)
 
-The **universal-item transformation critical path (F1→F7) is shipped**. **F6.4 is closed end-to-end** (B1 → B4 shipped earlier, D1 → D4 shipped this session). **`pcb_lines`, `product_pcbs`, and `bom_versions` are gone from the DB.** All legacy PCB/product UI + APIs + data layers deleted (~4100 lines removed). **F5.6 is shipped**, verifier + dead-code passes done. Working tree clean.
+**Everything from 2026-08-25 still holds** (F1→F7 shipped, F6.4 closed, legacy BOM tables dropped). This session was pure UX and lifecycle polish on top of that base — no schema-shape changes to items/BOMs/ledger.
+
+**The three big landings this session:**
+1. **Universal BOM editor is now a proper editor + viewer.** Tree/Table toggle, full column parity in Tree cards, sub-BOM expand-on-click (recursive, depth-capped, lazy-loaded), Generic PN auto-fills when a catalog child is picked, sub-BOM signposting works on unsaved rows too.
+2. **Made-in-house lifecycle is closed.** `createItem` auto-attaches the manufactured variant for `semi_assembled` + `assembled` items (backfill covers everything pre-existing). Stock In is scoped to purchased variants only, with a sky banner explaining the flow for pure made-in-house items. A dedicated "Record opening qty" dialog writes a `PRODUCTION` ledger row so pre-ERP inventory / physical-count corrections have a proper door.
+3. **Workspace-aware back navigation.** `?from=<workspaceId>` flows through details → edit → BOM editor → sub-BOM children, so a click from Inventory (or any workspace) into a deep detail page returns to the *originating* workspace on Back — not always to Items. Path resolution gained `routePrefixes` so deep pages don't drop the tab bar either.
 
 Head of `main`:
 
-- `b6f9d36` feat(items): **retire legacy PCB/product UI + API + tables (D3/D4)**  ← this session
-- `56efc43` refactor: **port dashboard + bootstrap + brands guard readers to universal BOM (D1)**  ← this session
+- `c212b1a` feat(items): **propagate ?from= through every BOM child link**  ← this session
+- `fa84c90` feat(items): **opening-balance path for made-in-house items**  ← this session
+- `45f0516` feat(items,inventory): **made-in-house variant, stock-in policy, back-nav preserves origin**  ← this session
+- `4ad0901` feat(items): **sub-BOM expansion, wider layout, workspace-aware nav**  ← this session
+- `dbe902e` feat(items): **tree view + full-column parity on universal BOM editor**  ← this session
+- `026a188` docs: refresh handoff after D1-D4 land — legacy BOM retirement complete
+- `b6f9d36` feat(items): retire legacy PCB/product UI + API + tables (D3/D4)
+- `56efc43` refactor: port dashboard + bootstrap + brands guard readers to universal BOM (D1)
 - `cf2fac6` chore: delete dead code from the pre-universal ledger + form path
 - `ba79881` fix(verify): update balances-rollup check for post-F5.4 CBV nullability
 - `99e4b5f` feat(items): brand-variant CRUD on /items/edit (F5.6)
@@ -77,6 +88,8 @@ The ERP now has:
 - `20260821000010_item_boms_backfill` (F6.2)
 - `20260824000000_categories_require_stage` (Slice 1) — every category has a stage, seeded Bare/Populated PCBs
 - `20260825000000_items_is_finished_good` (Slice 3) — items.is_finished_good NOT NULL DEFAULT false, backfilled from products
+- `20260826000000_drop_legacy_bom_tables` (F6.4 / D4) — DROP `pcb_lines`, `product_pcbs`, `bom_versions` CASCADE. Kept `pcbs`, `pcb_revisions`, `products` for identity/metadata.
+- `20260826000002_backfill_manufactured_variants` (this session) — one-shot INSERT ... SELECT that attaches a Made-in-house `item_variants` row (source_kind='manufactured') to every existing `semi_assembled`/`assembled` item missing one. Idempotent (`NOT EXISTS` guard). Default flag only claimed when the item has no existing default.
 
 ### F6.4 B1 shipped this session — universal BOM editor
 - **Data layer** (`src/lib/server/data/items.ts`):
@@ -176,10 +189,58 @@ Stale header comments on `/components/add/page.tsx` and `item-stock-move-dialog.
   - `pcbs`, `pcb_revisions`, `products` kept — bootstrap + BOM editor still read parent identity/metadata (slug, rev label, code, estimated_cost).
 - **Production snapshot flip:** `production_orders.bom_version_id` now stores `item_bom_versions.id` instead of the legacy `bom_versions.id`. Historical rows keep their snapshot uuid (FK dropped by CASCADE → harmless orphan pointer).
 
+### This session (2026-08-27) — BOM UX + made-in-house lifecycle + workspace-aware nav
+
+#### BOM editor + details page (`dbe902e`, `4ad0901`)
+- **Tree ↔ Table view toggle** on both `/items/[id]/bom` and the BOM section of `/items/details/[id]`. Read-only versions default to Tree; Draft defaults to Table so Save is one click away. Discard/Save footer only renders in Table mode.
+- **Tree cards carry every table column** — Code, Type, Generic PN, Qty, Ref des, Preferred brand, Seq, Linked (catalog/new), Remarks. Full read of the line, not a summary.
+- **Sub-BOM expand-on-click** (Tree view): rows with `childHasBom` reveal a chevron; click → lazy fetch `/api/items/[childId]/bom`, cache the response, inline it under the card with the same dashed-connector pattern, recursively. Depth cap 8 (a card past the cap shows "Max depth reached" with a link to the child's own BOM). Cache + in-flight dedupe. "Collapse all" pill top-right when anything's open.
+- **Sub-BOM chip in Table view** — a small sky chip + "view →" link on any linked child that carries its own BOM; opens in a new tab so the current draft isn't lost.
+- **`childHasBomCache`** — bridges the gap for unsaved rows. Seeded from server lines; missing entries lazy-fetch each linked child's `/bom` endpoint (returns `versions.length > 0`), cached (negatives too so it can't loop). So chip + expand arrow appear immediately after typeahead-picking "Audio Board PCB" — no Save required.
+- **Fixed Generic PN auto-fill.** Picking a catalog item like "Register 10 Ohm" was landing with an empty Generic PN cell — the typeahead's `ParentItem` and the server's `ItemBomLineView` both dropped it. Added `genericPn: string | null` on both server shapes and threaded through `pickChild` + `toDraft`. Server SQL in `getItemBom` and `getItemBomInTx` both now select `ci.generic_pn AS "childGenericPn"`.
+
+#### Details page layout (`4ad0901`)
+- **BOM section moved out of the two-column grid** into a full-width block below, with a Tree/Table view toggle, header showing version/status/line count/Σ qty, DragScrollArea around the table so wide rows scroll instead of squeezing. Sub-BOM chip on every row links straight into that child's BOM.
+- **KPI strip restructured**: Damaged card removed from the top row (now 3 cols: On hand / Available / Reserved). Strip moved *inside* the left column of the grid so the right side becomes one tall **Inventory panel** (`self-stretch` + `h-full` — reaches from KPI level down to the BOM section start). Panel folds in the removed Damaged card + Stock by warehouse + Lots (FEFO) + empty-state message.
+- **Floating "View BOM ↓" pill** — fixed bottom-right, primary-tinted, shown only when the item can have a BOM (not raw) AND the BOM anchor hasn't scrolled into view yet. IntersectionObserver (5% threshold, 80px top margin to account for the sticky bar) toggles it off once the user lands on the section. Anchor uses `scroll-mt-24` so the smooth-scroll lands under the top bar cleanly.
+
+#### App-wide width bump (`4ad0901`)
+- Set once in `<AppShell>` — `<main>` children wrapped in `<div className="mx-auto w-full max-w-[1600px]">`. Every page inherits the same width; page-level narrower containers (`max-w-6xl mx-auto`) trimmed on home, BOM editor, item edit skeleton, and details page so nothing overrides the shell. Intentionally narrow `max-w-4xl` error/empty states left alone.
+
+#### Made-in-house lifecycle (`45f0516`, `fa84c90`, migration `20260826000002`)
+- **Root cause identified.** The universal-item form captures `sourceKind` in state but never posts a manufactured variant — it just posts purchased brand variants as a follow-up POST `/api/items/[id]/variants`. So every semi_assembled/assembled item created post-F2 ships with **zero variants**, and every stock movement is keyed on `item_variant_id`. Result: Stock In grey (nothing to write against) AND `completeProductionOrder` would 409 with "no manufactured variant to receive finished units into" if that path ever ran.
+- **`createItem` auto-inserts the manufactured variant.** When `itemType ∈ {semi_assembled, assembled}` and no manufactured variant was supplied by the caller, `createItem` writes one row (`source_kind='manufactured'`, no brand, `part_no=NULL`) after the caller-supplied variants. Default flag claimed only when nothing else already holds it (so dual-source items keep a purchased default intact).
+- **Backfill migration** (`20260826000002_backfill_manufactured_variants`) does the same for every pre-existing assembled/semi_assembled item. Guarded by `NOT EXISTS` on the partial unique index → idempotent.
+- **Stock In policy: purchased variants only.** Inventory row's Stock In button now gates on `variants.some(v => v.sourceKind === 'purchased')` instead of `variants.length > 0`. Pure Made-in-house items surface a sky-tinted banner under the action bar explaining the flow, with two quick actions: **Go to Production** (`/production/planner`) and **Add a supplier variant** (edit page's Manufacturer Info section — the flow that creates a purchased variant and un-locks Stock In).
+- **`ItemStockMoveDialog` filters variants on inbound** to `sourceKind === 'purchased'` — Made-in-house never appears as a receive target. Footnote in the dropdown explains why. Outbound (Stock Out) unchanged — you can adjust either variant.
+- **Opening balance path** — new `ItemOpeningBalanceDialog` at `src/components/inventory/item-opening-balance-dialog.tsx`. Simple UI: qty + location + optional note. Posts `type: "PRODUCTION"`, `variantId: <Made-in-house id>`, `refType: "opening_balance"`, `reason: <note>`. Same code path production completion uses (server auto-lots it). Details page surfaces an emerald **"Record opening qty"** button next to Edit/Delete for any `semi_assembled`/`assembled` item that has a manufactured variant present — shown on dual-sourced items too, since the Made-in-house side still needs a seed path separate from vendor receipts. Success reload refreshes KPIs + the Inventory panel so the new on-hand shows immediately.
+
+#### Workspace-aware nav (`4ad0901`, `45f0516`, `c212b1a`)
+- **Two problems fixed.** (a) Deep pages (`/items/details/*`, `/items/edit/*`, `/items/[id]/bom`) were dropping the tab bar — `workspaceForPath` only matched exact tab hrefs and workspace entry hrefs. (b) Clicking "Full record" from Inventory landed on `/items/details/[id]` and the workspace switched to Items on Back, even though the user came from Inventory.
+- **`Workspace.routePrefixes: string[]`** — new optional field on every workspace. Items owns `/items`, Inventory owns `/components/inventory` + `/components/usage`, Products owns `/products`, PCB owns `/pcb-management`, Suppliers owns `/suppliers` + `/brands`, etc. `workspaceForPath` grew a third resolution step: after exact-tab match and workspace-href match, fall through to longest-first prefix match. Tab bar now stays on the right workspace for every deep page.
+- **Two helpers** in `src/lib/modules.ts`:
+  - `backTargetForDetail(fromParam, pathname, fallbackHref?, fallbackLabel?)` — returns `{ href, label }` for a Back button / breadcrumb. `?from=<workspaceId>` wins; falls through to path-derived workspace; final fallback = Items.
+  - `withFromParam(href, fromId)` — appends `?from=<id>` (or merges with existing query). Idempotent — a href already carrying `from=` is returned unchanged.
+- **`?from=` propagation** — Inventory (`?from=inventory`), Products list (`?from=products`), PCB list (`?from=pcb`) already emitted on their card/BOM/Details links. Purchases requests (`?from=purchasing`), Suppliers details, Brands list all handled either directly or via existing per-page back-nav.
+- **Everywhere the hint is now read**:
+  - Item details page — Back, breadcrumb, delete redirect, Edit push, BOM section links.
+  - BOM editor page — Back to details forwards `?from=`.
+  - Item edit page + `<UniversalItemForm>` — error-state Back, header Back, breadcrumb parent, footer Cancel, success redirect all propagate.
+  - Details page's BomTableView + BomTreeView — sub-BOM child detail and BOM links propagate `fromId` to the child.
+  - BOM editor's recursive Tree renderer (TreeViewBody → TreeChildren → TreeCard) — `fromId` threads all the way down so deep tree child detail links preserve origin.
+- Sweep audit at `c212b1a` confirmed: purchases/brands/suppliers/production list pages don't have Back buttons (workspace tabs handle it), and workspace-entry hrefs resolve via `routePrefixes` — no other places to fix.
+
+#### Housekeeping
+- **Empty stale migration folder** — `prisma/migrations/20260826000001_role_permissions_item_category_mirror/` was a locally-scaffolded but never-authored `prisma migrate dev --create-only` from a prior session. Untracked in git, no SQL inside, blocking `prisma migrate deploy`. Moved to session scratchpad (path in scratch: `stale-empty-migration-role_permissions_item_category_mirror/`) so my backfill migration could run. If it was real in-progress work, it's still recoverable there.
+- **Verification-in-browser owed.** Everything is typecheck-clean but the dev-server walkthrough (Audio Board PCB Stock In banner, floating BOM pill, Full record → Back preservation, opening-balance dialog) was blocked on the browser pane not being displayed. Should be the first thing next session catches up on.
+
 ### Still open
-1. **`item_categories` — dedicated perm resource** — still guards on `component.*`. Small slice: mirror `role_permissions` from `component.*` → `item_category.*` (idempotent, same pattern as F5.2), swap the guards in `item-categories.ts`.
-2. **Option B (revisions collapse)** — see Module consolidation section above. Standalone future slice: collapse `pcb_revisions` items into one item-per-PCB with revisions living in `item_bom_versions`. Real data migration; no current pain, but the mental model is cleaner.
-3. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
+1. **Browser verification of this session's UI changes** — Stock In banner on Inventory expand, floating "View BOM" pill, Full record → Back preserving Inventory, opening-balance dialog end-to-end, sub-BOM tree expansion. Typecheck-clean but not visually confirmed. Fire up the dev server first thing.
+2. **`item_categories` — dedicated perm resource** — still guards on `component.*`. Small slice: mirror `role_permissions` from `component.*` → `item_category.*` (idempotent, same pattern as F5.2), swap the guards in `item-categories.ts`. Note: an empty `20260826000001_role_permissions_item_category_mirror/` migration folder from a prior session is parked in the session scratchpad — if that was live work, retrieve it from there rather than restarting from scratch.
+3. **Table-view sub-BOM inline expansion** — I intentionally kept the BOM Table view single-level (chip + link only). A future ask would be an expandable row (colspan trick) that reveals the child's lines inline. Bigger UI job because the editor rows are interactive form controls; the expander would fight edit-mode ergonomics. Punt until asked.
+4. **`updateItem` doesn't auto-create the manufactured variant.** Today `updateItem` refuses `itemType` changes (comment says so, so it's fine), but if that ever opens up, the auto-create logic in `createItem` needs a mirror in `updateItem` — otherwise reclassifying a raw item to semi_assembled would leave it without the Made-in-house slot.
+5. **Option B (revisions collapse)** — see Module consolidation section above. Standalone future slice: collapse `pcb_revisions` items into one item-per-PCB with revisions living in `item_bom_versions`. Real data migration; no current pain, but the mental model is cleaner.
+6. **Original Batch A–D** (from very first handoff — never started, we went universal instead): Adjustment UI + reason codes, ABC classification, obsolescence workflow, landed cost, quarantine bin, cycle counting, in-transit transfers.
 
 ## DB state right now
 - 4 companies: **StackIOT** (seeded — 17 components, 4 PCBs, ROIP400 product with BOM, stock), StackIOT Technologies Pvt Ltd, Test Co, **Dielectric Technologies Pvt. Ltd.** (user's fresh test tenant — 1 item "Registor 10ohm" with 500 on-hand in WH-01·A13).
@@ -239,4 +300,8 @@ npx tsx scripts/seed-admin.ts && npx tsx scripts/seed-sample.ts && npx tsx scrip
 - `hint` field on `ApiError` is the standard for surfacing remediation.
 
 ## Repo state
-Universal-item transformation is now fully closed at the DB, API, and UI layers. Legacy `pcb_lines` / `product_pcbs` / `bom_versions` are dropped; every remaining reader is on `item_bom_*`. Working tree clean. Suggested next targets: **`item_categories` perm resource** (small, self-contained) or **Original Batch A–D** (inventory enrichment — Adjustment UI + reason codes is the cheapest place to start).
+Universal-item transformation is fully closed at the DB, API, and UI layers. This session hardened the surrounding UX (BOM viewing/editing, Made-in-house lifecycle, workspace-aware nav) but did not change any shape or invariant. Working tree clean; five commits pushed to origin/main this session (`dbe902e`, `4ad0901`, `45f0516`, `fa84c90`, `c212b1a`). Suggested next targets, in order of cheap-and-useful:
+
+1. **Browser verification** of what shipped this session (first thing next session).
+2. **`item_categories` perm resource** — small, self-contained, mirrors the F5.2 pattern. Note the parked scaffolded-but-empty migration in scratchpad.
+3. **Original Batch A–D** (inventory enrichment) — Adjustment UI + reason codes is the cheapest place to start.
