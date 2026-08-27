@@ -1230,6 +1230,19 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
     let defaultIdx = variantInputs.findIndex(({ v }) => v.isDefault);
     if (defaultIdx === -1 && variantInputs.length > 0) defaultIdx = 0;
 
+    // Auto-attach a Made-in-house variant for manufactured item types
+    // (semi_assembled + assembled) when the caller didn't supply one. This
+    // is what the production-complete path writes into (source_kind =
+    // 'manufactured') and what the Stock In dialog needs a slot for.
+    // Coexists with purchased brand variants for dual-sourced items (e.g. an
+    // assembly you normally build but sometimes buy from a contract
+    // manufacturer). Also flipped as default only when no purchased row
+    // claimed the slot — the DB partial unique index enforces "at most one
+    // manufactured per item", so a caller-supplied manufactured wins.
+    const autoManufactured =
+      (itemType === "semi_assembled" || itemType === "assembled") && manufacturedCount === 0;
+    const autoManufacturedIsDefault = autoManufactured && defaultIdx === -1;
+
     const specs = input.specs ?? [];
 
     const solderType = input.solderType ?? null;
@@ -1344,6 +1357,19 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
           ${ctx.companyId!}::uuid, ${itemId}::uuid,
           ${sk}::item_variant_source, ${v.brandId ?? null}::uuid,
           ${v.partNo?.trim() || null}, ${idx === defaultIdx},
+          ${ctx.userId}::uuid, ${ctx.userId}::uuid
+        )`;
+    }
+
+    if (autoManufactured) {
+      await tx.$executeRaw`
+        INSERT INTO item_variants (
+          company_id, item_id, source_kind, brand_id, part_no, is_default,
+          created_by, updated_by
+        ) VALUES (
+          ${ctx.companyId!}::uuid, ${itemId}::uuid,
+          'manufactured'::item_variant_source, NULL, NULL,
+          ${autoManufacturedIsDefault},
           ${ctx.userId}::uuid, ${ctx.userId}::uuid
         )`;
     }

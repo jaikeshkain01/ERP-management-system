@@ -22,7 +22,8 @@
 
 import * as React from "react"
 import { createPortal } from "react-dom"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { withFromParam } from "@/lib/modules"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -127,6 +128,8 @@ function toDraft(l: Line): DraftLine {
 export default function ItemBomEditorPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const fromId = searchParams.get("from")
 
   const [parent, setParent] = React.useState<ParentItem | null>(null)
   const [bom, setBom] = React.useState<Bom | null>(null)
@@ -586,7 +589,7 @@ export default function ItemBomEditorPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <Button variant="ghost" size="sm" onClick={() => router.push(`/items/details/${id}`)} className="gap-1.5">
+          <Button variant="ghost" size="sm" onClick={() => router.push(withFromParam(`/items/details/${id}`, fromId))} className="gap-1.5">
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           <div className="flex items-center gap-2 min-w-0">

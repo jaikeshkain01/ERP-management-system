@@ -8,7 +8,8 @@
  */
 import * as React from "react"
 import Link from "next/link"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams, usePathname } from "next/navigation"
+import { backTargetForDetail } from "@/lib/modules"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AlertCircle, ArrowLeft } from "lucide-react"
@@ -17,6 +18,9 @@ import { extractError } from "@/lib/api-error"
 
 export default function EditUniversalItemPage() {
   const { id } = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  const back = backTargetForDetail(searchParams.get("from"), pathname)
   const [item, setItem] = React.useState<UniversalItemInitial | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
@@ -57,8 +61,8 @@ export default function EditUniversalItemPage() {
           <AlertCircle className="h-10 w-10 text-destructive" />
           <h1 className="text-2xl font-extrabold text-destructive">Item not found</h1>
           <p className="text-sm text-muted-foreground max-w-md">{error ?? "The item you're trying to edit doesn't exist or has been deleted."}</p>
-          <Link href="/items/list" className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
-            <ArrowLeft className="h-4 w-4" /> Back to Items
+          <Link href={back.href} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
+            <ArrowLeft className="h-4 w-4" /> Back to {back.label}
           </Link>
         </CardContent>
       </Card>

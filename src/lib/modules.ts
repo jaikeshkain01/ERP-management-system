@@ -290,6 +290,35 @@ export function workspaceForPath(pathname: string): Workspace | null {
   return null
 }
 
+/** Resolve a Back-button / breadcrumb target for a detail-style page. When the
+ *  URL carries `?from=<workspaceId>`, we send the user back to that workspace's
+ *  entry href. Otherwise fall back to the path-derived workspace (so a deep
+ *  page hit directly still goes somewhere sensible). Returns null only when
+ *  neither hint nor path resolves. */
+export function backTargetForDetail(
+  fromParam: string | null | undefined,
+  pathname: string,
+  fallbackHref = "/items/list",
+  fallbackLabel = "Items",
+): { href: string; label: string } {
+  const hinted = workspaceById(fromParam)
+  if (hinted) return { href: hinted.href, label: hinted.label }
+  const byPath = workspaceForPath(pathname)
+  if (byPath) return { href: byPath.href, label: byPath.label }
+  return { href: fallbackHref, label: fallbackLabel }
+}
+
+/** Append `?from=<id>` (or merge with existing query) so a downstream page
+ *  keeps the workspace-origin hint alive across in-page nav (e.g. Details →
+ *  BOM editor). Idempotent — a href that already carries `from=` is returned
+ *  unchanged so the caller can pass it through without stacking. */
+export function withFromParam(href: string, fromId: string | null | undefined): string {
+  if (!fromId) return href
+  const hasQuery = href.includes("?")
+  if (/([?&])from=/.test(href)) return href
+  return `${href}${hasQuery ? "&" : "?"}from=${encodeURIComponent(fromId)}`
+}
+
 /** The href of the tab matching this path (exact first, then prefix), or null. */
 export function activeTabHref(workspace: Workspace, pathname: string): string | null {
   const exact = workspace.tabs.find((t) => t.href === pathname)

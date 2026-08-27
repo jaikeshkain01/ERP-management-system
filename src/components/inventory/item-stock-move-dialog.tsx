@@ -41,7 +41,15 @@ function variantLabel(v: StockMoveVariant): string {
 
 export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
   const isIn = mode === "in"
-  const def = item.variants.find((v) => v.isDefault) ?? item.variants[0]
+  // Stock In writes an IN row — semantically "received from outside". A
+  // Made-in-house variant is never received; it grows through Production
+  // completion. So on inbound we only offer purchased variants; outbound
+  // stays open (you can adjust either direction).
+  const eligibleVariants = React.useMemo(
+    () => (isIn ? item.variants.filter((v) => v.sourceKind === "purchased") : item.variants),
+    [isIn, item.variants],
+  )
+  const def = eligibleVariants.find((v) => v.isDefault) ?? eligibleVariants[0]
 
   const [variantId, setVariantId] = React.useState(def?.id ?? "")
   const [qty, setQty] = React.useState("")
@@ -196,13 +204,18 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
         <div className="p-5 space-y-4">
           {error && <div className="rounded-md border border-destructive/35 bg-destructive/5 px-3 py-2 text-xs font-medium text-destructive">{error}</div>}
 
-          {item.variants.length > 1 && (
+          {eligibleVariants.length > 1 && (
             <div className="space-y-1">
               <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Variant</label>
               <select value={variantId} onChange={(e) => setVariantId(e.target.value)}
                 className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-primary">
-                {item.variants.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
+                {eligibleVariants.map((v) => <option key={v.id} value={v.id}>{variantLabel(v)}</option>)}
               </select>
+              {isIn && (
+                <p className="text-[10px] text-muted-foreground italic">
+                  Made-in-house variants aren&apos;t shown here — they grow through Production completion, not manual Stock In.
+                </p>
+              )}
             </div>
           )}
 

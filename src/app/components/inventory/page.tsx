@@ -297,30 +297,69 @@ export default function InventoryPage() {
                       {isOpen && (
                         <tr className="bg-muted/10">
                           <td colSpan={11} className="px-6 py-5">
-                            {/* Action bar */}
-                            <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
-                              <div className="flex items-center gap-2 text-sm">
-                                <Boxes className="h-4 w-4 text-primary" />
-                                <span className="font-semibold">Stock actions</span>
-                                <span className="text-muted-foreground">— record a movement for {it.name}</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
-                                  disabled={it.variants.length === 0}
-                                  onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "in" }) }}>
-                                  <ArrowDownToLine className="h-3.5 w-3.5" /> Stock In
-                                </Button>
-                                <Button size="sm" variant="outline" className="h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                                  disabled={it.variants.length === 0 || it.onHand <= 0}
-                                  onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "out" }) }}>
-                                  <ArrowUpFromLine className="h-3.5 w-3.5" /> Stock Out
-                                </Button>
-                                <Button size="sm" variant="outline" className="h-8 text-xs font-semibold"
-                                  render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=inventory`} />}>
-                                  Full record <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
-                                </Button>
-                              </div>
-                            </div>
+                            {/* Action bar. Stock In requires a Purchased variant —
+                                pure Made-in-house items grow through Production
+                                completion, not a manual receipt. Adding a
+                                Purchased variant (dual-sourced item) unlocks it. */}
+                            {(() => {
+                              const hasPurchased = it.variants.some((v) => v.sourceKind === "purchased")
+                              const madeInHouseOnly = !hasPurchased && it.variants.some((v) => v.sourceKind === "manufactured")
+                              return (
+                                <>
+                                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
+                                    <div className="flex items-center gap-2 text-sm">
+                                      <Boxes className="h-4 w-4 text-primary" />
+                                      <span className="font-semibold">Stock actions</span>
+                                      <span className="text-muted-foreground">— record a movement for {it.name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button size="sm" className="h-8 gap-1.5 bg-emerald-600 text-white hover:bg-emerald-700"
+                                        disabled={!hasPurchased}
+                                        title={madeInHouseOnly ? "Made-in-house items grow through Production. Add a Purchased variant to enable Stock In." : undefined}
+                                        onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "in" }) }}>
+                                        <ArrowDownToLine className="h-3.5 w-3.5" /> Stock In
+                                      </Button>
+                                      <Button size="sm" variant="outline" className="h-8 gap-1.5 border-amber-500/40 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                                        disabled={it.variants.length === 0 || it.onHand <= 0}
+                                        onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "out" }) }}>
+                                        <ArrowUpFromLine className="h-3.5 w-3.5" /> Stock Out
+                                      </Button>
+                                      <Button size="sm" variant="outline" className="h-8 text-xs font-semibold"
+                                        render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=inventory`} />}>
+                                        Full record <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
+                                      </Button>
+                                    </div>
+                                  </div>
+
+                                  {/* Explanation banner — only when Stock In is
+                                      blocked because the item is purely made in-house. */}
+                                  {madeInHouseOnly && (
+                                    <div className="mb-5 flex flex-wrap items-start gap-3 rounded-lg border border-sky-500/30 bg-sky-500/5 px-4 py-3 text-xs">
+                                      <ShieldAlert className="h-4 w-4 text-sky-600 dark:text-sky-400 mt-0.5 shrink-0" />
+                                      <div className="flex-1 min-w-0">
+                                        <div className="font-semibold text-sky-700 dark:text-sky-300">Stock In is disabled — this item is made in-house.</div>
+                                        <div className="text-muted-foreground mt-0.5">
+                                          Grow stock via <span className="font-semibold">Production → new order → Complete</span> — raws come off the BOM, finished units land here automatically.
+                                          If you also buy this item from an outside supplier, open <span className="font-semibold">Edit → Manufacturer Info</span>, add that vendor as a variant, and Stock In will unlock for it.
+                                        </div>
+                                      </div>
+                                      <Link
+                                        href="/production/planner"
+                                        className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/40 bg-background px-2.5 py-1 text-[11px] font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-500/10"
+                                      >
+                                        Go to Production <ArrowUpRight className="h-3 w-3" />
+                                      </Link>
+                                      <Link
+                                        href={`/items/edit/${encodeURIComponent(it.id)}?from=inventory`}
+                                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-bold hover:bg-muted/40"
+                                      >
+                                        Add a supplier variant
+                                      </Link>
+                                    </div>
+                                  )}
+                                </>
+                              )
+                            })()}
 
                             {bd === "loading" || !bd ? (
                               <div className="grid gap-4 md:grid-cols-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-32" />)}</div>

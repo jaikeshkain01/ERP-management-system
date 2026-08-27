@@ -25,6 +25,7 @@ import * as React from "react"
 import { createPortal } from "react-dom"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { withFromParam } from "@/lib/modules"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -167,6 +168,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const searchParams = useSearchParams()
   const d = useData()
   const isEdit = mode === "edit"
+  const fromId = searchParams.get("from")
 
   // `?type=X` on /items/add pre-selects the stage — driven by the
   // "Add item" buttons on the filtered Semi-assembled / Assembled Products
@@ -862,7 +864,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
       const target = bomVersionId && savedId
         ? `/items/${savedId}/bom`
         : isEdit && savedId
-          ? `/items/details/${savedId}`
+          ? withFromParam(`/items/details/${savedId}`, fromId)
           : savedId ? `/items/list?id=${savedId}` : "/items/list"
       window.setTimeout(() => router.push(target), failed.length ? 2500 : 700)
     } finally {
@@ -997,7 +999,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             <span>/</span>
             {isEdit && initial && (
               <>
-                <Link href={`/items/details/${initial.id}`} className="hover:text-foreground transition-colors truncate max-w-[240px]">{initial.name}</Link>
+                <Link href={withFromParam(`/items/details/${initial.id}`, fromId)} className="hover:text-foreground transition-colors truncate max-w-[240px]">{initial.name}</Link>
                 <span>/</span>
               </>
             )}
@@ -1024,7 +1026,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             </Button>
           )}
           <Link
-            href={isEdit && initial ? `/items/details/${initial.id}` : "/items/list"}
+            href={isEdit && initial ? withFromParam(`/items/details/${initial.id}`, fromId) : "/items/list"}
             className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30"
           >
             <ArrowLeft className="h-4 w-4" /> {isEdit ? "Back to details" : "Back to Items"}
@@ -2136,7 +2138,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
         {/* Footer actions */}
         <div className="flex items-center justify-end gap-2">
           <Link
-            href={isEdit && initial ? `/items/details/${initial.id}` : "/items/list"}
+            href={isEdit && initial ? withFromParam(`/items/details/${initial.id}`, fromId) : "/items/list"}
             aria-disabled={submitting || savingDraft}
             className={`inline-flex items-center rounded-md border border-border bg-background px-4 py-2 text-sm font-semibold hover:bg-muted/30 ${submitting || savingDraft ? "pointer-events-none opacity-60" : ""}`}
           >

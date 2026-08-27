@@ -13,7 +13,8 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams, usePathname } from "next/navigation"
+import { backTargetForDetail, withFromParam } from "@/lib/modules"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -21,7 +22,7 @@ import {
   ArrowLeft, Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory,
   Pencil, Trash2, AlertCircle, AlertTriangle, CheckCircle2, Info,
   ShoppingBag, Sliders, Layers, GitBranch, PackagePlus, History,
-  ListTree, Table2, ChevronRight,
+  ListTree, Table2, ChevronRight, ArrowDown,
 } from "lucide-react"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { extractError } from "@/lib/api-error"
@@ -126,6 +127,13 @@ const formatINR = (n: number, decimals = 2): string =>
 export default function ItemDetailsPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const pathname = usePathname()
+  // "Back" and delete-redirect follow the workspace the user came from
+  // (?from=inventory / products / pcb …) rather than always bouncing to
+  // Items list. Falls through to path-derived workspace on direct hits.
+  const back = backTargetForDetail(searchParams.get("from"), pathname)
+  const fromId = searchParams.get("from")
 
   const [item, setItem] = React.useState<Item | null>(null)
   const [stock, setStock] = React.useState<StockRollup | null>(null)
@@ -138,6 +146,22 @@ export default function ItemDetailsPage() {
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [bomViewMode, setBomViewMode] = React.useState<"table" | "tree">("table")
+  // Floating "Jump to BOM" pill — visible while a BOM section exists and the
+  // user hasn't scrolled it into view yet. An IntersectionObserver on the
+  // anchor flips it off once the section crosses the viewport, so it doesn't
+  // hover over content the user's already reading.
+  const bomAnchorRef = React.useRef<HTMLDivElement | null>(null)
+  const [bomInView, setBomInView] = React.useState(false)
+  React.useEffect(() => {
+    const el = bomAnchorRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      (entries) => { setBomInView(entries[0]?.isIntersecting ?? false) },
+      { rootMargin: "-80px 0px 0px 0px", threshold: 0.05 },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [item?.itemType, bom?.versions.length])
 
   const showToast = React.useCallback((info: { message: string; hint?: string; type: "success" | "error" | "info" }) => {
     setToast(info); window.setTimeout(() => setToast(null), info.type === "error" ? 6000 : 3000)
@@ -200,7 +224,7 @@ export default function ItemDetailsPage() {
       const body = await res.json().catch(() => null)
       if (!res.ok) { showToast({ ...extractError(body, "Failed to delete item"), type: "error" }); return }
       showToast({ message: `Deleted ${item.code}`, type: "success" })
-      window.setTimeout(() => router.push("/items/list"), 700)
+      window.setTimeout(() => router.push(back.href), 700)
     } finally { setDeleting(false) }
   }
 
@@ -212,8 +236,8 @@ export default function ItemDetailsPage() {
           <AlertCircle className="h-10 w-10 text-destructive" />
           <h1 className="text-2xl font-extrabold text-destructive">Item not found</h1>
           <p className="text-sm text-muted-foreground max-w-md">{error}</p>
-          <Link href="/items/list" className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
-            <ArrowLeft className="h-4 w-4" /> Back to Items
+          <Link href={back.href} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
+            <ArrowLeft className="h-4 w-4" /> Back to {back.label}
           </Link>
         </CardContent>
       </Card>
@@ -260,7 +284,7 @@ export default function ItemDetailsPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="flex flex-col gap-2 min-w-0">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
-            <Link href="/items/list" className="hover:text-foreground transition-colors">Items</Link>
+            <Link href={back.href} className="hover:text-foreground transition-colors">{back.label}</Link>
             <span>/</span>
             <span className="text-foreground font-semibold truncate">{item.name}</span>
           </div>
@@ -297,8 +321,8 @@ export default function ItemDetailsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <Link href="/items/list" className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
-            <ArrowLeft className="h-4 w-4" /> Back
+          <Link href={back.href} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30">
+            <ArrowLeft className="h-4 w-4" /> Back to {back.label}
           </Link>
           {item.variants.length > 0 && !manufactured && (
             <Link href="/components/inventory" className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-semibold hover:bg-muted/30"
@@ -306,7 +330,7 @@ export default function ItemDetailsPage() {
               <PackagePlus className="h-4 w-4" /> Stock actions
             </Link>
           )}
-          <Button variant="outline" onClick={() => router.push(`/items/edit/${item.id}`)} className="gap-1.5">
+          <Button variant="outline" onClick={() => router.push(withFromParam(`/items/edit/${item.id}`, fromId))} className="gap-1.5">
             <Pencil className="h-4 w-4" /> Edit
           </Button>
           <Button variant="outline" onClick={() => setConfirmingDelete(true)} className="gap-1.5 text-destructive border-destructive/40 hover:bg-destructive/5">
@@ -721,29 +745,51 @@ export default function ItemDetailsPage() {
 
       {/* Bill of Materials — full-width, so wide columns and the assembly
           tree get the room they need. Raw items skip the section entirely
-          (raw = foundational, no BOM). */}
-      {item.itemType !== "raw" && (!bom || bom.versions.length === 0) && (
-        <SectionCard icon={Layers} title="Bill of Materials">
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
-              No BOM defined yet. Create the first version to list the child items that make up this {TYPE_META[item.itemType].label.toLowerCase()}.
-            </p>
-            <Link
-              href={`/items/${encodeURIComponent(id)}/bom`}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold hover:opacity-90"
-            >
-              <Pencil className="h-3.5 w-3.5" /> Create BOM
-            </Link>
-          </div>
-        </SectionCard>
+          (raw = foundational, no BOM). Anchor sits just above the section
+          card so the scroll-to lands on the section header, not mid-card. */}
+      {item.itemType !== "raw" && (
+        <div ref={bomAnchorRef} id="bom-section" className="scroll-mt-24">
+          {(!bom || bom.versions.length === 0) && (
+            <SectionCard icon={Layers} title="Bill of Materials">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-sm text-muted-foreground flex-1 min-w-[200px]">
+                  No BOM defined yet. Create the first version to list the child items that make up this {TYPE_META[item.itemType].label.toLowerCase()}.
+                </p>
+                <Link
+                  href={withFromParam(`/items/${encodeURIComponent(id)}/bom`, fromId)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-2 text-xs font-bold hover:opacity-90"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Create BOM
+                </Link>
+              </div>
+            </SectionCard>
+          )}
+          {bom && bom.versions.length > 0 && (
+            <BomSection
+              itemId={id}
+              bom={bom}
+              viewMode={bomViewMode}
+              setViewMode={setBomViewMode}
+              fromId={fromId}
+            />
+          )}
+        </div>
       )}
-      {bom && bom.versions.length > 0 && (
-        <BomSection
-          itemId={id}
-          bom={bom}
-          viewMode={bomViewMode}
-          setViewMode={setBomViewMode}
-        />
+
+      {/* Floating "Jump to BOM" pill — only when a BOM section exists on the
+          page AND the user hasn't scrolled it into view yet. Hides itself
+          once the anchor crosses the viewport (via the observer above). */}
+      {item.itemType !== "raw" && !bomInView && (
+        <button
+          type="button"
+          onClick={() => bomAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary text-primary-foreground px-4 py-2.5 text-sm font-bold shadow-lg hover:opacity-90 transition-all animate-in fade-in slide-in-from-bottom-3"
+          aria-label="Jump to Bill of Materials"
+        >
+          <Layers className="h-4 w-4" />
+          <span>View BOM</span>
+          <ArrowDown className="h-3.5 w-3.5 opacity-80" />
+        </button>
       )}
     </div>
   )
@@ -753,12 +799,13 @@ export default function ItemDetailsPage() {
 type BomLine = ItemBom["lines"][number]
 
 function BomSection({
-  itemId, bom, viewMode, setViewMode,
+  itemId, bom, viewMode, setViewMode, fromId,
 }: {
   itemId: string
   bom: ItemBom
   viewMode: "table" | "tree"
   setViewMode: (m: "table" | "tree") => void
+  fromId: string | null
 }) {
   const active = bom.versions.find((v) => v.id === bom.selectedVersionId)
   const totalQty = bom.lines.reduce((s, l) => s + l.qty, 0)
@@ -808,7 +855,7 @@ function BomSection({
               </button>
             </div>
             <Link
-              href={`/items/${encodeURIComponent(itemId)}/bom`}
+              href={withFromParam(`/items/${encodeURIComponent(itemId)}/bom`, fromId)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-xs font-bold hover:opacity-90"
             >
               <Pencil className="h-3.5 w-3.5" /> Edit BOM
