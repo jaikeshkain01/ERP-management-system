@@ -1063,8 +1063,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   }
 
   return (
-    <div className="max-w-6xl mx-auto pb-12">
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-8">
+    <div className="pb-12">
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-6 xl:gap-8">
         <div className="space-y-6 min-w-0">
       {/* Toast */}
       {toast && (
@@ -2192,6 +2192,114 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             form would already fill the viewport. */}
         <aside className="hidden lg:block">
           <div className="sticky top-6 space-y-3">
+            {/* Suggested-sections card. Fills what would otherwise be empty
+                whitespace on a fresh form with something actually useful:
+                the sections most people fill in for THIS item type. Each
+                row is a click-to-open shortcut — matches the sticky
+                toolbar's behavior but is context-aware. */}
+            {(() => {
+              // Per-stage recommendation set. Order = suggested order of fill.
+              // Keys align with SectionKey so the shortcut click just calls
+              // toggleSection.
+              type Suggestion = { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }>; why: string }
+              const suggestionsByType: Record<ItemType, Suggestion[]> = {
+                raw: [
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Every raw part needs its supplier + MPN." },
+                  { key: "board",     label: "Board Info",        icon: Cpu,     why: "Solder type, footprint, SPQ." },
+                  { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Reorder point + lead time = planner works." },
+                  { key: "packaging", label: "Packaging",         icon: Package, why: "Only if size/weight matters for storage." },
+                ],
+                semi_assembled: [
+                  { key: "bom",       label: "Assembly / BOM",    icon: Layers,  why: "What raws go into this sub-assembly." },
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Add here only if you also BUY it from a vendor." },
+                  { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Reorder point + lead time." },
+                  { key: "board",     label: "Board Info",        icon: Cpu,     why: "For populated PCBs — solder type, footprint." },
+                ],
+                assembled: [
+                  { key: "bom",       label: "Assembly / BOM",    icon: Layers,  why: "The full recipe of sub-assemblies + raws." },
+                  { key: "packaging", label: "Packaging",         icon: Package, why: "Shipping dims + weight for finished goods." },
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Only if you also source it externally." },
+                  { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Safety stock + reorder point." },
+                ],
+                consumable: [
+                  { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Consumables burn — safety stock matters." },
+                  { key: "storage",   label: "Storage / MSL",     icon: Wrench,  why: "Temp/humidity + expiry tracking." },
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Supplier + MPN." },
+                  { key: "packaging", label: "Packaging",         icon: Package, why: "For bulky consumables." },
+                ],
+                asset: [
+                  { key: "asset",     label: "Asset Details",     icon: Laptop,  why: "Custodian, serial, purchase + depreciation." },
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Vendor + MPN for warranty claims." },
+                  { key: "storage",   label: "Storage / MSL",     icon: Wrench,  why: "Only if the asset has storage constraints." },
+                ],
+                packaging: [
+                  { key: "packaging", label: "Packaging",         icon: Package, why: "Dimensions + weight of the pack itself." },
+                  { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Reorder point for boxes/tape/etc." },
+                  { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Supplier + MPN." },
+                ],
+              }
+              const suggestions = suggestionsByType[itemType] ?? []
+              const totalSections = suggestions.length
+              const openCount = suggestions.filter((s) => openSections.has(s.key)).length
+              const pct = totalSections > 0 ? Math.round((openCount / totalSections) * 100) : 0
+              return (
+                <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      <Info className="h-3.5 w-3.5 text-primary" /> Suggested for {typeMeta.label}
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground">{openCount}/{totalSections}</span>
+                  </div>
+                  {totalSections > 0 && (
+                    <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  )}
+                  <ul className="space-y-1">
+                    {suggestions.map((s) => {
+                      const open = openSections.has(s.key)
+                      const applicable =
+                        s.key === "board" ? boardApplicable :
+                        s.key === "asset" ? assetApplicable :
+                        s.key === "bom"   ? bomApplicable && !isEdit :
+                        true
+                      const disabled = !applicable
+                      return (
+                        <li key={s.key}>
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => !disabled && toggleSection(s.key)}
+                            className={`w-full text-left flex items-start gap-2 rounded-md border px-2.5 py-2 text-[11px] transition-all ${
+                              disabled
+                                ? "border-border/40 bg-muted/10 text-muted-foreground/50 cursor-not-allowed"
+                                : open
+                                  ? "border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 cursor-pointer"
+                                  : "border-border bg-background hover:bg-muted/40 cursor-pointer"
+                            }`}
+                          >
+                            <span className={`mt-0.5 h-1.5 w-1.5 rounded-full shrink-0 ${open ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                            <s.icon className={`h-3.5 w-3.5 mt-0.5 shrink-0 ${open ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                            <div className="min-w-0 flex-1">
+                              <div className={`font-semibold text-[11px] ${open ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"}`}>
+                                {s.label}
+                                {open && <span className="ml-1 text-[9px] font-normal opacity-70">— open</span>}
+                                {disabled && <span className="ml-1 text-[9px] font-normal opacity-70">— n/a for this type</span>}
+                              </div>
+                              <div className="text-[10px] text-muted-foreground leading-snug">{s.why}</div>
+                            </div>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  <p className="text-[10px] text-muted-foreground italic text-center pt-1 border-t border-border">
+                    Optional — you can save with just Section 1.
+                  </p>
+                </div>
+              )
+            })()}
+
             <div className="rounded-xl border border-border bg-card shadow-sm p-4 space-y-3">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 <Eye className="h-3.5 w-3.5" /> Live preview
