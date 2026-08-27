@@ -263,11 +263,46 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const [openSections, setOpenSections] = React.useState<Set<SectionKey>>(
     () => initial ? new Set(initialOpenSections(initial)) : new Set()
   )
-  const toggleSection = (k: SectionKey) => setOpenSections((prev) => {
-    const next = new Set(prev)
-    if (next.has(k)) next.delete(k); else next.add(k)
-    return next
-  })
+  // Sections can be open+expanded, open+collapsed (body hidden but still in the
+  // submit payload), or closed. `collapsedSections` is the "peek/hide" set;
+  // `openSections` is authoritative for submission. Chip-strip click flow:
+  //   closed         → open + expanded + scroll into view
+  //   open+expanded  → scroll into view (already visible)
+  //   open+collapsed → uncollapse + scroll into view
+  const [collapsedSections, setCollapsedSections] = React.useState<Set<SectionKey>>(new Set())
+  const sectionRefs = React.useRef<Partial<Record<SectionKey, HTMLDivElement | null>>>({})
+  const setSectionRef = React.useCallback((k: SectionKey) => (el: HTMLDivElement | null) => {
+    sectionRefs.current[k] = el
+  }, [])
+  const scrollToSection = (k: SectionKey) => {
+    const el = sectionRefs.current[k]
+    if (!el) return
+    window.setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 30)
+  }
+  const toggleSection = (k: SectionKey) => {
+    setOpenSections((prev) => {
+      const next = new Set(prev)
+      if (next.has(k)) {
+        // Chip click while open → scroll to it. If it was collapsed, uncollapse
+        // as well; if the user actually wants to close a section they use the
+        // section's own "Close" button, not the chip.
+        setCollapsedSections((c) => { const n = new Set(c); n.delete(k); return n })
+        scrollToSection(k)
+        return prev
+      }
+      next.add(k)
+      setCollapsedSections((c) => { const n = new Set(c); n.delete(k); return n })
+      scrollToSection(k)
+      return next
+    })
+  }
+  const closeSection = (k: SectionKey) => {
+    setOpenSections((prev) => { const n = new Set(prev); n.delete(k); return n })
+    setCollapsedSections((c) => { const n = new Set(c); n.delete(k); return n })
+  }
+  const toggleCollapse = (k: SectionKey) => {
+    setCollapsedSections((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  }
 
   // ── Section: Stock Info (P2) ──
   //  Numeric fields kept as strings so inputs stay controlled; parsed on submit.
@@ -970,6 +1005,63 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
       .slice(0, 50)
   }, [templates, templateFilter])
 
+  // Section shell — one place that renders the header (icon + title + description
+  // + optional headerExtras like "Add manufacturer"), the collapse chevron, the
+  // Close button, and the conditionally-hidden body. Each section under the
+  // "Add more info" strip funnels through this so scroll-target, collapse, and
+  // close behavior stay identical across every kind of section.
+  const renderSection = (opts: {
+    sectionKey: SectionKey
+    icon: React.ComponentType<{ className?: string }>
+    title: string
+    description: React.ReactNode
+    headerExtras?: React.ReactNode
+    children: React.ReactNode
+  }) => {
+    const { sectionKey, icon: Icon, title, description, headerExtras, children } = opts
+    if (!openSections.has(sectionKey)) return null
+    const collapsed = collapsedSections.has(sectionKey)
+    return (
+      <div ref={setSectionRef(sectionKey)} className="scroll-mt-40">
+        <Card className="border border-border shadow-sm">
+          <CardHeader className={`bg-muted/10 py-3.5 px-6 ${collapsed ? "" : "border-b border-border/60"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => toggleCollapse(sectionKey)}
+                className="flex items-center gap-2 text-left min-w-0 group cursor-pointer"
+                title={collapsed ? "Expand section" : "Collapse section"}
+              >
+                <Icon className="h-4 w-4 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <CardTitle className="text-base font-bold text-foreground group-hover:text-primary transition-colors">{title}</CardTitle>
+                  {!collapsed && (
+                    <CardDescription className="text-xs">{description}</CardDescription>
+                  )}
+                </div>
+                {collapsed
+                  ? <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 ml-1" />
+                  : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0 ml-1" />}
+              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                {!collapsed && headerExtras}
+                <button
+                  type="button"
+                  onClick={() => closeSection(sectionKey)}
+                  className="text-xs text-muted-foreground hover:text-destructive px-2 py-1 rounded-md hover:bg-muted/40 transition-colors cursor-pointer"
+                  title="Close this section (clears its data from the submit payload)"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </CardHeader>
+          {!collapsed && <CardContent className="p-6">{children}</CardContent>}
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-6xl mx-auto pb-12">
       <div className="grid lg:grid-cols-[minmax(0,1fr)_320px] gap-8">
@@ -1306,127 +1398,131 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           </CardContent>
         </Card>
 
-        {/* "Add more info" chip strip — chips whose sections have shipped are
-            interactive; the rest are placeholders labeled with their phase tag. */}
-        <div className="rounded-xl border border-dashed border-border bg-muted/10 p-5 space-y-3">
-          <div className="flex items-start gap-2">
-            <Info className="h-4 w-4 mt-0.5 text-muted-foreground shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-foreground">Add more info</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">Click a chip to reveal that section — fill only what applies. You can save any time; unopened sections are treated as "not applicable".</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {([
-              { key: "stock",     shipped: true, label: "Stock Info",         icon: Boxes,   phase: "P2", disabled: false },
-              { key: "specs",     shipped: true, label: "Specifications",     icon: Sliders, phase: "P2", disabled: false },
-              { key: "mfr",       shipped: true, label: "Manufacturer Info",  icon: Factory, phase: "P3", disabled: false },
-              { key: "board",     shipped: true, label: "Board Info",         icon: Cpu,     phase: "P5", disabled: !boardApplicable },
-              { key: "packaging", shipped: true, label: "Packaging Info",     icon: Package, phase: "P6", disabled: false },
-              { key: "storage",   shipped: true, label: "Storage / MSL",      icon: Wrench,  phase: "P7", disabled: false },
-              { key: "asset",     shipped: true, label: "Asset Details",      icon: Laptop,  phase: "P8", disabled: !assetApplicable },
-              // BOM chip is add-mode only. Edit-mode uses the dedicated
-              // /items/[id]/bom editor because live BOMs need version workflow.
-              ...(isEdit ? [] : [{ key: "bom" as const, shipped: true as const, label: "Assembly / BOM", icon: Layers, phase: "B1", disabled: !bomApplicable }]),
-            ] as { key: SectionKey; shipped: true; label: string; icon: React.ComponentType<{ className?: string }>; phase: string; disabled: boolean }[]).map(({ key, label, icon: Icon, disabled }) => {
-              const open = openSections.has(key)
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => !disabled && toggleSection(key)}
-                  title={
-                    !disabled ? undefined
-                      : key === "asset"
-                        ? "Only meaningful for Asset items — switch item type to 'Asset' to enable."
-                        : "Only meaningful for Raw electronics or Sub-assemblies"
-                  }
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${
-                    disabled
-                      ? "border-border/50 bg-background text-muted-foreground/60 opacity-60 cursor-not-allowed"
-                      : open
-                        ? "border-primary/60 bg-primary/10 text-primary shadow-3xs cursor-pointer"
-                        : "border-border/70 bg-background text-foreground hover:bg-muted/40 cursor-pointer"
-                  }`}
-                >
-                  {!disabled && (open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />)}
-                  <Icon className="h-3 w-3" /> {label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* ─── Section: Stock Info (P2) ─── */}
-        {openSections.has("stock") && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Boxes className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Stock Info</CardTitle>
-                    <CardDescription>Reorder levels + lead time. All optional.</CardDescription>
+        {/* Section-picker toolbar — sticky so add/remove/jump-to is always one
+            click away as the form grows. Each tile shows three states:
+              • closed        (add — subtle outline)
+              • open+expanded (open — primary tint + green dot)
+              • open+collapsed(open, body hidden — primary tint + amber dot)
+            Click while open scrolls to that section (and un-collapses if needed).
+            "Close" comes from each section's own header, not this toolbar. */}
+        <div className="sticky top-14 z-20 -mx-2 sm:mx-0 px-2 sm:px-0">
+          <Card className="border border-border shadow-sm bg-card/95 backdrop-blur-sm">
+            <CardHeader className="border-b border-border/60 bg-muted/10 py-3 px-4 sm:px-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2 min-w-0">
+                  <Info className="h-4 w-4 mt-0.5 text-primary shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-foreground">Add more info</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Tap a tile to open a section, tap again to jump back to it. Fill only what applies —
+                      unopened sections are treated as "not applicable".
+                    </p>
                   </div>
                 </div>
-                <button type="button" onClick={() => toggleSection("stock")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                  Remove section
-                </button>
+                {openSections.size > 0 && (
+                  <span className="shrink-0 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                    {openSections.size} open
+                  </span>
+                )}
               </div>
             </CardHeader>
-            <CardContent className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Minimum stock (reorder point)</label>
-                  <Input type="number" min={0} step="any" placeholder="e.g. 500" value={minStock} onChange={(e) => setMinStock(e.target.value)} className="h-9" />
-                  <span className="text-[11px] text-muted-foreground">Low/Critical alerts fire below this.</span>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Reorder quantity (MOQ)</label>
-                  <Input type="number" min={0} step="any" placeholder="e.g. 1000" value={reorderQty} onChange={(e) => setReorderQty(e.target.value)} className="h-9" />
-                  <span className="text-[11px] text-muted-foreground">Typical purchase quantity when replenishing.</span>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Safety stock</label>
-                  <Input type="number" min={0} step="any" placeholder="e.g. 100" value={safetyStock} onChange={(e) => setSafetyStock(e.target.value)} className="h-9" />
-                  <span className="text-[11px] text-muted-foreground">Buffer against demand spikes / supplier delays.</span>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Lead time (days)</label>
-                  <Input type="number" min={0} step={1} placeholder="e.g. 14" value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} className="h-9" />
-                  <span className="text-[11px] text-muted-foreground">Days from PO to receiving.</span>
-                </div>
+            <CardContent className="p-3 sm:p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-2">
+                {([
+                  { key: "stock",     label: "Stock",        icon: Boxes,   disabled: false },
+                  { key: "specs",     label: "Specs",        icon: Sliders, disabled: false },
+                  { key: "mfr",       label: "Manufacturer", icon: Factory, disabled: false },
+                  { key: "board",     label: "Board",        icon: Cpu,     disabled: !boardApplicable },
+                  { key: "packaging", label: "Packaging",    icon: Package, disabled: false },
+                  { key: "storage",   label: "Storage / MSL",icon: Wrench,  disabled: false },
+                  { key: "asset",     label: "Asset",        icon: Laptop,  disabled: !assetApplicable },
+                  // BOM tile is add-mode only. Edit-mode uses the dedicated
+                  // /items/[id]/bom editor because live BOMs need version workflow.
+                  ...(isEdit ? [] : [{ key: "bom" as const, label: "Assembly / BOM", icon: Layers, disabled: !bomApplicable }]),
+                ] as { key: SectionKey; label: string; icon: React.ComponentType<{ className?: string }>; disabled: boolean }[]).map(({ key, label, icon: Icon, disabled }) => {
+                  const open = openSections.has(key)
+                  const collapsed = open && collapsedSections.has(key)
+                  const tone =
+                    disabled
+                      ? "border-border/50 bg-muted/20 text-muted-foreground/60 cursor-not-allowed"
+                      : open
+                        ? "border-primary/50 bg-primary/5 text-primary hover:bg-primary/10 cursor-pointer"
+                        : "border-border bg-background text-foreground hover:bg-muted/40 cursor-pointer"
+                  const dotTone =
+                    collapsed ? "bg-amber-500" : open ? "bg-emerald-500" : "bg-transparent"
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => !disabled && toggleSection(key)}
+                      title={
+                        !disabled
+                          ? open
+                            ? collapsed ? `${label} — open (collapsed). Click to expand + scroll to it.` : `${label} — open. Click to scroll to it.`
+                            : `${label} — click to open.`
+                          : key === "asset"
+                            ? "Only meaningful for Asset items — switch item type to 'Asset' to enable."
+                            : "Only meaningful for Raw electronics or Sub-assemblies"
+                      }
+                      className={`group relative flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-left transition-all ${tone}`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dotTone}`} />
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-[11px] font-semibold truncate">{label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </CardContent>
           </Card>
-        )}
+        </div>
+
+        {/* ─── Section: Stock Info (P2) ─── */}
+        {renderSection({
+          sectionKey: "stock",
+          icon: Boxes,
+          title: "Stock Info",
+          description: "Reorder levels + lead time. All optional.",
+          children: (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Minimum stock (reorder point)</label>
+                <Input type="number" min={0} step="any" placeholder="e.g. 500" value={minStock} onChange={(e) => setMinStock(e.target.value)} className="h-9" />
+                <span className="text-[11px] text-muted-foreground">Low/Critical alerts fire below this.</span>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Reorder quantity (MOQ)</label>
+                <Input type="number" min={0} step="any" placeholder="e.g. 1000" value={reorderQty} onChange={(e) => setReorderQty(e.target.value)} className="h-9" />
+                <span className="text-[11px] text-muted-foreground">Typical purchase quantity when replenishing.</span>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Safety stock</label>
+                <Input type="number" min={0} step="any" placeholder="e.g. 100" value={safetyStock} onChange={(e) => setSafetyStock(e.target.value)} className="h-9" />
+                <span className="text-[11px] text-muted-foreground">Buffer against demand spikes / supplier delays.</span>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Lead time (days)</label>
+                <Input type="number" min={0} step={1} placeholder="e.g. 14" value={leadTimeDays} onChange={(e) => setLeadTimeDays(e.target.value)} className="h-9" />
+                <span className="text-[11px] text-muted-foreground">Days from PO to receiving.</span>
+              </div>
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Manufacturer Info (P3) ─── */}
-        {openSections.has("mfr") && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Factory className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Manufacturer Info</CardTitle>
-                    <CardDescription>
-                      Brand + manufacturer part number (MPN) per source. One brand can be marked default (used when a caller doesn't name a variant).
-                    </CardDescription>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={addMfr} className="gap-1.5">
-                    <Plus className="h-3.5 w-3.5" /> Add manufacturer
-                  </Button>
-                  <button type="button" onClick={() => toggleSection("mfr")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                    Remove section
-                  </button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-3">
+        {renderSection({
+          sectionKey: "mfr",
+          icon: Factory,
+          title: "Manufacturer Info",
+          description: "Brand + manufacturer part number (MPN) per source. One brand can be marked default (used when a caller doesn't name a variant).",
+          headerExtras: (
+            <Button type="button" size="sm" variant="outline" onClick={addMfr} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add manufacturer
+            </Button>
+          ),
+          children: (
+            <div className="space-y-3">
               {!isEdit && (
                 <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
                   <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
@@ -1501,35 +1597,23 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               <p className="text-[11px] text-muted-foreground">
                 Assets like <i>MSI Prestige 14</i> typically have one manufacturer; consumables with multiple approved brands can list several.
               </p>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Assembly / BOM (F6.4 B1, add-mode only) ─── */}
-        {!isEdit && openSections.has("bom") && bomApplicable && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Assembly / BOM</CardTitle>
-                    <CardDescription>
-                      Optional. Any lines you add here seed a Draft BOM version — after creation we&apos;ll drop you on the BOM editor to Activate. You can also skip this and add lines later.
-                    </CardDescription>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={addBomLine} className="gap-1.5">
-                    <Plus className="h-3.5 w-3.5" /> Add line
-                  </Button>
-                  <button type="button" onClick={() => toggleSection("bom")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                    Remove section
-                  </button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-3">
+        {!isEdit && bomApplicable && renderSection({
+          sectionKey: "bom",
+          icon: Layers,
+          title: "Assembly / BOM",
+          description: "Optional. Any lines you add here seed a Draft BOM version — after creation we'll drop you on the BOM editor to Activate. You can also skip this and add lines later.",
+          headerExtras: (
+            <Button type="button" size="sm" variant="outline" onClick={addBomLine} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add line
+            </Button>
+          ),
+          children: (
+            <div className="space-y-3">
               <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
                 <table className="w-full text-left text-xs min-w-[1000px]">
                   <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
@@ -1683,28 +1767,17 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created and added to the catalog.
                 Preferred brand, sequence and remarks aren&apos;t captured here — pick them up in the BOM editor after creation.
               </p>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Board Info (P5) ─── */}
-        {openSections.has("board") && boardApplicable && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Board Info</CardTitle>
-                    <CardDescription>Solder type, footprint and standard package quantity — for parts that sit on a PCB.</CardDescription>
-                  </div>
-                </div>
-                <button type="button" onClick={() => toggleSection("board")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                  Remove section
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6">
+        {boardApplicable && renderSection({
+          sectionKey: "board",
+          icon: Cpu,
+          title: "Board Info",
+          description: "Solder type, footprint and standard package quantity — for parts that sit on a PCB.",
+          children: (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Solder type</label>
@@ -1758,30 +1831,17 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   <span className="text-[11px] text-muted-foreground">Units per reel/tray shipped by the manufacturer.</span>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+          ),
+        })}
 
         {/* ─── Section: Packaging Info (P6) ─── */}
-        {openSections.has("packaging") && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Package className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Packaging Info</CardTitle>
-                    <CardDescription>
-                      Physical dimensions, weights, and material — used for shipping, storage planning, and packaging-item catalogs.
-                    </CardDescription>
-                  </div>
-                </div>
-                <button type="button" onClick={() => toggleSection("packaging")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                  Remove section
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-5">
+        {renderSection({
+          sectionKey: "packaging",
+          icon: Package,
+          title: "Packaging Info",
+          description: "Physical dimensions, weights, and material — used for shipping, storage planning, and packaging-item catalogs.",
+          children: (
+            <div className="space-y-5">
               {/* Dimensions */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 block">Dimensions <span className="normal-case tracking-normal text-[10px] text-muted-foreground/80">(mm)</span></label>
@@ -1856,30 +1916,18 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   <span className="text-[11px] text-muted-foreground">Reusable packages skip re-order calc when they cycle back.</span>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Storage / MSL (P7) ─── */}
-        {openSections.has("storage") && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Wrench className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Storage / MSL</CardTitle>
-                    <CardDescription>
-                      Temperature / humidity limits, moisture sensitivity level, hazardous flag, expiry tracking.
-                    </CardDescription>
-                  </div>
-                </div>
-                <button type="button" onClick={() => toggleSection("storage")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                  Remove section
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-5">
+        {renderSection({
+          sectionKey: "storage",
+          icon: Wrench,
+          title: "Storage / MSL",
+          description: "Temperature / humidity limits, moisture sensitivity level, hazardous flag, expiry tracking.",
+          children: (
+            <div className="space-y-5">
               {/* Temperature */}
               <div>
                 <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 block">
@@ -1967,30 +2015,18 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   <span className="text-[11px] text-muted-foreground">Goods-in will require a lot expiry when this is on.</span>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Asset Details (P8) ─── */}
-        {openSections.has("asset") && assetApplicable && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Laptop className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Asset Details</CardTitle>
-                    <CardDescription>
-                      Custodian, serial number, purchase / warranty, depreciation basis, and current condition.
-                    </CardDescription>
-                  </div>
-                </div>
-                <button type="button" onClick={() => toggleSection("asset")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                  Remove section
-                </button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-5">
+        {assetApplicable && renderSection({
+          sectionKey: "asset",
+          icon: Laptop,
+          title: "Asset Details",
+          description: "Custodian, serial number, purchase / warranty, depreciation basis, and current condition.",
+          children: (
+            <div className="space-y-5">
               {/* Custodian + Serial */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -2092,33 +2128,23 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   })}
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* ─── Section: Specifications (P2) ─── */}
-        {openSections.has("specs") && (
-          <Card className="border border-border shadow-sm">
-            <CardHeader className="bg-muted/10 border-b border-border/60 py-4 px-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sliders className="h-4 w-4 text-primary" />
-                  <div>
-                    <CardTitle className="text-lg font-bold text-foreground">Specifications</CardTitle>
-                    <CardDescription>Free-form key/value attributes shown on the details page.</CardDescription>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button type="button" size="sm" variant="outline" onClick={addSpec} className="gap-1.5">
-                    <Plus className="h-3.5 w-3.5" /> Add row
-                  </Button>
-                  <button type="button" onClick={() => toggleSection("specs")} className="text-xs text-muted-foreground hover:text-foreground cursor-pointer">
-                    Remove section
-                  </button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-6 space-y-2">
+        {renderSection({
+          sectionKey: "specs",
+          icon: Sliders,
+          title: "Specifications",
+          description: "Free-form key/value attributes shown on the details page.",
+          headerExtras: (
+            <Button type="button" size="sm" variant="outline" onClick={addSpec} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> Add row
+            </Button>
+          ),
+          children: (
+            <div className="space-y-2">
               {specs.map((s, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <Input placeholder="Key (e.g. Voltage)"   value={s.key}   onChange={(e) => updateSpec(i, "key", e.target.value)}   className="h-9 flex-1" />
@@ -2129,11 +2155,11 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 </div>
               ))}
               {specs.length === 0 && (
-                <p className="text-xs text-muted-foreground italic py-2">No specs yet — click "Add row" to add one.</p>
+                <p className="text-xs text-muted-foreground italic py-2">No specs yet — click &quot;Add row&quot; to add one.</p>
               )}
-            </CardContent>
-          </Card>
-        )}
+            </div>
+          ),
+        })}
 
         {/* Footer actions */}
         <div className="flex items-center justify-end gap-2">
