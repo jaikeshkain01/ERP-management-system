@@ -28,6 +28,7 @@ import { formatINR } from "@/lib/catalog"
 import { extractError } from "@/lib/api-error"
 import { ItemStockMoveDialog, type StockMoveItem } from "@/components/inventory/item-stock-move-dialog"
 import { ItemAdjustmentDialog, type AdjustmentItem } from "@/components/inventory/item-adjustment-dialog"
+import { classifyAbc, summarizeAbc, type AbcTier } from "@/lib/inventory/abc-classification"
 
 type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
@@ -98,6 +99,7 @@ export default function InventoryPage() {
   const [query, setQuery] = React.useState("")
   const [typeFilter, setTypeFilter] = React.useState<ItemType | "all">("all")
   const [statusFilter, setStatusFilter] = React.useState<StockStatus | "All">("All")
+  const [abcFilter, setAbcFilter] = React.useState<AbcTier | "all">("all")
   const [expanded, setExpanded] = React.useState<string | null>(null)
   const [breakdown, setBreakdown] = React.useState<Record<string, { stock: StockBreakdown; ledger: LedgerRow[] } | "loading">>({})
   const [move, setMove] = React.useState<{ item: StockMoveItem; mode: "in" | "out" } | null>(null)
@@ -151,18 +153,31 @@ export default function InventoryPage() {
     return { value, low, out, skus: items.length }
   }, [items])
 
+  // ABC tiers are computed over the *full* items list — filtering rows
+  // shouldn't change what tier a given item belongs to. The `abcFilter`
+  // instead uses this map to hide rows that aren't in the selected tier.
+  const abcTiers = React.useMemo(
+    () => classifyAbc(items.map((it) => ({ id: it.id, stockValue: it.stockValue }))),
+    [items],
+  )
+  const abcSummary = React.useMemo(
+    () => summarizeAbc(items.map((it) => ({ id: it.id, stockValue: it.stockValue })), abcTiers),
+    [items, abcTiers],
+  )
+
   const rows = React.useMemo(() => {
     const q = query.trim().toLowerCase()
     return items.filter((it) => {
       if (typeFilter !== "all" && it.itemType !== typeFilter) return false
       if (statusFilter !== "All" && stockStatus(it) !== statusFilter) return false
+      if (abcFilter !== "all" && (abcTiers.get(it.id) ?? "unclassified") !== abcFilter) return false
       if (q) {
         const hay = `${it.code} ${it.genericPn ?? ""} ${it.name} ${it.categoryPath ?? ""} ${it.variants.map((v) => `${v.brandSlug ?? ""} ${v.partNo ?? ""}`).join(" ")}`.toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true
     })
-  }, [items, query, typeFilter, statusFilter])
+  }, [items, query, typeFilter, statusFilter, abcFilter, abcTiers])
 
   const toMoveItem = (it: Item): StockMoveItem => ({
     id: it.id, code: it.code, name: it.name, baseUom: it.baseUom,
@@ -232,6 +247,36 @@ export default function InventoryPage() {
               )
             })}
           </div>
+          {/* ABC chips — Pareto tiering by stock value. Counts + value share
+              read at a glance so users see the "vital few" (A) versus
+              "trivial many" (C) without doing arithmetic. */}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mr-1">
+              ABC tier:
+            </span>
+            {(["all", "A", "B", "C", "unclassified"] as const).map((t) => {
+              const active = abcFilter === t
+              const summary = t === "all" ? null : abcSummary.find((s) => s.tier === t)
+              const label =
+                t === "all" ? `All (${items.length})` :
+                t === "unclassified" ? `Zero value (${summary?.count ?? 0})` :
+                `${t} · ${summary?.count ?? 0} items · ${((summary?.valueShare ?? 0) * 100).toFixed(0)}%`
+              const tone =
+                t === "A" ? (active ? "bg-emerald-500/15 border-emerald-500 text-emerald-700 dark:text-emerald-300" : "border-emerald-500/25 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10") :
+                t === "B" ? (active ? "bg-amber-500/15 border-amber-500 text-amber-700 dark:text-amber-300"     : "border-amber-500/25 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10") :
+                t === "C" ? (active ? "bg-slate-500/15 border-slate-500 text-slate-700 dark:text-slate-200"     : "border-slate-500/25 text-slate-700 dark:text-slate-400 hover:bg-slate-500/10") :
+                t === "unclassified" ? (active ? "bg-muted/60 border-border text-foreground" : "border-border text-muted-foreground hover:bg-muted/40") :
+                (active ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted/50")
+              return (
+                <button key={t} onClick={() => setAbcFilter(t)}
+                  className={`px-2.5 py-1 text-xs rounded-full border font-semibold transition-all ${tone}`}
+                  title={t === "all" ? "Show every item" : t === "unclassified" ? "Items with zero stock value" : `Tier ${t}`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           <DragScrollArea className="overflow-x-auto">
@@ -262,6 +307,12 @@ export default function InventoryPage() {
                   const isOpen = expanded === it.id
                   const Icon = TYPE_ICON[it.itemType]
                   const bd = breakdown[it.id]
+                  const abc = abcTiers.get(it.id) ?? "unclassified"
+                  const abcTone =
+                    abc === "A" ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400" :
+                    abc === "B" ? "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-400" :
+                    abc === "C" ? "bg-slate-500/10 border-slate-500/30 text-slate-700 dark:text-slate-400" :
+                                  "bg-muted/30 border-border text-muted-foreground/70"
                   return (
                     <React.Fragment key={it.id}>
                       <tr className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => toggleRow(it.id)}>
@@ -269,7 +320,15 @@ export default function InventoryPage() {
                           <div className="flex items-center gap-3">
                             <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="h-4 w-4" /></div>
                             <div className="flex flex-col min-w-0">
-                              <span className="font-semibold leading-tight">{it.name}</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-semibold leading-tight">{it.name}</span>
+                                <span
+                                  className={`inline-flex items-center justify-center rounded border px-1 py-0 text-[9px] font-black font-mono uppercase leading-tight ${abcTone}`}
+                                  title={abc === "unclassified" ? "No stock value — outside the Pareto tiers" : `Tier ${abc} — click the ABC chips above to filter`}
+                                >
+                                  {abc === "unclassified" ? "—" : abc}
+                                </span>
+                              </div>
                               <span className="text-[11px] font-mono text-muted-foreground">{it.code}</span>
                             </div>
                           </div>
