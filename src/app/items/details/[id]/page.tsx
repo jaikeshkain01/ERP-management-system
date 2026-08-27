@@ -23,7 +23,7 @@ import {
   ArrowLeft, Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory,
   Pencil, Trash2, AlertCircle, AlertTriangle, CheckCircle2, Info,
   ShoppingBag, Sliders, Layers, GitBranch, PackagePlus, History,
-  ListTree, Table2, ChevronRight, ArrowDown,
+  ListTree, Table2, ChevronRight, ChevronDown, ArrowDown, Loader2,
 } from "lucide-react"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { extractError } from "@/lib/api-error"
@@ -914,14 +914,179 @@ function BomSection({
   )
 }
 
+// Recursion cap on the details-page Table view. Matches the BOM editor's
+// Tree view — a card past the cap loses its chevron and shows a "drill in
+// via the child's BOM page" hint. Guards against any accidental cycle.
+const BOM_TABLE_MAX_DEPTH = 8
+
 function BomTableView({ lines, fromId }: { lines: BomLine[]; fromId: string | null }) {
+  // Lazy sub-BOM cache + expand set + in-flight guard. Fetches once per
+  // childItemId and reuses across every row that references it. Recursively
+  // consulted, so a nested chevron in an expanded sub-row re-uses the same
+  // state — no per-level React tree state to thread through.
+  const [subBomByChild, setSubBomByChild] = React.useState<Record<string, BomLine[]>>({})
+  const [loading, setLoading] = React.useState<Set<string>>(new Set())
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set())
+
+  const loadSubBom = React.useCallback(async (childItemId: string) => {
+    if (!childItemId || subBomByChild[childItemId] || loading.has(childItemId)) return
+    setLoading((prev) => new Set(prev).add(childItemId))
+    try {
+      const res = await fetch(`/api/items/${encodeURIComponent(childItemId)}/bom`, { cache: "no-store" })
+      if (res.ok) {
+        const body = await res.json() as { data: { lines: BomLine[] } }
+        setSubBomByChild((prev) => ({ ...prev, [childItemId]: body.data.lines }))
+      }
+    } finally {
+      setLoading((prev) => { const next = new Set(prev); next.delete(childItemId); return next })
+    }
+  }, [subBomByChild, loading])
+
+  const toggle = React.useCallback((childItemId: string) => {
+    if (!childItemId) return
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(childItemId)) next.delete(childItemId)
+      else { next.add(childItemId); void loadSubBom(childItemId) }
+      return next
+    })
+  }, [loadSubBom])
+
+  const collapseAll = React.useCallback(() => setExpanded(new Set()), [])
+
+  // Depth-aware row rendering, flattened into a single tbody so column
+  // alignment stays perfect. Depth pads the Child-item cell and tints the
+  // row background so nested lines visually nest.
+  const renderRow = (l: BomLine, idx: number, depth: number, keyPrefix: string): React.ReactNode[] => {
+    const cMeta = TYPE_META[l.childItemType]
+    const canExpand = l.childHasBom && depth < BOM_TABLE_MAX_DEPTH
+    const isExpanded = canExpand && expanded.has(l.childItemId)
+    const isLoading = loading.has(l.childItemId)
+    const subLines = subBomByChild[l.childItemId]
+    const atMaxDepth = l.childHasBom && depth >= BOM_TABLE_MAX_DEPTH
+    // Depth tint deepens the sub-row background just enough to read as nested.
+    const bgTone =
+      depth === 0 ? "hover:bg-muted/10" :
+      depth === 1 ? "bg-muted/10 hover:bg-muted/20" :
+      depth === 2 ? "bg-muted/20 hover:bg-muted/30" :
+                    "bg-muted/30 hover:bg-muted/40"
+
+    const rows: React.ReactNode[] = [
+      <tr key={`${keyPrefix}-${l.id}`} className={bgTone}>
+        <td className="px-2 py-2 text-center align-top">
+          {canExpand ? (
+            <button
+              type="button"
+              onClick={() => toggle(l.childItemId)}
+              className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-muted/60 text-muted-foreground"
+              title={isExpanded ? "Collapse sub-BOM" : "Expand sub-BOM"}
+              aria-label={isExpanded ? "Collapse sub-BOM" : "Expand sub-BOM"}
+            >
+              {isLoading
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : isExpanded
+                  ? <ChevronDown className="h-3 w-3" />
+                  : <ChevronRight className="h-3 w-3" />}
+            </button>
+          ) : (
+            <span className="text-[11px] font-mono text-muted-foreground">{idx + 1}</span>
+          )}
+        </td>
+        <td className="px-3 py-2" style={{ paddingLeft: `${12 + depth * 20}px` }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <Link href={withFromParam(`/items/details/${l.childItemId}`, fromId)} className="font-semibold text-primary hover:underline truncate">
+              {l.childName}
+            </Link>
+            {l.childHasBom && (
+              <Link
+                href={withFromParam(`/items/${encodeURIComponent(l.childItemId)}/bom`, fromId)}
+                className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
+                title="Open this child's BOM in the editor"
+              >
+                sub-BOM <ChevronRight className="h-2.5 w-2.5" />
+              </Link>
+            )}
+            {atMaxDepth && (
+              <span className="text-[9px] font-bold uppercase text-amber-600 dark:text-amber-400" title="Max depth reached — open the child's BOM page to keep drilling">
+                max depth
+              </span>
+            )}
+          </div>
+        </td>
+        <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childCode}</td>
+        <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childGenericPn ?? "—"}</td>
+        <td className="px-3 py-2">
+          <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
+            {cMeta.label}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-right font-mono font-bold text-primary">{l.qty.toLocaleString()}</td>
+        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{l.refDes ?? "—"}</td>
+        <td className="px-3 py-2 text-xs">{l.preferredBrandSlug ?? <span className="text-muted-foreground/60 italic">—</span>}</td>
+        <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">{l.sequence ?? "—"}</td>
+        <td className="px-3 py-2 text-xs text-muted-foreground whitespace-normal">{l.remarks ?? "—"}</td>
+      </tr>,
+    ]
+
+    if (isExpanded) {
+      if (subLines) {
+        if (subLines.length === 0) {
+          rows.push(
+            <tr key={`${keyPrefix}-${l.id}-empty`} className={bgTone}>
+              <td className="px-2 py-1.5" />
+              <td className="px-3 py-1.5 text-[11px] italic text-muted-foreground" colSpan={9} style={{ paddingLeft: `${12 + (depth + 1) * 20}px` }}>
+                No lines on this sub-BOM.
+              </td>
+            </tr>
+          )
+        } else {
+          subLines.forEach((sub, subIdx) => {
+            rows.push(...renderRow(sub, subIdx, depth + 1, `${keyPrefix}-${l.id}`))
+          })
+        }
+      } else if (isLoading) {
+        rows.push(
+          <tr key={`${keyPrefix}-${l.id}-loading`} className={bgTone}>
+            <td className="px-2 py-1.5" />
+            <td className="px-3 py-1.5 text-[11px] italic text-muted-foreground inline-flex items-center gap-1.5" colSpan={9} style={{ paddingLeft: `${12 + (depth + 1) * 20}px` }}>
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading sub-BOM…
+            </td>
+          </tr>
+        )
+      } else {
+        rows.push(
+          <tr key={`${keyPrefix}-${l.id}-error`} className={bgTone}>
+            <td className="px-2 py-1.5" />
+            <td className="px-3 py-1.5 text-[11px] italic text-muted-foreground" colSpan={9} style={{ paddingLeft: `${12 + (depth + 1) * 20}px` }}>
+              Failed to load sub-BOM.
+            </td>
+          </tr>
+        )
+      }
+    }
+
+    return rows
+  }
+
   return (
     <DragScrollArea className="overflow-x-auto">
-      <table className="w-full text-sm min-w-[1100px]">
+      {expanded.size > 0 && (
+        <div className="flex justify-end px-4 pt-3">
+          <button
+            type="button"
+            onClick={collapseAll}
+            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <ChevronRight className="h-3 w-3" /> Collapse all sub-BOMs
+          </button>
+        </div>
+      )}
+      <table className="w-full text-sm min-w-[1150px]">
         <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border">
           <tr>
-            <th className="px-3 py-2 text-center font-bold w-10">#</th>
-            <th className="px-3 py-2 text-left font-bold min-w-[220px]">Child item</th>
+            <th className="px-2 py-2 text-center font-bold w-10">#</th>
+            <th className="px-3 py-2 text-left font-bold min-w-[240px]">Child item</th>
             <th className="px-3 py-2 text-left font-bold w-32">Code</th>
             <th className="px-3 py-2 text-left font-bold w-32">Generic PN</th>
             <th className="px-3 py-2 text-left font-bold w-28">Type</th>
@@ -933,43 +1098,7 @@ function BomTableView({ lines, fromId }: { lines: BomLine[]; fromId: string | nu
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
-          {lines.map((l, idx) => {
-            const cMeta = TYPE_META[l.childItemType]
-            return (
-              <tr key={l.id} className="hover:bg-muted/10">
-                <td className="px-3 py-2 text-center font-mono text-muted-foreground">{idx + 1}</td>
-                <td className="px-3 py-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <cMeta.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    <Link href={withFromParam(`/items/details/${l.childItemId}`, fromId)} className="font-semibold text-primary hover:underline truncate">
-                      {l.childName}
-                    </Link>
-                    {l.childHasBom && (
-                      <Link
-                        href={withFromParam(`/items/${encodeURIComponent(l.childItemId)}/bom`, fromId)}
-                        className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase rounded border border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1 py-0.5 hover:bg-sky-500/20"
-                        title="This child is a sub-assembly — click to view its BOM"
-                      >
-                        sub-BOM <ChevronRight className="h-2.5 w-2.5" />
-                      </Link>
-                    )}
-                  </div>
-                </td>
-                <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childCode}</td>
-                <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground">{l.childGenericPn ?? "—"}</td>
-                <td className="px-3 py-2">
-                  <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground font-mono">
-                    {cMeta.label}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right font-mono font-bold text-primary">{l.qty.toLocaleString()}</td>
-                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{l.refDes ?? "—"}</td>
-                <td className="px-3 py-2 text-xs">{l.preferredBrandSlug ?? <span className="text-muted-foreground/60 italic">—</span>}</td>
-                <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">{l.sequence ?? "—"}</td>
-                <td className="px-3 py-2 text-xs text-muted-foreground whitespace-normal">{l.remarks ?? "—"}</td>
-              </tr>
-            )
-          })}
+          {lines.flatMap((l, idx) => renderRow(l, idx, 0, "root"))}
         </tbody>
       </table>
     </DragScrollArea>
