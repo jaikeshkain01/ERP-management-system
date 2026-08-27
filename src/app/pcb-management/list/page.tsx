@@ -218,7 +218,7 @@ export default function SemiAssembledListPage() {
               </div>
               <div className="flex items-center gap-2 pt-1">
                 <Button
-                  render={<Link href={`/items/${encodeURIComponent(it.id)}/bom?from=pcb`} />}
+                  render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=pcb#bom-section`} />}
                   variant="outline"
                   size="sm"
                   className="flex-1 gap-1.5"

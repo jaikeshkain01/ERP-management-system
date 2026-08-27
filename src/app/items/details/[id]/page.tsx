@@ -165,6 +165,24 @@ export default function ItemDetailsPage() {
     return () => io.disconnect()
   }, [item?.itemType, bom?.versions.length])
 
+  // Deep-link support: /items/details/[id]#bom-section (used by the BOM
+  // buttons on the assembled / semi-assembled cards). Native anchor scroll
+  // fires before the item finishes loading, so we defer until the section
+  // is actually in the DOM and then jump to it — once per mount.
+  const bomAutoScrolledRef = React.useRef(false)
+  React.useEffect(() => {
+    if (bomAutoScrolledRef.current) return
+    if (typeof window === "undefined") return
+    if (window.location.hash !== "#bom-section") return
+    const el = bomAnchorRef.current
+    if (!el) return
+    bomAutoScrolledRef.current = true
+    // rAF so layout has settled after the section mounted.
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+  }, [item?.itemType, bom?.versions.length])
+
   const showToast = React.useCallback((info: { message: string; hint?: string; type: "success" | "error" | "info" }) => {
     setToast(info); window.setTimeout(() => setToast(null), info.type === "error" ? 6000 : 3000)
   }, [])

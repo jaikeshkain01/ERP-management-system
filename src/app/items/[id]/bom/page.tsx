@@ -237,12 +237,12 @@ export default function ItemBomEditorPage() {
   const isEditable = selectedVersion?.status === "Draft"
   const isRaw = parent?.itemType === "raw"
 
-  // Read-only versions default to the tree (assembly-style) view, editable
-  // drafts default to the table so a Save is one click away. Runs when the
-  // selected version's editability flips — not on every keystroke.
+  // Table is the default view on every version — editable Drafts open ready
+  // for line edits, and read-only versions still lead with the tabular read
+  // so the two modes stay symmetric. Runs when the selected version changes.
   React.useEffect(() => {
-    if (selectedVersion) setViewMode(isEditable ? "table" : "tree")
-  }, [isEditable, selectedVersion])
+    if (selectedVersion) setViewMode("table")
+  }, [selectedVersion])
 
   // ── load ──────────────────────────────────────────────────────────────────
   const reload = React.useCallback(async (versionIdHint?: string | null) => {
