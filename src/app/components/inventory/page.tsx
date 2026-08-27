@@ -22,11 +22,12 @@ import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { StatStrip } from "@/components/stat-strip"
 import {
   Search, X, ChevronDown, Package, Landmark, Boxes, AlertTriangle, ShieldAlert,
-  ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Nut, Cpu, Laptop, Wrench, CheckCircle2, History, Layers,
+  ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Nut, Cpu, Laptop, Wrench, CheckCircle2, History, Layers, Scale,
 } from "lucide-react"
 import { formatINR } from "@/lib/catalog"
 import { extractError } from "@/lib/api-error"
 import { ItemStockMoveDialog, type StockMoveItem } from "@/components/inventory/item-stock-move-dialog"
+import { ItemAdjustmentDialog, type AdjustmentItem } from "@/components/inventory/item-adjustment-dialog"
 
 type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
@@ -100,6 +101,7 @@ export default function InventoryPage() {
   const [expanded, setExpanded] = React.useState<string | null>(null)
   const [breakdown, setBreakdown] = React.useState<Record<string, { stock: StockBreakdown; ledger: LedgerRow[] } | "loading">>({})
   const [move, setMove] = React.useState<{ item: StockMoveItem; mode: "in" | "out" } | null>(null)
+  const [adjust, setAdjust] = React.useState<AdjustmentItem | null>(null)
   const [toast, setToast] = React.useState<string | null>(null)
 
   const showToast = (m: string) => { setToast(m); window.setTimeout(() => setToast(null), 3000) }
@@ -163,6 +165,10 @@ export default function InventoryPage() {
   }, [items, query, typeFilter, statusFilter])
 
   const toMoveItem = (it: Item): StockMoveItem => ({
+    id: it.id, code: it.code, name: it.name, baseUom: it.baseUom,
+    variants: it.variants.map((v) => ({ id: v.id, sourceKind: v.sourceKind, brandSlug: v.brandSlug, partNo: v.partNo, isDefault: v.isDefault })),
+  })
+  const toAdjustItem = (it: Item): AdjustmentItem => ({
     id: it.id, code: it.code, name: it.name, baseUom: it.baseUom,
     variants: it.variants.map((v) => ({ id: v.id, sourceKind: v.sourceKind, brandSlug: v.brandSlug, partNo: v.partNo, isDefault: v.isDefault })),
   })
@@ -324,6 +330,16 @@ export default function InventoryPage() {
                                         onClick={(e) => { e.stopPropagation(); setMove({ item: toMoveItem(it), mode: "out" }) }}>
                                         <ArrowUpFromLine className="h-3.5 w-3.5" /> Stock Out
                                       </Button>
+                                      {/* Adjust — cycle counts, damage, loss, scrap.
+                                          Enabled whenever the item has any variant
+                                          (positive adjustments can seed a variant
+                                          with no on-hand). Negative adjustments
+                                          server-side check available >= |delta|. */}
+                                      <Button size="sm" variant="outline" className="h-8 gap-1.5 border-sky-500/40 text-sky-600 hover:bg-sky-500/10 dark:text-sky-400"
+                                        disabled={it.variants.length === 0}
+                                        onClick={(e) => { e.stopPropagation(); setAdjust(toAdjustItem(it)) }}>
+                                        <Scale className="h-3.5 w-3.5" /> Adjust
+                                      </Button>
                                       <Button size="sm" variant="outline" className="h-8 text-xs font-semibold"
                                         render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=inventory`} />}>
                                         Full record <ArrowUpRight className="h-3.5 w-3.5 ml-1" />
@@ -447,6 +463,14 @@ export default function InventoryPage() {
           item={move.item}
           onClose={() => setMove(null)}
           onDone={(msg) => { setMove(null); showToast(msg); void load(); if (expanded) void loadBreakdown(expanded) }}
+        />
+      )}
+
+      {adjust && (
+        <ItemAdjustmentDialog
+          item={adjust}
+          onClose={() => setAdjust(null)}
+          onDone={(msg) => { setAdjust(null); showToast(msg); void load(); if (expanded) void loadBreakdown(expanded) }}
         />
       )}
 
