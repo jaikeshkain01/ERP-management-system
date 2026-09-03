@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
+  GitBranch, Users,
 } from "lucide-react"
 
 type ItemType =
@@ -45,7 +46,26 @@ interface Item {
   minStock: number
   onHand: number
   status: ItemStatus
+  // Board specs from /api/items — used by the solder-type filter and the
+  // spec strip on each card.
+  solderType: "SMD" | "DIP" | null
+  footprint: string | null
   variants: unknown[]
+}
+
+// Stats from /api/pcb/stats — missing key => "no BOM versions, not used anywhere".
+interface BomVersionSummary {
+  id: string
+  version: string
+  status: string
+  lineCount: number
+}
+interface ParentSummary { id: string; code: string; name: string }
+interface SemiStats {
+  itemId: string
+  bomVersions: BomVersionSummary[]
+  usedIn: ParentSummary[]
+  usedInCount: number
 }
 
 const STATUS_TONE: Record<ItemStatus, string> = {
@@ -54,13 +74,19 @@ const STATUS_TONE: Record<ItemStatus, string> = {
   discontinued: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
 }
 
+// Solder-type filter — semi_assembled-specific because PCB revisions have
+// a solder type but a mechanical sub-assembly usually doesn't.
+type SolderFilter = "all" | "smd" | "dip" | "unspecified"
+
 export default function SemiAssembledListPage() {
   const router = useRouter()
   const [items, setItems] = React.useState<Item[]>([])
+  const [stats, setStats] = React.useState<Map<string, SemiStats>>(new Map())
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [q, setQ] = React.useState("")
   const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">("all")
+  const [solder, setSolder] = React.useState<SolderFilter>("all")
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -68,11 +94,21 @@ export default function SemiAssembledListPage() {
     try {
       // Independent module: fetches ONLY semi_assembled items via the API's
       // itemType filter — no shared payload with /products or /items/list.
-      const res = await fetch("/api/items?itemType=semi_assembled", { cache: "no-store" })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(body?.error?.message ?? `Request failed (${res.status})`)
-      const all: Item[] = Array.isArray(body?.data) ? body.data : []
+      const [itemsRes, statsRes] = await Promise.all([
+        fetch("/api/items?itemType=semi_assembled", { cache: "no-store" }),
+        fetch("/api/pcb/stats", { cache: "no-store" }),
+      ])
+      const [itemsBody, statsBody] = await Promise.all([
+        itemsRes.json().catch(() => ({})),
+        statsRes.json().catch(() => ({})),
+      ])
+      if (!itemsRes.ok) throw new Error(itemsBody?.error?.message ?? `Request failed (${itemsRes.status})`)
+      const all: Item[] = Array.isArray(itemsBody?.data) ? itemsBody.data : []
       setItems(all)
+      const statsList: SemiStats[] = Array.isArray(statsBody?.data) ? statsBody.data : []
+      const nextStats = new Map<string, SemiStats>()
+      for (const s of statsList) nextStats.set(s.itemId, s)
+      setStats(nextStats)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load items")
       setItems([])
@@ -87,13 +123,23 @@ export default function SemiAssembledListPage() {
     const query = q.trim().toLowerCase()
     return items.filter((it) => {
       if (statusFilter !== "all" && it.status !== statusFilter) return false
+      if (solder === "smd" && it.solderType !== "SMD") return false
+      if (solder === "dip" && it.solderType !== "DIP") return false
+      if (solder === "unspecified" && it.solderType !== null) return false
       if (query) {
         const hay = `${it.code} ${it.name} ${it.categoryPath ?? ""}`.toLowerCase()
         if (!hay.includes(query)) return false
       }
       return true
     })
-  }, [items, q, statusFilter])
+  }, [items, q, statusFilter, solder])
+
+  const solderCounts = React.useMemo(() => ({
+    all: items.length,
+    smd: items.filter((it) => it.solderType === "SMD").length,
+    dip: items.filter((it) => it.solderType === "DIP").length,
+    unspecified: items.filter((it) => it.solderType === null).length,
+  }), [items])
 
   return (
     <div className="space-y-6 pb-12">
@@ -123,30 +169,54 @@ export default function SemiAssembledListPage() {
         </div>
       </div>
 
-      {/* Search + status filter */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between bg-card border border-border p-4 rounded-xl shadow-2xs">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search code, name, or category…"
-            className="pl-9 bg-background border-border"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+      {/* Search + solder-type filter + status filter */}
+      <div className="bg-card border border-border p-4 rounded-xl shadow-2xs space-y-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search code, name, or category…"
+              className="pl-9 bg-background border-border"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground font-semibold">Status:</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as ItemStatus | "all")}
+              className="bg-background border border-border rounded-lg text-xs p-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer text-foreground font-semibold min-w-[120px]"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+              <option value="discontinued">Discontinued</option>
+            </select>
+            <span className="text-xs text-muted-foreground font-mono">{filtered.length} / {items.length}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground font-semibold">Status:</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as ItemStatus | "all")}
-            className="bg-background border border-border rounded-lg text-xs p-2 outline-none focus:ring-1 focus:ring-primary cursor-pointer text-foreground font-semibold min-w-[120px]"
-          >
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="discontinued">Discontinued</option>
-          </select>
-          <span className="text-xs text-muted-foreground font-mono">{filtered.length} / {items.length}</span>
+        {/* Solder-type chips — module-specific (a PCB revision has SMD/DIP,
+            a mechanical sub-assembly usually leaves it blank). */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground font-semibold">Solder:</span>
+          {(["all", "smd", "dip", "unspecified"] as SolderFilter[]).map((s) => {
+            const active = solder === s
+            const label = s === "all" ? "All" : s === "smd" ? "SMD" : s === "dip" ? "DIP" : "Unspecified"
+            return (
+              <button
+                key={s}
+                onClick={() => setSolder(s)}
+                className={`px-3 py-1 text-xs rounded-full border transition-all cursor-pointer font-semibold select-none ${
+                  active
+                    ? "bg-primary/10 border-primary text-primary shadow-3xs"
+                    : "bg-background border-border text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                {label} <span className="font-mono opacity-70">({solderCounts[s]})</span>
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -169,7 +239,14 @@ export default function SemiAssembledListPage() {
           </Card>
         ))}
 
-        {!loading && filtered.map((it) => (
+        {!loading && filtered.map((it) => {
+          const st = stats.get(it.id)
+          const versions = st?.bomVersions ?? []
+          const activeVersion = versions.find((v) => v.status === "Active")
+          const draftVersion = versions.find((v) => v.status === "Draft")
+          const usedIn = st?.usedIn ?? []
+          const usedInCount = st?.usedInCount ?? 0
+          return (
           <Card
             key={it.id}
             className="flex flex-col transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 border border-border bg-card group relative overflow-hidden cursor-pointer"
@@ -183,7 +260,7 @@ export default function SemiAssembledListPage() {
                     <Cpu className="h-5 w-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <div className="font-bold text-sm text-foreground truncate">{it.name}</div>
                       {it.isFinishedGood && (
                         <span
@@ -191,6 +268,14 @@ export default function SemiAssembledListPage() {
                           title="Sellable finished good"
                         >
                           Finished
+                        </span>
+                      )}
+                      {it.solderType && (
+                        <span
+                          className="inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
+                          title={`Solder type: ${it.solderType}`}
+                        >
+                          {it.solderType}
                         </span>
                       )}
                     </div>
@@ -204,6 +289,74 @@ export default function SemiAssembledListPage() {
               {it.description && (
                 <p className="text-xs text-muted-foreground line-clamp-2">{it.description}</p>
               )}
+              {/* Revision strip: every BOM version at a glance. Missing =
+                  no BOM yet on this sub-assembly. */}
+              <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                <span className="inline-flex items-center gap-1 text-muted-foreground font-semibold">
+                  <GitBranch className="h-3 w-3" /> Revisions:
+                </span>
+                {versions.length === 0 ? (
+                  <span className="italic text-muted-foreground/60">none</span>
+                ) : (
+                  <>
+                    {activeVersion && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-bold text-emerald-700 dark:text-emerald-400"
+                        title={`${activeVersion.lineCount} lines`}
+                      >
+                        {activeVersion.version} Active
+                      </span>
+                    )}
+                    {draftVersion && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-600 dark:text-amber-400"
+                        title={`${draftVersion.lineCount} lines · unresolved`}
+                      >
+                        {draftVersion.version} Draft
+                      </span>
+                    )}
+                    {versions.length > (activeVersion ? 1 : 0) + (draftVersion ? 1 : 0) && (
+                      <span
+                        className="inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 font-bold text-muted-foreground"
+                        title={versions.map((v) => `${v.version} ${v.status}`).join(" · ")}
+                      >
+                        +{versions.length - (activeVersion ? 1 : 0) - (draftVersion ? 1 : 0)} older
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              {/* Used-in strip: which assembled parents consume this. */}
+              <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                <span className="inline-flex items-center gap-1 text-muted-foreground font-semibold">
+                  <Users className="h-3 w-3" /> Used in:
+                </span>
+                {usedInCount === 0 ? (
+                  <span className="italic text-muted-foreground/60">not referenced yet</span>
+                ) : (
+                  <>
+                    {usedIn.map((p) => (
+                      <Link
+                        key={p.id}
+                        href={`/items/details/${encodeURIComponent(p.id)}?from=pcb`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center rounded-full border border-primary/25 bg-primary/5 px-1.5 py-0.5 font-mono font-bold text-primary hover:bg-primary/15 truncate max-w-[10rem]"
+                        title={p.name}
+                      >
+                        {p.code}
+                      </Link>
+                    ))}
+                    {usedInCount > usedIn.length && (
+                      <span
+                        className="inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 font-bold text-muted-foreground"
+                        title={`${usedInCount - usedIn.length} more assemblies use this item`}
+                      >
+                        +{usedInCount - usedIn.length}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="rounded-lg border border-border bg-muted/20 p-2">
                   <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Category</div>
@@ -214,8 +367,8 @@ export default function SemiAssembledListPage() {
                   <div className={`text-xs font-mono font-bold mt-0.5 ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>{it.onHand.toLocaleString()}</div>
                 </div>
                 <div className="rounded-lg border border-border bg-muted/20 p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">UOM</div>
-                  <div className="text-xs font-mono font-bold mt-0.5">{it.baseUom}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Footprint</div>
+                  <div className="text-xs font-mono font-bold mt-0.5 truncate" title={it.footprint ?? "—"}>{it.footprint ?? "—"}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
@@ -240,7 +393,8 @@ export default function SemiAssembledListPage() {
               </div>
             </CardContent>
           </Card>
-        ))}
+          )
+        })}
       </div>
 
       {!loading && filtered.length === 0 && (
@@ -257,8 +411,8 @@ export default function SemiAssembledListPage() {
                 <Plus className="h-4 w-4" /> Add the first one
               </Button>
             ) : (
-              (q.trim() || statusFilter !== "all") && (
-                <button onClick={() => { setQ(""); setStatusFilter("all") }} className="text-xs text-primary hover:underline font-semibold cursor-pointer">
+              (q.trim() || statusFilter !== "all" || solder !== "all") && (
+                <button onClick={() => { setQ(""); setStatusFilter("all"); setSolder("all") }} className="text-xs text-primary hover:underline font-semibold cursor-pointer">
                   Reset filters
                 </button>
               )
