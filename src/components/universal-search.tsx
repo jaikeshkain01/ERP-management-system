@@ -291,9 +291,9 @@ export function UniversalSearch() {
       router.push(`/items/details/${item.data.id}`)
     } else if (item.type === "product") {
       // Structure pages belong to the BOM module — fall back to the base list when disabled
-      router.push(isEnabled("bom") ? `/items/${item.data.id}/bom` : "/items/list?itemType=assembled")
+      router.push(isEnabled("bom") ? `/items/${item.data.id}/bom` : "/products/list")
     } else if (item.type === "pcb") {
-      router.push(isEnabled("bom") ? `/items/${item.data.id}/bom` : "/items/list?itemType=semi_assembled")
+      router.push(isEnabled("bom") ? `/items/${item.data.id}/bom` : "/pcb-management/list")
     } else if (item.type === "brand") {
       router.push(`/brands/list?brand=${item.data.name.toLowerCase().replace(/\s+/g, "-")}`)
     } else if (item.type === "supplier") {

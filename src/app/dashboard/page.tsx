@@ -92,8 +92,8 @@ export default function Dashboard() {
   }, [ops, d])
 
   const allKpis: { title: string; value: string; desc: string; icon: React.ComponentType<{ className?: string }>; color: string; moduleId?: ModuleId; href?: string }[] = [
-    { title: "Products", value: (itemCounts?.products ?? 0).toLocaleString(), desc: "Assembled + finished goods", icon: Package, color: "text-primary bg-primary/10", href: "/items/list?itemType=assembled" },
-    { title: "Semi-assembled", value: (itemCounts?.semiAssembled ?? 0).toLocaleString(), desc: "PCBs and sub-assemblies", icon: Cpu, color: "text-primary bg-primary/10", href: "/items/list?itemType=semi_assembled" },
+    { title: "Products", value: (itemCounts?.products ?? 0).toLocaleString(), desc: "Assembled + finished goods", icon: Package, color: "text-primary bg-primary/10", href: "/products/list" },
+    { title: "Semi-assembled", value: (itemCounts?.semiAssembled ?? 0).toLocaleString(), desc: "PCBs and sub-assemblies", icon: Cpu, color: "text-primary bg-primary/10", href: "/pcb-management/list" },
     { title: "Items", value: (itemCounts?.total ?? d.COMPONENTS.length).toLocaleString(), desc: "Universal items catalog", icon: Nut, color: "text-primary bg-primary/10", href: "/items/list" },
     { title: "Suppliers", value: d.SUPPLIERS.length.toLocaleString(), desc: "Registered distributors", icon: Truck, color: "text-primary bg-primary/10", href: "/suppliers/list" },
     { title: "Manufacturers", value: d.BRANDS.length.toLocaleString(), desc: "Approved manufacturers", icon: Award, color: "text-primary bg-primary/10", href: "/brands/list" },
@@ -196,7 +196,7 @@ export default function Dashboard() {
     { label: "Production Planner", desc: "Schedule builds", href: "/production/planner", icon: Factory, accent: "text-primary bg-primary/10", moduleId: "production" },
     { label: "Purchase Requests", desc: "Raise & approve PRs", href: "/purchases/requests", icon: ShoppingCart, accent: "text-primary bg-primary/10", moduleId: "purchasing" },
     { label: "Suppliers", desc: "Distributor directory", href: "/suppliers/list", icon: Truck, accent: "text-primary bg-primary/10" },
-    { label: "Semi-assembled", desc: "PCB revisions & sub-assemblies", href: "/items/list?itemType=semi_assembled", icon: Cpu, accent: "text-primary bg-primary/10" },
+    { label: "Semi-assembled", desc: "PCB revisions & sub-assemblies", href: "/pcb-management/list", icon: Cpu, accent: "text-primary bg-primary/10" },
     { label: "Reports", desc: "Analytics & exports", href: "/reports", icon: BarChart2, accent: "text-primary bg-primary/10", moduleId: "reports" },
   ]
   const quickLinks = allQuickLinks.filter((link) => !link.moduleId || isEnabled(link.moduleId))
