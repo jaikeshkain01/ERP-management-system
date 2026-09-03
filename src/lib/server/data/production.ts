@@ -610,24 +610,39 @@ export interface ReadinessView {
 export async function getReadiness(productKey: string | undefined, qty: number): Promise<ReadinessView> {
   const batch = Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 100;
   return guarded("production_order.view", async (tx) => {
+    // Resolve the parent from the universal `items` table. The legacy
+    // `tx.products.findFirst` path is gone: F5 module consolidation moved
+    // every assembled parent onto items, and the products table is empty
+    // for freshly-imported tenants. `productKey` accepts either an item
+    // uuid or an item code; when omitted, we pick the first assembled
+    // item that carries an Active BOM (same fallback intent as before).
     const product = productKey
-      ? await tx.products.findFirst({
-          where: {
-            deleted_at: null,
-            ...(isUuid(productKey) ? { id: productKey } : { OR: [{ slug: productKey }, { code: productKey }] }),
-          },
-          select: { id: true, name: true, slug: true },
-        })
-      : (
-          await tx.$queryRaw<{ id: string; name: string; slug: string }[]>`
-            SELECT p.id, p.name, p.slug FROM products p
-            JOIN item_bom_versions bv ON bv.parent_item_id = p.id
+      ? (await tx.$queryRaw<{ id: string; name: string; code: string }[]>`
+          SELECT id, name, code
+            FROM items
+           WHERE deleted_at IS NULL
+             AND item_type = 'assembled'::item_type
+             AND ${isUuid(productKey)
+                  ? Prisma.sql`(id = ${productKey}::uuid OR code = ${productKey})`
+                  : Prisma.sql`code = ${productKey}`}
+           LIMIT 1`
+        )[0] ?? null
+      : (await tx.$queryRaw<{ id: string; name: string; code: string }[]>`
+          SELECT i.id, i.name, i.code
+            FROM items i
+            JOIN item_bom_versions bv ON bv.parent_item_id = i.id
                                       AND bv.status = 'Active'
                                       AND bv.deleted_at IS NULL
-            WHERE p.deleted_at IS NULL ORDER BY p.name LIMIT 1`
+           WHERE i.deleted_at IS NULL
+             AND i.item_type = 'assembled'::item_type
+           ORDER BY i.name LIMIT 1`
         )[0] ?? null;
     if (!product) throw Errors.notFound("Product");
 
+    // Recursive explode + on-hand aggregation. Both now key on the
+    // universal item_variants / inventory_balances tables. `demand` picks
+    // the true leaves — anything that itself has an Active BOM keeps
+    // exploding rather than being counted as raw stock.
     const rows = await tx.$queryRaw<{ genericPN: string; component: string; required: number; available: number }[]>`
       WITH RECURSIVE explode(child, qty, depth) AS (
         SELECT bl.child_item_id, bl.qty::numeric, 1
@@ -657,15 +672,15 @@ export async function getReadiness(productKey: string | undefined, qty: number):
          )
          GROUP BY e.child
       )
-      SELECT c.generic_pn AS "genericPN", c.name AS component,
+      SELECT COALESCE(i.generic_pn, '') AS "genericPN", i.name AS component,
              (d.per_unit * ${batch})::float8 AS required,
              COALESCE((
-               SELECT SUM(ib.available) FROM component_brand_variants v
-               LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
-               WHERE v.component_id = d.component_id AND v.deleted_at IS NULL
+               SELECT SUM(ib.available) FROM item_variants v
+               LEFT JOIN inventory_balances ib ON ib.item_variant_id = v.id AND ib.deleted_at IS NULL
+               WHERE v.item_id = d.component_id AND v.deleted_at IS NULL
              ), 0)::float8 AS available
-      FROM demand d JOIN components c ON c.id = d.component_id AND c.deleted_at IS NULL
-      ORDER BY c.name`;
+      FROM demand d JOIN items i ON i.id = d.component_id AND i.deleted_at IS NULL
+      ORDER BY i.name`;
 
     const items: ReadinessItemView[] = rows.map((r) => ({
       component: r.component,
@@ -682,6 +697,12 @@ export async function getReadiness(productKey: string | undefined, qty: number):
     const shortPN = shorted?.genericPN ?? "";
     const missingQty = shorted ? Math.ceil(shorted.required - shorted.available) : 0;
 
+    // Sourcing: same supplier price book, joined via the universal items
+    // table. `supplier_component_prices.component_id` still FK-targets
+    // `components(id)`; F2 mirrored the two id-spaces, so the join to
+    // `items` on the same id is transparent for anything that has a legacy
+    // twin. Rows without a twin simply carry no supplier offers here —
+    // consistent with what the item detail page already shows.
     let sourcing: ReadinessSupplierView[] = [];
     if (shortPN) {
       const offers = await tx.$queryRaw<{
@@ -690,10 +711,10 @@ export async function getReadiness(productKey: string | undefined, qty: number):
         SELECT b.slug AS "brandId", b.name AS brand, s.slug AS "supplierId", s.name AS "supplierName",
                scp.price::float8 AS price, scp.lead_time_days AS "leadTimeDays"
         FROM supplier_component_prices scp
-        JOIN components c ON c.id = scp.component_id AND c.deleted_at IS NULL
+        JOIN items i ON i.id = scp.component_id AND i.deleted_at IS NULL
         JOIN brands b ON b.id = scp.brand_id
         JOIN suppliers s ON s.id = scp.supplier_id
-        WHERE c.generic_pn = ${shortPN} AND scp.valid_to IS NULL AND scp.deleted_at IS NULL
+        WHERE i.generic_pn = ${shortPN} AND scp.valid_to IS NULL AND scp.deleted_at IS NULL
         ORDER BY scp.price`;
       sourcing = offers.map((o) => ({
         brand: o.brand,
@@ -707,7 +728,11 @@ export async function getReadiness(productKey: string | undefined, qty: number):
 
     return {
       product: product.name,
-      productSlug: product.slug,
+      // The wire field kept its historical name; the value is now the
+      // item's `id` (uuid), so the readiness page's <select> — whose
+      // option values are item uuids from /api/items — can round-trip
+      // the auto-picked product on first load.
+      productSlug: product.id,
       qty: batch,
       items,
       shortComponent,
