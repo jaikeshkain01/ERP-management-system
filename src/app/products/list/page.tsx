@@ -16,14 +16,14 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Package, Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
-  GitBranch, Factory, Hammer,
+  GitBranch, Factory, Hammer, Grid2X2, Rows3, Download,
 } from "lucide-react"
 
 type ItemType =
@@ -69,15 +69,59 @@ interface ProductStats {
   openOrders: number
 }
 
+type ViewMode = "cards" | "table"
+
+// Suspense wrapper — useSearchParams reads a client-navigation boundary,
+// so the actual list component lives one level down. Same pattern as
+// /items/list.
 export default function AssembledProductsListPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <AssembledProductsList />
+    </React.Suspense>
+  )
+}
+
+function AssembledProductsList() {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // Initial state seeded from URL — every filter is bookmarkable. Only
+  // recognised values pass through, so a malformed ?status= silently
+  // falls back to "all".
+  const initialQ = searchParams.get("q") ?? ""
+  const rawStatus = searchParams.get("status")
+  const initialStatus: ItemStatus | "all" =
+    rawStatus === "active" || rawStatus === "inactive" || rawStatus === "discontinued" ? rawStatus : "all"
+  const rawRole = searchParams.get("role")
+  const initialRole: Role =
+    rawRole === "assembled" || rawRole === "finished" ? rawRole : "all"
+  const rawView = searchParams.get("view")
+  const initialView: ViewMode = rawView === "table" ? "table" : "cards"
+
   const [items, setItems] = React.useState<Item[]>([])
   const [stats, setStats] = React.useState<Map<string, ProductStats>>(new Map())
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [q, setQ] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">("all")
-  const [role, setRole] = React.useState<Role>("all")
+  const [q, setQ] = React.useState(initialQ)
+  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">(initialStatus)
+  const [role, setRole] = React.useState<Role>(initialRole)
+  const [view, setView] = React.useState<ViewMode>(initialView)
+
+  // Push filter state back into the URL so refresh / bookmark keeps the
+  // same view. `replace` (not `push`) so the browser back button doesn't
+  // fill up with every toggle.
+  React.useEffect(() => {
+    const params = new URLSearchParams()
+    if (q.trim()) params.set("q", q.trim())
+    if (statusFilter !== "all") params.set("status", statusFilter)
+    if (role !== "all") params.set("role", role)
+    if (view !== "cards") params.set("view", view)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, statusFilter, role, view])
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -143,6 +187,49 @@ export default function AssembledProductsListPage() {
     finished: items.filter((it) => it.isFinishedGood).length,
   }), [items])
 
+  // CSV export of the currently filtered set. Columns match what the card
+  // grid shows — including the assembled-only stats — so the export is
+  // useful for reporting without post-processing. Everything is done
+  // client-side; no separate endpoint needed.
+  const exportCsv = React.useCallback(() => {
+    const escape = (v: string | number | null | undefined) => {
+      if (v == null) return ""
+      const s = String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const header = [
+      "Code", "Name", "Stage", "Finished good", "Status", "Category",
+      "On hand", "UOM", "Active BOM", "BOM lines", "Buildable", "Open orders",
+    ]
+    const lines = [header.join(",")]
+    for (const it of filtered) {
+      const st = stats.get(it.id)
+      lines.push([
+        escape(it.code),
+        escape(it.name),
+        escape(it.itemType === "assembled" ? "Assembled" : "Semi-assembled"),
+        escape(it.isFinishedGood ? "yes" : "no"),
+        escape(it.status),
+        escape(it.categoryPath ?? ""),
+        escape(it.onHand),
+        escape(it.baseUom),
+        escape(st?.activeBomVersion ?? ""),
+        escape(st?.bomLineCount ?? 0),
+        escape(st?.buildableQty ?? ""),
+        escape(st?.openOrders ?? 0),
+      ].join(","))
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `assembled-products-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [filtered, stats])
+
   return (
     <div className="space-y-6 pb-12">
       {/* Header */}
@@ -160,6 +247,33 @@ export default function AssembledProductsListPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
+          {/* View toggle — Cards / Table. Persisted in the URL as ?view=. */}
+          <div className="inline-flex rounded-md border border-border bg-background p-0.5" role="group" aria-label="View mode">
+            <button
+              type="button"
+              onClick={() => setView("cards")}
+              className={`px-2.5 py-1.5 rounded-sm text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                view === "cards" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50"
+              }`}
+              title="Card view"
+            >
+              <Grid2X2 className="h-3.5 w-3.5" /> Cards
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              className={`px-2.5 py-1.5 rounded-sm text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                view === "table" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50"
+              }`}
+              title="Table view"
+            >
+              <Rows3 className="h-3.5 w-3.5" /> Table
+            </button>
+          </div>
+          <Button variant="outline" className="gap-2 font-semibold border-border bg-background" onClick={exportCsv} disabled={loading || filtered.length === 0} title="Download the filtered list as CSV">
+            <Download className="h-4 w-4" />
+            <span>Export</span>
+          </Button>
           <Button variant="outline" className="gap-2 font-semibold border-border bg-background" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
@@ -227,7 +341,8 @@ export default function AssembledProductsListPage() {
         </div>
       )}
 
-      {/* Card grid */}
+      {/* Card grid (view === "cards") */}
+      {view === "cards" && (
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {loading && Array.from({ length: 6 }).map((_, i) => (
           <Card key={`sk-${i}`} className="border border-border bg-card">
@@ -368,6 +483,83 @@ export default function AssembledProductsListPage() {
           )
         })}
       </div>
+      )}
+
+      {/* Table view (view === "table") — compact scan of the same filtered
+          rows, same underlying stats. */}
+      {view === "table" && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40 text-muted-foreground uppercase text-[10px] border-b border-border">
+                <tr>
+                  <th className="px-4 py-2 text-left font-bold">Code</th>
+                  <th className="px-4 py-2 text-left font-bold">Name</th>
+                  <th className="px-4 py-2 text-left font-bold">Category</th>
+                  <th className="px-4 py-2 text-left font-bold">BOM</th>
+                  <th className="px-4 py-2 text-right font-bold">On hand</th>
+                  <th className="px-4 py-2 text-right font-bold">Build</th>
+                  <th className="px-4 py-2 text-right font-bold">Orders</th>
+                  <th className="px-4 py-2 text-left font-bold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {loading && Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={`sk-${i}`}>
+                    {Array.from({ length: 8 }).map((__, j) => (
+                      <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
+                    ))}
+                  </tr>
+                ))}
+                {!loading && filtered.map((it) => {
+                  const st = stats.get(it.id)
+                  const hasBom = Boolean(st?.activeBomVersion)
+                  return (
+                    <tr
+                      key={it.id}
+                      onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}?from=products`)}
+                      className="cursor-pointer hover:bg-muted/20 transition-colors"
+                    >
+                      <td className="px-4 py-2 font-mono font-bold text-primary whitespace-nowrap">{it.code}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold truncate max-w-[200px]" title={it.name}>{it.name}</span>
+                          {it.isFinishedGood && (
+                            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700 dark:text-emerald-400" title="Sellable finished good">Finished</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-muted-foreground truncate max-w-[180px]" title={it.categoryPath ?? "—"}>{it.categoryPath?.split(" › ").pop() ?? "—"}</td>
+                      <td className="px-4 py-2">
+                        {hasBom ? (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary" title={`${st!.bomLineCount} lines`}>
+                            <GitBranch className="h-2.5 w-2.5" /> {st!.activeBomVersion} · {st!.bomLineCount}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] italic text-muted-foreground/60">no BOM</span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400 font-bold" : "text-foreground"}`}>{it.onHand.toLocaleString()}</td>
+                      <td className={`px-4 py-2 text-right font-mono font-bold ${
+                        !hasBom ? "text-muted-foreground/60"
+                        : (st?.buildableQty ?? 0) === 0 ? "text-destructive"
+                        : (st?.buildableQty ?? 0) < 10 ? "text-amber-600 dark:text-amber-400"
+                        : "text-emerald-600 dark:text-emerald-400"
+                      }`}>
+                        {hasBom ? (st?.buildableQty ?? 0).toLocaleString() : "—"}
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${(st?.openOrders ?? 0) === 0 ? "text-muted-foreground/60" : "text-foreground font-bold"}`}>{(st?.openOrders ?? 0).toLocaleString()}</td>
+                      <td className="px-4 py-2">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold border ${STATUS_TONE[it.status]}`}>{it.status}</span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {!loading && filtered.length === 0 && (
         <Card className="border border-border bg-card">

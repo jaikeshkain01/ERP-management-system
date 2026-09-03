@@ -15,14 +15,14 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams, usePathname } from "next/navigation"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
-  GitBranch, Users,
+  GitBranch, Users, Grid2X2, Rows3, Download,
 } from "lucide-react"
 
 type ItemType =
@@ -78,15 +78,58 @@ const STATUS_TONE: Record<ItemStatus, string> = {
 // a solder type but a mechanical sub-assembly usually doesn't.
 type SolderFilter = "all" | "smd" | "dip" | "unspecified"
 
+type ViewMode = "cards" | "table"
+
+// Suspense wrapper — useSearchParams needs a client boundary, so the list
+// body lives in a helper component. Matches the /products/list pattern.
 export default function SemiAssembledListPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <SemiAssembledList />
+    </React.Suspense>
+  )
+}
+
+function SemiAssembledList() {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // Seed every filter + view mode from the URL so bookmarks and refresh
+  // keep the same visual state. Only recognised values pass; anything
+  // else silently falls back to the default.
+  const initialQ = searchParams.get("q") ?? ""
+  const rawStatus = searchParams.get("status")
+  const initialStatus: ItemStatus | "all" =
+    rawStatus === "active" || rawStatus === "inactive" || rawStatus === "discontinued" ? rawStatus : "all"
+  const rawSolder = searchParams.get("solder")
+  const initialSolder: SolderFilter =
+    rawSolder === "smd" || rawSolder === "dip" || rawSolder === "unspecified" ? rawSolder : "all"
+  const rawView = searchParams.get("view")
+  const initialView: ViewMode = rawView === "table" ? "table" : "cards"
+
   const [items, setItems] = React.useState<Item[]>([])
   const [stats, setStats] = React.useState<Map<string, SemiStats>>(new Map())
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
-  const [q, setQ] = React.useState("")
-  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">("all")
-  const [solder, setSolder] = React.useState<SolderFilter>("all")
+  const [q, setQ] = React.useState(initialQ)
+  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">(initialStatus)
+  const [solder, setSolder] = React.useState<SolderFilter>(initialSolder)
+  const [view, setView] = React.useState<ViewMode>(initialView)
+
+  // Push filter state into the URL — router.replace so back-button
+  // isn't polluted by every toggle. Skip when default so a clean tile
+  // click stays on a clean URL.
+  React.useEffect(() => {
+    const params = new URLSearchParams()
+    if (q.trim()) params.set("q", q.trim())
+    if (statusFilter !== "all") params.set("status", statusFilter)
+    if (solder !== "all") params.set("solder", solder)
+    if (view !== "cards") params.set("view", view)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, statusFilter, solder, view])
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -141,6 +184,50 @@ export default function SemiAssembledListPage() {
     unspecified: items.filter((it) => it.solderType === null).length,
   }), [items])
 
+  // CSV export of the currently filtered set. Columns include the
+  // semi_assembled-specific signals (Active + Draft revision, used-in
+  // count) so the export is useful for BOM audits without a follow-up
+  // query. Everything client-side.
+  const exportCsv = React.useCallback(() => {
+    const escape = (v: string | number | null | undefined) => {
+      if (v == null) return ""
+      const s = String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const header = [
+      "Code", "Name", "Category", "Solder", "Footprint", "Status", "On hand", "UOM",
+      "Active BOM", "Draft BOM", "Used in (parents)",
+    ]
+    const lines = [header.join(",")]
+    for (const it of filtered) {
+      const st = stats.get(it.id)
+      const active = st?.bomVersions.find((v) => v.status === "Active")
+      const draft = st?.bomVersions.find((v) => v.status === "Draft")
+      lines.push([
+        escape(it.code),
+        escape(it.name),
+        escape(it.categoryPath ?? ""),
+        escape(it.solderType ?? ""),
+        escape(it.footprint ?? ""),
+        escape(it.status),
+        escape(it.onHand),
+        escape(it.baseUom),
+        escape(active ? `${active.version} (${active.lineCount} lines)` : ""),
+        escape(draft ? `${draft.version} (${draft.lineCount} lines)` : ""),
+        escape(st?.usedInCount ?? 0),
+      ].join(","))
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `semi-assembled-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }, [filtered, stats])
+
   return (
     <div className="space-y-6 pb-12">
       {/* Header */}
@@ -158,6 +245,33 @@ export default function SemiAssembledListPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 self-start md:self-auto">
+          {/* View toggle — Cards / Table. Persisted in the URL as ?view=. */}
+          <div className="inline-flex rounded-md border border-border bg-background p-0.5" role="group" aria-label="View mode">
+            <button
+              type="button"
+              onClick={() => setView("cards")}
+              className={`px-2.5 py-1.5 rounded-sm text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                view === "cards" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50"
+              }`}
+              title="Card view"
+            >
+              <Grid2X2 className="h-3.5 w-3.5" /> Cards
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              className={`px-2.5 py-1.5 rounded-sm text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                view === "table" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted/50"
+              }`}
+              title="Table view"
+            >
+              <Rows3 className="h-3.5 w-3.5" /> Table
+            </button>
+          </div>
+          <Button variant="outline" className="gap-2 font-semibold border-border bg-background" onClick={exportCsv} disabled={loading || filtered.length === 0} title="Download the filtered list as CSV">
+            <Download className="h-4 w-4" />
+            <span>Export</span>
+          </Button>
           <Button variant="outline" className="gap-2 font-semibold border-border bg-background" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
@@ -227,7 +341,8 @@ export default function SemiAssembledListPage() {
         </div>
       )}
 
-      {/* Card grid */}
+      {/* Card grid (view === "cards") */}
+      {view === "cards" && (
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {loading && Array.from({ length: 6 }).map((_, i) => (
           <Card key={`sk-${i}`} className="border border-border bg-card">
@@ -396,6 +511,85 @@ export default function SemiAssembledListPage() {
           )
         })}
       </div>
+      )}
+
+      {/* Table view (view === "table") — compact scan of the same rows,
+          same underlying stats. */}
+      {view === "table" && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/40 text-muted-foreground uppercase text-[10px] border-b border-border">
+                <tr>
+                  <th className="px-4 py-2 text-left font-bold">Code</th>
+                  <th className="px-4 py-2 text-left font-bold">Name</th>
+                  <th className="px-4 py-2 text-left font-bold">Solder</th>
+                  <th className="px-4 py-2 text-left font-bold">Footprint</th>
+                  <th className="px-4 py-2 text-left font-bold">Active / Draft</th>
+                  <th className="px-4 py-2 text-right font-bold">Used in</th>
+                  <th className="px-4 py-2 text-right font-bold">On hand</th>
+                  <th className="px-4 py-2 text-left font-bold">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {loading && Array.from({ length: 6 }).map((_, i) => (
+                  <tr key={`sk-${i}`}>
+                    {Array.from({ length: 8 }).map((__, j) => (
+                      <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
+                    ))}
+                  </tr>
+                ))}
+                {!loading && filtered.map((it) => {
+                  const st = stats.get(it.id)
+                  const active = st?.bomVersions.find((v) => v.status === "Active")
+                  const draft = st?.bomVersions.find((v) => v.status === "Draft")
+                  return (
+                    <tr
+                      key={it.id}
+                      onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}?from=pcb`)}
+                      className="cursor-pointer hover:bg-muted/20 transition-colors"
+                    >
+                      <td className="px-4 py-2 font-mono font-bold text-primary whitespace-nowrap">{it.code}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold truncate max-w-[200px]" title={it.name}>{it.name}</span>
+                          {it.isFinishedGood && (
+                            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700 dark:text-emerald-400" title="Sellable finished good">Finished</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-muted-foreground">{it.solderType ?? "—"}</td>
+                      <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[140px]" title={it.footprint ?? "—"}>{it.footprint ?? "—"}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap items-center gap-1">
+                          {active && (
+                            <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400" title={`${active.lineCount} lines`}>
+                              {active.version} A
+                            </span>
+                          )}
+                          {draft && (
+                            <span className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400" title={`${draft.lineCount} lines`}>
+                              {draft.version} D
+                            </span>
+                          )}
+                          {!active && !draft && (
+                            <span className="text-[10px] italic text-muted-foreground/60">none</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className={`px-4 py-2 text-right font-mono ${(st?.usedInCount ?? 0) === 0 ? "text-muted-foreground/60" : "text-foreground font-bold"}`}>{(st?.usedInCount ?? 0).toLocaleString()}</td>
+                      <td className={`px-4 py-2 text-right font-mono ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400 font-bold" : "text-foreground"}`}>{it.onHand.toLocaleString()}</td>
+                      <td className="px-4 py-2">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold border ${STATUS_TONE[it.status]}`}>{it.status}</span>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {!loading && filtered.length === 0 && (
         <Card className="border border-border bg-card">
