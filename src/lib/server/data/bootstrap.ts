@@ -39,6 +39,12 @@ export async function getBootstrap(): Promise<DataSet> {
                  COALESCE(email,'') AS email, COALESCE(phone,'') AS phone, COALESCE(address,'') AS address,
                  COALESCE(terms,'') AS terms, COALESCE(rating,0)::float8 AS rating, status
           FROM suppliers WHERE deleted_at IS NULL ORDER BY name`,
+        // Universal-items projection. Post module-consolidation the legacy
+        // `components` table is retired for freshly-imported tenants; the
+        // universal `items` table is the sole source of truth. Legacy
+        // fields the client `Component` shape still carries (category name,
+        // annualConsumption) come back empty/zero — no consumer of
+        // `d.COMPONENTS` should be relying on those anymore.
         tx.$queryRaw<{
           id: string; genericPN: string; name: string; category: string; description: string;
           unit: string; solderType: string | null; footprint: string; spq: number | null;
@@ -46,32 +52,55 @@ export async function getBootstrap(): Promise<DataSet> {
           preferredSupplierId: string | null;
           categoryId: string | null; categoryPath: string | null; itemType: string;
         }[]>`
-          SELECT COALESCE(NULLIF(generic_pn,''), id::text) AS id, COALESCE(generic_pn,'') AS "genericPN", name, COALESCE(category,'') AS category,
-                 COALESCE(description,'') AS description, unit, solder_type AS "solderType",
-                 COALESCE(footprint,'') AS footprint, spq, min_stock::float8 AS "minStock",
-                 reorder_qty::float8 AS "reorderQty", annual_consumption::float8 AS "annualConsumption",
-                 specs,
-                 (SELECT s.slug FROM suppliers s WHERE s.id = components.preferred_supplier_id) AS "preferredSupplierId",
-                 category_id AS "categoryId", item_type::text AS "itemType",
-                 (SELECT ic.path FROM item_categories ic WHERE ic.id = components.category_id) AS "categoryPath"
-          FROM components WHERE deleted_at IS NULL ORDER BY name`,
+          SELECT COALESCE(NULLIF(i.generic_pn,''), i.id::text) AS id,
+                 COALESCE(i.generic_pn,'') AS "genericPN",
+                 i.name,
+                 COALESCE((SELECT ic.name FROM item_categories ic WHERE ic.id = i.category_id), '') AS category,
+                 COALESCE(i.description,'') AS description,
+                 i.base_uom AS unit,
+                 i.solder_type::text AS "solderType",
+                 COALESCE(i.footprint,'') AS footprint,
+                 i.spq,
+                 i.min_stock::float8 AS "minStock",
+                 i.reorder_qty::float8 AS "reorderQty",
+                 0::float8 AS "annualConsumption",
+                 COALESCE(i.specs, '[]'::jsonb) AS specs,
+                 (SELECT s.slug FROM suppliers s WHERE s.id = i.default_supplier_id) AS "preferredSupplierId",
+                 i.category_id AS "categoryId",
+                 i.item_type::text AS "itemType",
+                 (SELECT ic.path FROM item_categories ic WHERE ic.id = i.category_id) AS "categoryPath"
+            FROM items i WHERE i.deleted_at IS NULL ORDER BY i.name`,
+        // Variants: item_variants + inventory_balances keyed on item_variant_id
+        // (the F2 slice added that column alongside the legacy
+        // component_brand_variant_id). Brands still address the same rows.
         tx.$queryRaw<{ variantId: string; componentPN: string; brandId: string; partNo: string; stock: number }[]>`
-          SELECT v.id AS "variantId", COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentPN", b.slug AS "brandId", v.part_no AS "partNo",
+          SELECT v.id AS "variantId",
+                 COALESCE(NULLIF(i.generic_pn,''), i.id::text) AS "componentPN",
+                 b.slug AS "brandId",
+                 COALESCE(v.part_no,'') AS "partNo",
                  COALESCE(SUM(ib.on_hand),0)::float8 AS stock
-          FROM component_brand_variants v
-          JOIN components c ON c.id = v.component_id AND c.deleted_at IS NULL
-          JOIN brands b ON b.id = v.brand_id
-          LEFT JOIN inventory_balances ib ON ib.component_brand_variant_id = v.id AND ib.deleted_at IS NULL
-          WHERE v.deleted_at IS NULL
-          GROUP BY v.id, COALESCE(NULLIF(c.generic_pn,''), c.id::text), b.slug, v.part_no`,
+            FROM item_variants v
+            JOIN items i ON i.id = v.item_id AND i.deleted_at IS NULL
+            JOIN brands b ON b.id = v.brand_id
+       LEFT JOIN inventory_balances ib ON ib.item_variant_id = v.id AND ib.deleted_at IS NULL
+           WHERE v.deleted_at IS NULL
+           GROUP BY v.id, i.generic_pn, i.id, b.slug, v.part_no`,
+        // Supplier offers still live in `supplier_component_prices` and its
+        // FK targets `components(id)`. F2 mirrored the legacy component id
+        // onto items.id, so the join works transparently for anything that
+        // has a mirrored row; freshly-created items without a mirror row
+        // simply carry no offers here — expected.
         tx.$queryRaw<{ componentPN: string; supplierId: string; brandId: string; price: number; leadTimeDays: number | null }[]>`
-          SELECT COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentPN", s.slug AS "supplierId", b.slug AS "brandId",
-                 scp.price::float8 AS price, scp.lead_time_days AS "leadTimeDays"
-          FROM supplier_component_prices scp
-          JOIN components c ON c.id = scp.component_id AND c.deleted_at IS NULL
-          JOIN suppliers s ON s.id = scp.supplier_id
-          JOIN brands b ON b.id = scp.brand_id
-          WHERE scp.valid_to IS NULL AND scp.deleted_at IS NULL`,
+          SELECT COALESCE(NULLIF(i.generic_pn,''), i.id::text) AS "componentPN",
+                 s.slug AS "supplierId",
+                 b.slug AS "brandId",
+                 scp.price::float8 AS price,
+                 scp.lead_time_days AS "leadTimeDays"
+            FROM supplier_component_prices scp
+            JOIN items i ON i.id = scp.component_id AND i.deleted_at IS NULL
+            JOIN suppliers s ON s.id = scp.supplier_id
+            JOIN brands b ON b.id = scp.brand_id
+           WHERE scp.valid_to IS NULL AND scp.deleted_at IS NULL`,
         tx.$queryRaw<{ id: string; name: string; description: string; layers: number | null; status: string }[]>`
           SELECT slug AS id, name, COALESCE(description,'') AS description, layers, status
           FROM pcbs WHERE deleted_at IS NULL ORDER BY name`,

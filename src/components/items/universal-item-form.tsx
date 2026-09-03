@@ -22,7 +22,6 @@
  */
 
 import * as React from "react"
-import { createPortal } from "react-dom"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { withFromParam } from "@/lib/modules"
@@ -33,11 +32,16 @@ import {
   ArrowLeft, Save, AlertCircle, CheckCircle2, Info,
   Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory, ShoppingBag,
   Lock, Plus, Trash2, ChevronDown, ChevronRight, Sliders,
-  Copy, Search, Eye, Layers, Link2, Sparkles,
+  Copy, Search, Eye, Layers,
 } from "lucide-react"
 import { useData } from "@/lib/data-provider"
 import { CategoryCascade } from "@/components/category-cascade"
 import { extractError } from "@/lib/api-error"
+import {
+  readStagedBom, clearStagedBom,
+  readItemFormDraft, writeItemFormDraft, clearItemFormDraft,
+  type StagedBom, type StagedBomRow,
+} from "@/lib/item-form-draft"
 
 type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
@@ -132,40 +136,14 @@ function initialOpenSections(i: UniversalItemInitial): SectionKey[] {
 }
 
 /** SectionKey — declared here so `initialOpenSections` above can name it.
- *  "bom" is add-mode only — edit-mode uses the dedicated /items/[id]/bom
- *  editor because existing BOMs require Draft/Active version workflow. */
+ *  "bom" is add-mode only — the section now hosts Create-BOM / Import-BOM
+ *  buttons that hand off to the dedicated /items/[id]/bom editor. */
 type SectionKey = "stock" | "specs" | "mfr" | "board" | "packaging" | "storage" | "asset" | "bom"
-
-// Local BOM draft line — one row in the inline "Assembly / BOM" section on
-// the add form. Persisted after item POST via a two-step chain:
-//   POST  /api/items/[id]/bom                → creates a Draft version
-//   PATCH /api/items/[id]/bom/[versionId]    → replaces lines
-// Deliberately narrower than the /items/[id]/bom editor: no preferred-brand
-// picker (per-child variants aren't loaded yet in the add flow), no
-// sequence, no remarks. Users add those fields later in the editor.
-interface BomDraftLine {
-  key: string
-  /** Set once the row is linked to an existing catalog item. Empty ⇒ the
-   *  row will be created as a NEW item on submit (see submit chain). */
-  childItemId: string
-  /** Display fields — reflect the linked item OR the fields the user is
-   *  editing for a new item. `childCode` doubles as the new-item code. */
-  childCode: string
-  childName: string
-  childItemType: string
-  /** Optional generic PN for a new item; ignored when linked. */
-  childGenericPn: string
-  qty: string
-  refDes: string
-}
-
-interface BomChildSearchResult {
-  id: string; code: string; name: string; itemType: string
-}
 
 export default function UniversalItemForm({ mode, initial }: UniversalItemFormProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const bomImported = searchParams.get("bomImported") === "1"
   const d = useData()
   const isEdit = mode === "edit"
   const fromId = searchParams.get("from")
@@ -179,6 +157,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const typeFromQuery = !isEdit ? searchParams?.get("type") ?? null : null
   const initialTypeFromQuery: ItemType | null =
     typeFromQuery && validTypes.has(typeFromQuery as ItemType) ? (typeFromQuery as ItemType) : null
+
+  // Staged BOM (add-mode only). Populated when the user came back from
+  // /items/import?returnTo=add — the importer serialised the reviewed rows
+  // into sessionStorage instead of POSTing them. The BOM commits alongside
+  // the item on save; discarding it here just clears the sessionStorage key.
+  const [stagedBom, setStagedBom] = React.useState<StagedBom | null>(null)
 
   const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" | "info" } | null>(null)
   const showToast = React.useCallback((info: { message: string; hint?: string; type: "success" | "error" | "info" }) => {
@@ -416,114 +400,11 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setMfrRows(next)
   }
 
-  // ── Section: Assembly / BOM (add-mode only, F6.4 B1 hook) ──
-  //  Users can seed the item's first BOM Draft directly from this form —
-  //  saves a round-trip to /items/[id]/bom after creation. On submit we
-  //  chain: item POST → POST /bom (Draft) → PATCH /bom/[versionId] (lines).
-  //
-  //  UX modeled on the PCB "Add Manually" modal (PcbForm) — typeahead
-  //  in-row on the Name field, matches appear in an absolute dropdown
-  //  as you type, click to link. A green Link2 icon marks a linked row;
-  //  typing edits the name and clears the link (back to unlinked).
-  //
-  //  KEY DIFFERENCE FROM PCB FORM: `item_bom_lines.child_item_id` is a
-  //  NOT NULL FK — we cannot ship "new part will be created" on the fly.
-  //  Unlinked rows are refused at submit with a clear "pick a match" hint.
-  //
-  //  Deliberately narrower than the full editor: child + qty + ref-des.
-  //  Preferred brand / sequence / remarks are added later in the editor.
-  const [bomLines, setBomLines]        = React.useState<BomDraftLine[]>([])
-  const [bomOpenRow, setBomOpenRow]    = React.useState<string | null>(null)  // key of the row whose typeahead is open
-  const [bomMatches, setBomMatches]    = React.useState<Record<string, BomChildSearchResult[]>>({})
-  // Portal-anchored dropdown positioning. The table wraps in an
-  // `overflow-x-auto` scroll container which clips absolutely-positioned
-  // dropdowns to its edges — matches disappeared under the next row. We
-  // render the suggestions list to <body> via portal at a fixed position
-  // measured off the input's bounding rect, and update the anchor on
-  // scroll/resize.
-  const bomInputRefs = React.useRef<Map<string, HTMLInputElement | null>>(new Map())
-  const setBomInputRef = React.useCallback((key: string, el: HTMLInputElement | null) => {
-    if (el) bomInputRefs.current.set(key, el)
-    else bomInputRefs.current.delete(key)
-  }, [])
-  const [bomAnchorRect, setBomAnchorRect] = React.useState<{ x: number; y: number; w: number } | null>(null)
-  React.useEffect(() => {
-    if (!bomOpenRow) { setBomAnchorRect(null); return }
-    const measure = () => {
-      const el = bomInputRefs.current.get(bomOpenRow)
-      if (!el) return
-      const r = el.getBoundingClientRect()
-      setBomAnchorRect({ x: r.left, y: r.bottom, w: r.width })
-    }
-    measure()
-    window.addEventListener("scroll", measure, true)
-    window.addEventListener("resize", measure)
-    return () => {
-      window.removeEventListener("scroll", measure, true)
-      window.removeEventListener("resize", measure)
-    }
-  }, [bomOpenRow, bomMatches])
+  // ── Section: Assembly / BOM (add-mode only) ──
+  //  The section renders two entry points (Create BOM / Import BOM) that
+  //  save the item first, then hand off to the /items/[id]/bom editor.
+  //  Inline row-by-row entry was retired — see the JSX below.
   const bomApplicable = itemType !== "raw"
-
-  const newBomLine = (): BomDraftLine => ({
-    key: `bom-${(globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2))}`,
-    childItemId: "", childCode: "", childName: "", childItemType: "raw", childGenericPn: "",
-    qty: "1", refDes: "",
-  })
-  const addBomLine = () => setBomLines((prev) => [...prev, newBomLine()])
-  const removeBomLine = (key: string) => setBomLines((prev) => prev.filter((l) => l.key !== key))
-  const patchBomLine = (key: string, patch: Partial<BomDraftLine>) =>
-    setBomLines((prev) => prev.map((l) => l.key === key ? { ...l, ...patch } : l))
-
-  // Typing in Name: update text, clear any prior link, and auto-suggest a
-  // code from the typed name + current type. User can override Code before
-  // submit. Query drives the typeahead dropdown for THIS row only.
-  const onBomNameChange = (key: string, value: string) => {
-    setBomLines((prev) => prev.map((l) => {
-      if (l.key !== key) return l
-      // Only re-suggest the code if the user hasn't hand-edited it away
-      // from what a prior suggestion would have produced (or if it's empty).
-      const priorSuggest = suggestCode(l.childName, l.childItemType as ItemType)
-      const codeIsAutoSuggested = !l.childCode || l.childCode === priorSuggest
-      const nextCode = codeIsAutoSuggested ? suggestCode(value, l.childItemType as ItemType) : l.childCode
-      return { ...l, childName: value, childItemId: "", childCode: nextCode }
-    }))
-    setBomOpenRow(value.trim() ? key : null)
-  }
-
-  const onBomTypeChange = (key: string, value: string) => {
-    setBomLines((prev) => prev.map((l) => {
-      if (l.key !== key) return l
-      const priorSuggest = suggestCode(l.childName, l.childItemType as ItemType)
-      const codeIsAutoSuggested = !l.childCode || l.childCode === priorSuggest
-      const nextCode = codeIsAutoSuggested ? suggestCode(l.childName, value as ItemType) : l.childCode
-      return { ...l, childItemType: value, childCode: nextCode }
-    }))
-  }
-
-  // Debounced /api/items lookup per open row. Cheap — one query at a time.
-  React.useEffect(() => {
-    if (!bomOpenRow) return
-    const row = bomLines.find((l) => l.key === bomOpenRow)
-    if (!row) return
-    const q = row.childName.trim()
-    if (!q) { setBomMatches((prev) => ({ ...prev, [bomOpenRow]: [] })); return }
-    let cancelled = false
-    const t = window.setTimeout(async () => {
-      const res = await fetch(`/api/items?q=${encodeURIComponent(q)}`, { cache: "no-store" })
-      if (cancelled) return
-      if (res.ok) {
-        const b = await res.json() as { data: BomChildSearchResult[] }
-        setBomMatches((prev) => ({ ...prev, [bomOpenRow]: b.data.slice(0, 8) }))
-      }
-    }, 180)
-    return () => { cancelled = true; window.clearTimeout(t) }
-  }, [bomOpenRow, bomLines])
-
-  const pickBomChild = (key: string, picked: BomChildSearchResult) => {
-    patchBomLine(key, { childItemId: picked.id, childCode: picked.code, childName: picked.name, childItemType: picked.itemType })
-    setBomOpenRow(null)
-  }
 
   // Auto-close the section if the stage flips to raw (nothing there is valid).
   React.useEffect(() => {
@@ -573,7 +454,107 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setCode(suggestCode(name, itemType, cat?.slug))
   }, [name, categoryId, itemType, codeTouched, d])
 
-  const submit = async (e: React.FormEvent, options: { asDraft?: boolean } = {}) => {
+  // ── snapshot / hydrate for the pre-save BOM staging flow ─────────────
+  // Build a plain object from every user-editable form field. Used when
+  // the user clicks "Import BOM": we save the snapshot to sessionStorage
+  // and jump to /items/import, then load it back on this component's next
+  // mount so nothing they typed is lost.
+  const snapshotForm = React.useCallback(() => ({
+    itemType, sourceKind, categoryId, name, code, codeTouched,
+    genericPn, description, baseUom, isFinishedGood,
+    openSections: Array.from(openSections),
+    collapsedSections: Array.from(collapsedSections),
+    minStock, reorderQty, safetyStock, leadTimeDays,
+    solderType, footprint, spq,
+    pkgLen, pkgWid, pkgHei, pkgWeight, tareWeight, pkgMaterial, pkgReusable,
+    tempMin, tempMax, rhMin, rhMax, msl, hazardous, expiryTracked,
+    custodianUserId, serialNumber, purchaseDate, purchaseCost, warrantyMonths,
+    usefulLifeMonths, salvageValue, depreciationMethod, conditionKind,
+    specs, mfrRows,
+  }), [
+    itemType, sourceKind, categoryId, name, code, codeTouched,
+    genericPn, description, baseUom, isFinishedGood,
+    openSections, collapsedSections,
+    minStock, reorderQty, safetyStock, leadTimeDays,
+    solderType, footprint, spq,
+    pkgLen, pkgWid, pkgHei, pkgWeight, tareWeight, pkgMaterial, pkgReusable,
+    tempMin, tempMax, rhMin, rhMax, msl, hazardous, expiryTracked,
+    custodianUserId, serialNumber, purchaseDate, purchaseCost, warrantyMonths,
+    usefulLifeMonths, salvageValue, depreciationMethod, conditionKind,
+    specs, mfrRows,
+  ])
+
+  // Mount-time hydration. Only in add mode: pull a form-state snapshot and
+  // any staged BOM the importer wrote, apply them once, then quietly clear
+  // the form draft (staged BOM stays until commit or explicit discard).
+  const hydratedRef = React.useRef(false)
+  React.useEffect(() => {
+    if (isEdit || hydratedRef.current) return
+    hydratedRef.current = true
+    const bom = readStagedBom()
+    if (bom) {
+      setStagedBom(bom)
+      // Auto-open the Assembly/BOM chip so the preview panel is visible
+      // without an extra click — otherwise the freshly-staged BOM hides
+      // behind the collapsible section header.
+      setOpenSections((prev) => { const n = new Set(prev); n.add("bom"); return n })
+    }
+    const draft = readItemFormDraft()
+    if (draft?.data && typeof draft.data === "object") {
+      type Snap = ReturnType<typeof snapshotForm>
+      const s = draft.data as Partial<Snap>
+      if (s.itemType) { setItemType(s.itemType); setTypeTouched(true) }
+      if (s.sourceKind) setSourceKind(s.sourceKind)
+      if (typeof s.categoryId === "string") setCategoryId(s.categoryId)
+      if (typeof s.name === "string") setName(s.name)
+      if (typeof s.code === "string") { setCode(s.code); if (s.codeTouched) setCodeTouched(true) }
+      if (typeof s.genericPn === "string") setGenericPn(s.genericPn)
+      if (typeof s.description === "string") setDescription(s.description)
+      if (typeof s.baseUom === "string") setBaseUom(s.baseUom)
+      if (typeof s.isFinishedGood === "boolean") setIsFinishedGood(s.isFinishedGood)
+      if (Array.isArray(s.openSections)) setOpenSections(new Set(s.openSections as SectionKey[]))
+      if (Array.isArray(s.collapsedSections)) setCollapsedSections(new Set(s.collapsedSections as SectionKey[]))
+      if (typeof s.minStock === "string") setMinStock(s.minStock)
+      if (typeof s.reorderQty === "string") setReorderQty(s.reorderQty)
+      if (typeof s.safetyStock === "string") setSafetyStock(s.safetyStock)
+      if (typeof s.leadTimeDays === "string") setLeadTimeDays(s.leadTimeDays)
+      if (s.solderType === "SMD" || s.solderType === "DIP") setSolderType(s.solderType)
+      if (typeof s.footprint === "string") setFootprint(s.footprint)
+      if (typeof s.spq === "string") setSpq(s.spq)
+      if (typeof s.pkgLen === "string") setPkgLen(s.pkgLen)
+      if (typeof s.pkgWid === "string") setPkgWid(s.pkgWid)
+      if (typeof s.pkgHei === "string") setPkgHei(s.pkgHei)
+      if (typeof s.pkgWeight === "string") setPkgWeight(s.pkgWeight)
+      if (typeof s.tareWeight === "string") setTareWeight(s.tareWeight)
+      if (typeof s.pkgMaterial === "string") setPkgMaterial(s.pkgMaterial)
+      if (s.pkgReusable === true || s.pkgReusable === false || s.pkgReusable === null) setPkgReusable(s.pkgReusable)
+      if (typeof s.tempMin === "string") setTempMin(s.tempMin)
+      if (typeof s.tempMax === "string") setTempMax(s.tempMax)
+      if (typeof s.rhMin === "string") setRhMin(s.rhMin)
+      if (typeof s.rhMax === "string") setRhMax(s.rhMax)
+      if (typeof s.msl === "string") setMsl(s.msl as MslLevel | "")
+      if (typeof s.hazardous === "boolean") setHazardous(s.hazardous)
+      if (typeof s.expiryTracked === "boolean") setExpiryTracked(s.expiryTracked)
+      if (typeof s.custodianUserId === "string") setCustodianUserId(s.custodianUserId)
+      if (typeof s.serialNumber === "string") setSerialNumber(s.serialNumber)
+      if (typeof s.purchaseDate === "string") setPurchaseDate(s.purchaseDate)
+      if (typeof s.purchaseCost === "string") setPurchaseCost(s.purchaseCost)
+      if (typeof s.warrantyMonths === "string") setWarrantyMonths(s.warrantyMonths)
+      if (typeof s.usefulLifeMonths === "string") setUsefulLifeMonths(s.usefulLifeMonths)
+      if (typeof s.salvageValue === "string") setSalvageValue(s.salvageValue)
+      if (typeof s.depreciationMethod === "string") setDepreciationMethod(s.depreciationMethod as ItemDepreciationKind | "")
+      if (typeof s.conditionKind === "string") setConditionKind(s.conditionKind as ItemCondition | "")
+      if (Array.isArray(s.specs)) setSpecs(s.specs)
+      if (Array.isArray(s.mfrRows)) setMfrRows(s.mfrRows)
+      clearItemFormDraft()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit])
+
+  const submit = async (
+    e: React.FormEvent,
+    options: { asDraft?: boolean; openBomEditor?: boolean } = {},
+  ) => {
     e.preventDefault()
     if (!name.trim())  return showToast({ message: "Item name is required", type: "error" })
     if (!code.trim())  return showToast({ message: "Item code is required", type: "error" })
@@ -593,23 +574,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     const packagingOpen = openSections.has("packaging")
     const storageOpen = openSections.has("storage")
     const assetOpen   = openSections.has("asset") && assetApplicable
-    const bomOpen     = openSections.has("bom") && bomApplicable && !isEdit
     const cleanedSpecs = specs.filter((s) => s.key.trim() !== "")
     const cleanedMfrs  = mfrRows.filter((r) => r.brand.trim() !== "")
-
-    // BOM guard: unlinked rows are legal (we auto-create the child item on
-    // submit) as long as they have enough detail. Every unlinked row needs
-    // at minimum a name; code is auto-suggested when blank. Rows with no
-    // name at all are dropped as empty draft rows.
-    if (bomOpen) {
-      const bad = bomLines.filter((l) => !l.childItemId && l.childName.trim() !== "" && !l.childItemType)
-      if (bad.length > 0) {
-        return showToast({
-          message: `Pick a type for ${bad.length} new BOM item${bad.length === 1 ? "" : "s"}`,
-          type: "error",
-        })
-      }
-    }
 
     // Identity guard: every item must be identifiable by SOMETHING beyond its
     // internal SKU — either a generic part number OR at least one manufacturer
@@ -779,102 +745,49 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
         }
       }
 
-      // Chain BOM: for each row, resolve childItemId. Linked rows use it
-      // directly; unlinked rows POST a new /api/items first with the
-      // minimum viable fields (name + code + type) then use the returned
-      // id. Rows that can't be created are dropped and reported.
-      //
-      // Sequence: item POST → mfr POSTs → child-item POSTs → /bom POST
-      // (create Draft) → PATCH /bom/[versionId] with the resolved lines.
-      let bomVersionId: string | null = null
-      const submittableRows = bomLines.filter(
-        (l) => (l.childItemId || l.childName.trim()) &&
-               Number.isFinite(Number(l.qty)) && Number(l.qty) > 0,
-      )
-      if (!isEdit && bomApplicable && openSections.has("bom") && savedId && submittableRows.length > 0) {
+      // ── Staged BOM commit (add-mode only, only when the importer left
+      // rows in sessionStorage). Chunked so a wide BOM (~400 rows) still
+      // reports progress and the UI doesn't block on one giant POST. The
+      // first chunk creates the Draft; subsequent chunks append. Any
+      // failure here is surfaced through the same `failed` list as the
+      // MFR follow-up steps and does NOT roll back the item — the user
+      // can retry the BOM from the item's edit page. ──
+      if (!isEdit && savedId && stagedBom && stagedBom.rows.length > 0) {
+        const IMPORT_CHUNK_SIZE = 250
+        let draftCreated = false
         try {
-          // Resolve child ids for every row: pre-create the unlinked ones.
-          const resolved: { childItemId: string; qty: number; refDes: string }[] = []
-          for (const l of submittableRows) {
-            if (l.childItemId) {
-              resolved.push({
-                childItemId: l.childItemId,
-                qty: Number(l.qty),
-                refDes: l.refDes.trim() || l.refDes,
-              })
-              continue
-            }
-            // New item creation. Auto-suggest code if the user left it blank.
-            const childName = l.childName.trim()
-            const childCode = (l.childCode.trim() || suggestCode(childName, l.childItemType as ItemType))
-            if (!childCode) {
-              failed.push(`BOM child "${childName}": couldn't generate a code`)
-              continue
-            }
-            const cRes = await fetch(`/api/items`, {
+          for (let cursor = 0; cursor < stagedBom.rows.length; cursor += IMPORT_CHUNK_SIZE) {
+            const chunk = stagedBom.rows.slice(cursor, cursor + IMPORT_CHUNK_SIZE).map((r: StagedBomRow) => ({
+              name: r.name,
+              partNo: r.partNo,
+              manufacturer: r.manufacturer,
+              supplier: r.supplier,
+              designator: r.designator,
+              solderType: r.solderType,
+              footprint: r.footprint,
+              qty: r.qty,
+              categoryId: r.categoryId,
+            }))
+            const mode = draftCreated ? "append" : "create"
+            const br = await fetch(`/api/items/${savedId}/bom-import`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                name: childName,
-                code: childCode,
-                itemType: l.childItemType,
-                genericPn: l.childGenericPn.trim() || null,
-                // Inline-created BOM children start with zero on-hand
-                // (no opening stock captured here) and a min-stock of 10
-                // so they immediately flag on reorder-planning screens
-                // rather than sitting at "no threshold set".
-                minStock: 10,
+                rows: chunk,
+                mode,
+                sourceLabel: `${stagedBom.fileName || "staged BOM"}${stagedBom.sheetSummary.length > 0 ? ` / ${stagedBom.sheetSummary.map((s) => s.sheetName).join(", ")}` : ""}`,
               }),
             })
-            const cBody = await cRes.json().catch(() => null)
-            if (!cRes.ok) {
-              failed.push(`BOM child "${childName}": ${extractError(cBody, "failed to create").message}`)
-              continue
+            if (!br.ok) {
+              const bb = await br.json().catch(() => null)
+              failed.push(`BOM: ${extractError(bb, "failed").message}`)
+              break
             }
-            const newChildId = cBody?.data?.id as string | undefined
-            if (!newChildId) {
-              failed.push(`BOM child "${childName}": server did not return an id`)
-              continue
-            }
-            resolved.push({
-              childItemId: newChildId,
-              qty: Number(l.qty),
-              refDes: l.refDes.trim() || l.refDes,
-            })
+            draftCreated = true
           }
-
-          if (resolved.length > 0) {
-            const vRes = await fetch(`/api/items/${savedId}/bom`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({}),
-            })
-            const vBody = await vRes.json().catch(() => null)
-            if (!vRes.ok) {
-              failed.push(`BOM version: ${extractError(vBody, "failed to create version").message}`)
-            } else {
-              bomVersionId = (vBody?.data?.selectedVersionId as string | null) ?? null
-              if (bomVersionId) {
-                const pRes = await fetch(`/api/items/${savedId}/bom/${bomVersionId}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    lines: resolved.map((r) => ({
-                      childItemId: r.childItemId,
-                      qty: r.qty,
-                      refDes: r.refDes.trim() || null,
-                    })),
-                  }),
-                })
-                if (!pRes.ok) {
-                  const pBody = await pRes.json().catch(() => null)
-                  failed.push(`BOM lines: ${extractError(pBody, "failed to save lines").message}`)
-                }
-              }
-            }
-          }
-        } catch (err) {
-          failed.push(`BOM: ${err instanceof Error ? err.message : "unexpected error"}`)
+          if (draftCreated) clearStagedBom()
+        } catch (e) {
+          failed.push(`BOM: ${e instanceof Error ? e.message : "network error"}`)
         }
       }
 
@@ -894,9 +807,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           type: "success",
         })
       }
-      // If we seeded a BOM Draft, drop the user in the BOM editor to Activate.
-      // Otherwise fall back to the usual details-in-list or details page.
-      const target = bomVersionId && savedId
+      // "Create BOM" sends the user straight to the BOM editor after the
+      // item saves. Otherwise fall back to the usual details-in-list or
+      // details page. The "Import BOM" path used to detour here before
+      // committing; it now stages rows in sessionStorage and commits with
+      // the item, so there's nothing extra to route to on that path.
+      const target = options.openBomEditor && savedId
         ? `/items/${savedId}/bom`
         : isEdit && savedId
           ? withFromParam(`/items/details/${savedId}`, fromId)
@@ -1125,6 +1041,27 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           </Link>
         </div>
       </div>
+
+      {/* BOM-imported banner. Set by the /items/import flow after it attaches
+          a BOM to a freshly-saved parent — the query param bounces the user
+          back here with everything they had already typed still on screen. */}
+      {isEdit && bomImported && initial && (
+        <div className="mt-3 flex items-start gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4">
+          <CheckCircle2 className="h-5 w-5 mt-0.5 shrink-0 text-emerald-500" />
+          <div className="flex-1 min-w-0 text-sm">
+            <div className="font-bold text-foreground">BOM imported</div>
+            <div className="text-xs text-muted-foreground mt-0.5">
+              Your item details are already saved. Open the BOM to review or edit the imported lines.
+            </div>
+          </div>
+          <Link
+            href={`/items/${initial.id}/bom`}
+            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500 text-white px-3 py-1.5 text-xs font-bold hover:bg-emerald-600"
+          >
+            <Layers className="h-3.5 w-3.5" /> Open BOM
+          </Link>
+        </div>
+      )}
 
       {/* Duplicate-from picker (P9) — add mode only */}
       {!isEdit && showDuplicate && (
@@ -1601,172 +1538,118 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
           ),
         })}
 
-        {/* ─── Section: Assembly / BOM (F6.4 B1, add-mode only) ─── */}
+        {/* ─── Section: Assembly / BOM (add-mode only) ─── */}
+        {/* Inline BOM entry retired: the section now offers two entry points
+            that both save the item first, then hand off to the dedicated BOM
+            editor (Create BOM = empty draft, Import BOM = spreadsheet flow).
+            Keeping lines inline forced users to context-switch between two
+            editors for the same data. */}
         {!isEdit && bomApplicable && renderSection({
           sectionKey: "bom",
           icon: Layers,
           title: "Assembly / BOM",
-          description: "Optional. Any lines you add here seed a Draft BOM version — after creation we'll drop you on the BOM editor to Activate. You can also skip this and add lines later.",
-          headerExtras: (
-            <Button type="button" size="sm" variant="outline" onClick={addBomLine} className="gap-1.5">
-              <Plus className="h-3.5 w-3.5" /> Add line
-            </Button>
-          ),
-          children: (
+          description: stagedBom
+            ? `${stagedBom.rows.length} BOM line${stagedBom.rows.length === 1 ? "" : "s"} staged from ${stagedBom.fileName || "a spreadsheet"}. They'll commit alongside the item when you save.`
+            : "Optional. Save the item, then either build the BOM by hand in the editor or import it from a spreadsheet.",
+          children: stagedBom ? (
             <div className="space-y-3">
-              <div className="border border-border rounded-lg overflow-x-auto overflow-y-visible">
-                <table className="w-full text-left text-xs min-w-[1000px]">
-                  <thead className="bg-muted/40 text-muted-foreground border-b border-border text-[10px] uppercase font-bold">
-                    <tr>
-                      <th className="px-2 py-2 min-w-[220px]">Name</th>
-                      <th className="px-2 py-2 w-32">Code</th>
-                      <th className="px-2 py-2 w-28">Type</th>
-                      <th className="px-2 py-2 w-32">Generic PN</th>
-                      <th className="px-2 py-2 w-16 text-center">Qty</th>
-                      <th className="px-2 py-2 w-36">Ref des</th>
-                      <th className="px-2 py-2 w-8" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {bomLines.map((l) => {
-                      const linked  = !!l.childItemId
-                      const matches = bomOpenRow === l.key ? (bomMatches[l.key] ?? []) : []
-                      return (
-                        <tr key={l.key} className="hover:bg-muted/10">
-                          <td className="px-2 py-1.5">
-                            <div className="relative">
-                              <Input
-                                ref={(el) => setBomInputRef(l.key, el)}
-                                value={l.childName}
-                                onChange={(e) => onBomNameChange(l.key, e.target.value)}
-                                onFocus={() => { if (l.childName.trim() && !linked) setBomOpenRow(l.key) }}
-                                onBlur={() => window.setTimeout(() => setBomOpenRow((r) => (r === l.key ? null : r)), 150)}
-                                placeholder="Search catalog — type a code or name…"
-                                className={`h-8 text-xs ${linked ? "pr-7" : ""}`}
-                                autoComplete="off"
-                              />
-                              {linked && (
-                                <Link2 className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-emerald-500" />
-                              )}
-                              {matches.length > 0 && bomAnchorRect && bomOpenRow === l.key && typeof window !== "undefined" && createPortal(
-                                <ul
-                                  style={{
-                                    position: "fixed",
-                                    top: bomAnchorRect.y + 2,
-                                    left: bomAnchorRect.x,
-                                    width: Math.max(bomAnchorRect.w, 260),
-                                  }}
-                                  className="z-[100] max-h-56 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl"
-                                >
-                                  {matches.map((r) => (
-                                    <li key={r.id}>
-                                      <button
-                                        type="button"
-                                        onMouseDown={(e) => { e.preventDefault(); pickBomChild(l.key, r) }}
-                                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-muted/60"
-                                      >
-                                        <span className="min-w-0">
-                                          <span className="block truncate font-medium">{r.name}</span>
-                                          <span className="block truncate text-[10px] text-muted-foreground">
-                                            {r.code} · {r.itemType.replace("_", " ")}
-                                          </span>
-                                        </span>
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>,
-                                document.body,
-                              )}
-                              {!linked && l.childName.trim() && (
-                                <span className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-600">
-                                  <Sparkles className="h-3 w-3" /> New item — will be created on submit
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={l.childCode}
-                              onChange={(e) => patchBomLine(l.key, { childCode: e.target.value })}
-                              readOnly={linked}
-                              placeholder={linked ? "" : "auto"}
-                              className={`h-8 text-xs font-mono ${linked ? "bg-muted/20" : ""}`}
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            {linked ? (
-                              <Input value={l.childItemType.replace("_", " ")} readOnly className="h-8 text-xs bg-muted/20" />
-                            ) : (
-                              <select
-                                value={l.childItemType}
-                                onChange={(e) => onBomTypeChange(l.key, e.target.value)}
-                                className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
-                              >
-                                <option value="raw">Raw</option>
-                                <option value="semi_assembled">Semi-assembled</option>
-                                <option value="assembled">Assembled</option>
-                                <option value="consumable">Consumable</option>
-                                <option value="asset">Asset</option>
-                                <option value="packaging">Packaging</option>
-                              </select>
-                            )}
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={l.childGenericPn}
-                              onChange={(e) => patchBomLine(l.key, { childGenericPn: e.target.value })}
-                              readOnly={linked}
-                              placeholder={linked ? "" : "e.g. 10K-0603-1%"}
-                              className={`h-8 text-xs font-mono ${linked ? "bg-muted/20" : ""}`}
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="any"
-                              value={l.qty}
-                              onChange={(e) => patchBomLine(l.key, { qty: e.target.value })}
-                              className="h-8 text-xs text-center font-mono"
-                            />
-                          </td>
-                          <td className="px-2 py-1.5">
-                            <Input
-                              value={l.refDes}
-                              onChange={(e) => patchBomLine(l.key, { refDes: e.target.value })}
-                              placeholder="R1, R2, C3…"
-                              className="h-8 text-xs font-mono"
-                            />
-                          </td>
-                          <td className="px-1 py-1.5 text-center">
-                            <button
-                              type="button"
-                              onClick={() => removeBomLine(l.key)}
-                              aria-label="Remove line"
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    {bomLines.length === 0 && (
-                      <tr>
-                        <td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">
-                          No lines. Click <b>Add line</b> to start.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 font-bold">
+                  <CheckCircle2 className="h-3 w-3" />
+                  {stagedBom.rows.length} lines staged
+                </span>
+                {stagedBom.sheetSummary.map((s) => (
+                  <span key={s.sheetName} className="rounded-full bg-muted/60 px-2 py-0.5 font-mono">
+                    {s.sheetName} · {s.rowCount}
+                  </span>
+                ))}
               </div>
-
-              <p className="text-[10px] text-muted-foreground">
-                <Link2 className="inline h-3 w-3 text-emerald-500" /> linked to a catalog item ·{" "}
-                <Sparkles className="inline h-3 w-3 text-amber-500" /> a new item that will be created and added to the catalog.
-                Preferred brand, sequence and remarks aren&apos;t captured here — pick them up in the BOM editor after creation.
-              </p>
+              <div className="rounded-lg border border-border overflow-hidden">
+                <div className="max-h-64 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/40 text-muted-foreground uppercase text-[10px] sticky top-0">
+                      <tr>
+                        {["Name", "Part No.", "Mfr", "Qty", "Ref"].map((h) => (
+                          <th key={h} className="px-3 py-2 text-left font-bold whitespace-nowrap">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {stagedBom.rows.slice(0, 100).map((r, i) => (
+                        <tr key={i}>
+                          <td className="px-3 py-1.5 truncate max-w-[220px]">{r.name}</td>
+                          <td className="px-3 py-1.5 font-mono truncate max-w-[140px]">{r.partNo ?? "—"}</td>
+                          <td className="px-3 py-1.5 truncate max-w-[140px]">{r.manufacturer ?? "—"}</td>
+                          <td className="px-3 py-1.5 font-mono">{r.qty}</td>
+                          <td className="px-3 py-1.5 font-mono truncate max-w-[180px]">{r.designator ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {stagedBom.rows.length > 100 && (
+                  <div className="border-t border-border bg-muted/20 px-3 py-1.5 text-[11px] text-muted-foreground">
+                    Showing 100 of {stagedBom.rows.length} rows. All lines commit on save.
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={submitting || savingDraft}
+                  onClick={() => {
+                    writeItemFormDraft(snapshotForm())
+                    router.push(`/items/import?returnTo=add&stage=${encodeURIComponent(itemType)}`)
+                  }}
+                >
+                  <Layers className="h-3.5 w-3.5" /> Re-import BOM
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:text-destructive"
+                  disabled={submitting || savingDraft}
+                  onClick={() => { clearStagedBom(); setStagedBom(null) }}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Discard staged BOM
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 h-11 gap-2 font-semibold"
+                disabled={submitting || savingDraft}
+                onClick={(e) => void submit(e as unknown as React.FormEvent, { openBomEditor: true })}
+              >
+                <Plus className="h-4 w-4" />
+                Create BOM
+                <span className="text-[10px] font-medium text-muted-foreground/80">— saves &amp; opens the editor</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1 h-11 gap-2 font-semibold"
+                disabled={submitting || savingDraft}
+                onClick={() => {
+                  // Snapshot the form so nothing the user typed is lost while
+                  // they're on the import page, then hand off. No POST here —
+                  // the BOM stages in sessionStorage and commits together with
+                  // the item when the user saves this form.
+                  writeItemFormDraft(snapshotForm())
+                  router.push(`/items/import?returnTo=add&stage=${encodeURIComponent(itemType)}`)
+                }}
+              >
+                <Layers className="h-4 w-4" />
+                Import BOM
+                <span className="text-[10px] font-medium text-muted-foreground/80">— stages rows in memory, commits with save</span>
+              </Button>
             </div>
           ),
         })}

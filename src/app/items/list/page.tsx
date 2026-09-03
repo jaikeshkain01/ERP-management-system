@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-import { Boxes, Cpu, Package, Nut, Search, X, RefreshCw, AlertTriangle, Pencil, Trash2, Save, Check, AlertCircle, Info, ExternalLink } from "lucide-react"
+import { Boxes, Cpu, Package, Nut, Search, X, RefreshCw, AlertTriangle, Pencil, Trash2, Save, Check, AlertCircle, Info, ExternalLink, Upload } from "lucide-react"
 import { extractError } from "@/lib/api-error"
 
 type ItemType =
@@ -318,6 +318,14 @@ function UniversalItemList() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2.5">
+          <Button
+            variant="outline"
+            className="gap-2 font-semibold"
+            render={<Link href="/items/import" />}
+          >
+            <Upload className="h-4 w-4" />
+            <span>Import BOM</span>
+          </Button>
           <Button variant="outline" className="gap-2 font-semibold" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
