@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ClipboardList, GripVertical, Plus, X, Check, AlertCircle, Loader2, ListTree, Ban } from "lucide-react"
-import { useData } from "@/lib/data-provider"
+import { useAssembledItems } from "@/lib/use-assembled-items"
 import { extractError } from "@/lib/api-error"
 import type { ProductionOrderView as ProductionOrder } from "@/lib/server/data/production"
 
@@ -33,7 +33,8 @@ interface PlanItem {
 }
 
 export default function ProductionOrdersPage() {
-  const d = useData()
+  // Assembled items — retired `d.PRODUCTS`, fetched from /api/items instead.
+  const { items: assembledItems } = useAssembledItems()
   const [orders, setOrders] = React.useState<OrderView[]>([])
   const [loaded, setLoaded] = React.useState(false)
   const [draggingId, setDraggingId] = React.useState<string | null>(null)
@@ -268,7 +269,7 @@ export default function ProductionOrdersPage() {
         })}
       </div>
 
-      {showNew && <NewOrderModal onClose={() => setShowNew(false)} onCreated={loadOrders} showToast={showToast} products={d.PRODUCTS} />}
+      {showNew && <NewOrderModal onClose={() => setShowNew(false)} onCreated={loadOrders} showToast={showToast} products={assembledItems} />}
       {planFor && <PlanModal orderId={planFor} onClose={() => setPlanFor(null)} />}
 
       {/* Cancel confirm */}

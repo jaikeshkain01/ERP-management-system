@@ -114,20 +114,11 @@ export default function Dashboard() {
   ]
   const kpis = allKpis.filter((kpi) => !kpi.moduleId || isEnabled(kpi.moduleId))
 
-  // Panels derived from /api/dashboard with live fallback to useData()
-  const productStatus = React.useMemo(() => {
-    if (ops?.productStatus != null) return ops.productStatus
-    return d.PRODUCTS.map((p) => {
-      const bom = d.productBom(p)
-      const buildableQty = bom.length === 0 ? 0 : Math.min(...bom.map((l) => (l.qty > 0 ? Math.floor(l.component.stock / l.qty) : 0)))
-      const status = buildableQty === 0 ? "Blocked" : buildableQty < 10 ? "Low Stock" : "Ready"
-      return {
-        product: p.name,
-        status,
-        buildableQty,
-      }
-    })
-  }, [ops, d])
+  // Panels derived from /api/dashboard. The client-side fallback that used
+  // to walk `d.PRODUCTS` / `d.productBom` is gone — the bootstrap no longer
+  // ships those projections and the endpoint reads directly from `items`
+  // filtered by item_type = 'assembled'.
+  const productStatus = React.useMemo(() => ops?.productStatus ?? [], [ops])
 
   const lowStock = React.useMemo(() => {
     if (ops?.lowStock != null) return ops.lowStock
@@ -165,23 +156,8 @@ export default function Dashboard() {
     })).sort((a, b) => b.usedInProducts - a.usedInProducts).slice(0, 5)
   }, [ops, d])
 
-  const productionBlockers = React.useMemo(() => {
-    if (ops?.productionBlockers != null) return ops.productionBlockers
-    const items: { product: string; missingComp: string; qty: number }[] = []
-    for (const p of d.PRODUCTS) {
-      const bom = d.productBom(p)
-      for (const b of bom) {
-        if (b.component.stock < b.qty) {
-          items.push({
-            product: p.name,
-            missingComp: b.component.name,
-            qty: Math.max(1, b.qty - b.component.stock),
-          })
-        }
-      }
-    }
-    return items.slice(0, 5)
-  }, [ops, d])
+  // Same story as productStatus above — the server endpoint owns this now.
+  const productionBlockers = React.useMemo(() => ops?.productionBlockers ?? [], [ops])
 
   const purchaseSummary = React.useMemo(() => {
     if (ops?.purchaseSummary != null) return ops.purchaseSummary

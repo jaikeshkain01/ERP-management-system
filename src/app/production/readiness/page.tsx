@@ -5,17 +5,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { CheckCircle2, XCircle, ShieldAlert, AlertCircle, RefreshCw, Check, FileText } from "lucide-react"
 import type { ReadinessView } from "@/lib/server/data/production"
-import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
+import { useAssembledItems } from "@/lib/use-assembled-items"
 
 export default function ProductionReadinessPage() {
-  const d = useData()
   const { isEnabled } = useModules()
   const inventoryOn = isEnabled("inventory")
   const purchasingOn = isEnabled("purchasing")
 
-  const products = d.PRODUCTS
+  // Assembled items now come from the universal items table via a live
+  // fetch; the retired `d.PRODUCTS` bootstrap projection is empty.
+  const { items: products } = useAssembledItems()
   const [productSlug, setProductSlug] = React.useState<string>("")
   const [qty, setQty] = React.useState<number>(100)
   const [readiness, setReadiness] = React.useState<ReadinessView | null>(null)

@@ -13,6 +13,7 @@ import type { ReadinessView } from "@/lib/server/data/production"
 import { useData } from "@/lib/data-provider"
 import { useModules } from "@/components/module-provider"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
+import { useAssembledItems } from "@/lib/use-assembled-items"
 
 // Types
 interface PlannerShortage {
@@ -28,13 +29,18 @@ export default function ProductionPlannerPage() {
   const inventoryOn = isEnabled("inventory")
   const purchasingOn = isEnabled("purchasing")
   const [SHORTAGES, setShortages] = React.useState<PlannerShortage[]>([])
-  const [product, setProduct] = React.useState("roip-400")
+  const [product, setProduct] = React.useState("")
   const [quantity, setQuantity] = React.useState(100)
 
-  // Default the product selector to a real seeded product.
+  // Assembled items — the retired /products data lives in the universal
+  // items table now, fetched on demand instead of coming through bootstrap.
+  const { items: assembledItems } = useAssembledItems()
+
   React.useEffect(() => {
-    if (d.PRODUCTS.length && !d.PRODUCTS.some((p) => p.id === product)) setProduct(d.PRODUCTS[0].id)
-  }, [d.PRODUCTS, product])
+    if (assembledItems.length && !assembledItems.some((p) => p.id === product)) {
+      setProduct(assembledItems[0].id)
+    }
+  }, [assembledItems, product])
   const [targetDate, setTargetDate] = React.useState("2026-07-15")
   const [calculated, setCalculated] = React.useState(false)
   const [currentStep, setCurrentStep] = React.useState(0)
@@ -636,7 +642,7 @@ export default function ProductionPlannerPage() {
                 onChange={(e) => { setProduct(e.target.value); resetCalc() }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
               >
-                {d.PRODUCTS.map((p) => (
+                {assembledItems.map((p) => (
                   <option key={p.id} value={p.id}>{p.name}</option>
                 ))}
               </select>

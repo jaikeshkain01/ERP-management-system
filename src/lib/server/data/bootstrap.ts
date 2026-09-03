@@ -12,14 +12,10 @@ import type {
   Brand,
   Supplier,
   Component,
-  Pcb,
-  Product,
   Spec,
   SolderType,
   ItemType,
   ItemCategory,
-  PcbStatus,
-  ProductStatus,
 } from "@/lib/catalog";
 
 export async function getBootstrap(): Promise<DataSet> {
@@ -27,7 +23,14 @@ export async function getBootstrap(): Promise<DataSet> {
   return withTenant(ctx, async (tx) => {
     await assertPermission(tx, ctx, "component.view");
 
-    const [brandRows, supplierRows, compRows, variantRows, offerRows, pcbRows, lineRows, prodRows, ppRows, categoryRows] =
+    // PCBS and PRODUCTS projections were retired with the module-consolidation
+    // slice: /pcb-management/list and /products/list now redirect to the
+    // universal items list, and the server-side dashboard endpoint reads
+    // straight from `items` (item_type='assembled'). The bootstrap payload
+    // no longer carries either projection — client selectors return empty
+    // arrays for `d.PCBS` / `d.PRODUCTS`, which is what a migrated tenant
+    // was already seeing.
+    const [brandRows, supplierRows, compRows, variantRows, offerRows, categoryRows] =
       await Promise.all([
         tx.$queryRaw<Brand[]>`
           SELECT slug AS id, name, COALESCE(description,'') AS description,
@@ -101,47 +104,6 @@ export async function getBootstrap(): Promise<DataSet> {
             JOIN suppliers s ON s.id = scp.supplier_id
             JOIN brands b ON b.id = scp.brand_id
            WHERE scp.valid_to IS NULL AND scp.deleted_at IS NULL`,
-        tx.$queryRaw<{ id: string; name: string; description: string; layers: number | null; status: string }[]>`
-          SELECT slug AS id, name, COALESCE(description,'') AS description, layers, status
-          FROM pcbs WHERE deleted_at IS NULL ORDER BY name`,
-        // D1: universal-BOM port. Every PCB's Active revision (=universal
-        // item, since F2 mirrored pcb_revisions.id → items.id) has its
-        // BOM in item_bom_versions/item_bom_lines. We key back to the PCB
-        // slug via pcb_revisions → pcbs — legacy pcbs still owns the
-        // "PCB parent + slug" concept; only the BOM lines live universally.
-        tx.$queryRaw<{ pcbId: string; componentId: string; qty: number; refDes: string | null; preferredBrandId: string | null; remarks: string | null }[]>`
-          SELECT pc.slug AS "pcbId",
-                 COALESCE(NULLIF(c.generic_pn,''), c.id::text) AS "componentId",
-                 bl.qty::int AS qty,
-                 bl.ref_des AS "refDes",
-                 b.slug AS "preferredBrandId",
-                 bl.remarks
-          FROM pcbs pc
-          JOIN pcb_revisions pr ON pr.pcb_id = pc.id AND pr.status = 'Active' AND pr.deleted_at IS NULL
-          JOIN item_bom_versions bv ON bv.parent_item_id = pr.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
-          JOIN components c ON c.id = bl.child_item_id
-          LEFT JOIN brands b ON b.id = bl.preferred_brand_id
-          WHERE pc.deleted_at IS NULL`,
-        tx.$queryRaw<{ id: string; name: string; code: string; version: string; description: string; status: string; estimatedCost: number }[]>`
-          SELECT slug AS id, name, code, COALESCE(version,'') AS version, COALESCE(description,'') AS description,
-                 status, COALESCE(estimated_cost,0)::float8 AS "estimatedCost"
-          FROM products WHERE deleted_at IS NULL ORDER BY name`,
-        // D1: universal-BOM port. Product BOMs live in
-        // item_bom_versions/item_bom_lines now (products.id === items.id via
-        // F2). The client's `pcbsByProduct` builder only cares about PCB
-        // children, so we filter child_item_id → pcb_revisions to keep parity
-        // with the legacy shape (raw parts or sub-assemblies in a product BOM
-        // — legal universally but not yet meaningful to the bootstrap client
-        // consumer — are dropped from this projection).
-        tx.$queryRaw<{ productId: string; pcbId: string; qty: number; sequence: number | null; remarks: string | null }[]>`
-          SELECT p.slug AS "productId", pc.slug AS "pcbId", bl.qty::int AS qty, bl.sequence, bl.remarks
-          FROM products p
-          JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
-          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
-          JOIN pcb_revisions pr ON pr.id = bl.child_item_id
-          JOIN pcbs pc ON pc.id = pr.pcb_id
-          WHERE p.deleted_at IS NULL`,
         tx.$queryRaw<{ id: string; parentId: string | null; name: string; slug: string; path: string; defaultItemType: string | null; sortOrder: number }[]>`
           SELECT id, parent_id AS "parentId", name, slug, path,
                  default_item_type::text AS "defaultItemType", sort_order AS "sortOrder"
@@ -151,8 +113,6 @@ export async function getBootstrap(): Promise<DataSet> {
     // group children by parent business key
     const variantsByComp = groupBy(variantRows, (v) => v.componentPN);
     const offersByComp = groupBy(offerRows, (o) => o.componentPN);
-    const linesByPcb = groupBy(lineRows, (l) => l.pcbId);
-    const pcbsByProduct = groupBy(ppRows, (r) => r.productId);
 
     const components: Component[] = compRows.map((c) => {
       const brandVariants = (variantsByComp.get(c.id) ?? []).map((v) => ({
@@ -176,26 +136,12 @@ export async function getBootstrap(): Promise<DataSet> {
       };
     });
 
-    const pcbs: Pcb[] = pcbRows.map((p) => {
-      const lines = (linesByPcb.get(p.id) ?? []).map((l) => ({
-        componentId: l.componentId, qty: l.qty,
-        refDes: l.refDes ?? undefined,
-        preferredBrandId: l.preferredBrandId ?? undefined,
-        remarks: l.remarks ?? undefined,
-      }));
-      return {
-        id: p.id, name: p.name, description: p.description, layers: p.layers ?? 0,
-        status: p.status as PcbStatus, componentsCount: lines.length, stockCount: 0, lines,
-      };
-    });
-
-    const products: Product[] = prodRows.map((p) => ({
-      id: p.id, name: p.name, code: p.code, version: p.version, description: p.description,
-      status: p.status as ProductStatus, estimatedCost: p.estimatedCost, buildableQty: 0,
-      pcbs: (pcbsByProduct.get(p.id) ?? [])
-        .map((r) => ({ pcbId: r.pcbId, qty: r.qty, sequence: r.sequence ?? undefined, remarks: r.remarks ?? undefined }))
-        .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0)),
-    }));
+    // pcbs and products are retired projections — every remaining consumer
+    // either falls back to `d.COMPONENTS.filter(itemType === ...)` or reads
+    // straight from `/api/items?itemType=...`. See the comment above the
+    // Promise.all for the migration context.
+    const pcbs: DataSet["pcbs"] = [];
+    const products: DataSet["products"] = [];
 
     const itemCategories: ItemCategory[] = categoryRows.map((r) => ({
       id: r.id, parentId: r.parentId, name: r.name, slug: r.slug, path: r.path,
