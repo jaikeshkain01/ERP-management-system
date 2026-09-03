@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Package, Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
+  GitBranch, Factory, Hammer,
 } from "lucide-react"
 
 type ItemType =
@@ -59,9 +60,19 @@ const STATUS_TONE: Record<ItemStatus, string> = {
 // goods only, or both. Default "all" shows the full union.
 type Role = "all" | "assembled" | "finished"
 
+// Per-item stats from /api/products/stats. Missing key => "no Active BOM".
+interface ProductStats {
+  itemId: string
+  activeBomVersion: string | null
+  bomLineCount: number
+  buildableQty: number | null
+  openOrders: number
+}
+
 export default function AssembledProductsListPage() {
   const router = useRouter()
   const [items, setItems] = React.useState<Item[]>([])
+  const [stats, setStats] = React.useState<Map<string, ProductStats>>(new Map())
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [q, setQ] = React.useState("")
@@ -77,13 +88,15 @@ export default function AssembledProductsListPage() {
       // The union with `isFinishedGood` for populated PCBs happens in a
       // second, complementary call so a semi_assembled item flagged as a
       // finished good still shows up here without a giant client-side sift.
-      const [assRes, finRes] = await Promise.all([
+      const [assRes, finRes, statsRes] = await Promise.all([
         fetch("/api/items?itemType=assembled", { cache: "no-store" }),
         fetch("/api/items?itemType=semi_assembled", { cache: "no-store" }),
+        fetch("/api/products/stats", { cache: "no-store" }),
       ])
-      const [assBody, finBody] = await Promise.all([
+      const [assBody, finBody, statsBody] = await Promise.all([
         assRes.json().catch(() => ({})),
         finRes.json().catch(() => ({})),
+        statsRes.json().catch(() => ({})),
       ])
       if (!assRes.ok) throw new Error(assBody?.error?.message ?? `Request failed (${assRes.status})`)
       const assembled: Item[] = Array.isArray(assBody?.data) ? assBody.data : []
@@ -95,6 +108,11 @@ export default function AssembledProductsListPage() {
       for (const it of assembled) merged.set(it.id, it)
       for (const it of finished) merged.set(it.id, it)
       setItems(Array.from(merged.values()))
+      // Fold stats into a lookup map keyed by item id.
+      const statsList: ProductStats[] = Array.isArray(statsBody?.data) ? statsBody.data : []
+      const nextStats = new Map<string, ProductStats>()
+      for (const s of statsList) nextStats.set(s.itemId, s)
+      setStats(nextStats)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load items")
       setItems([])
@@ -224,6 +242,8 @@ export default function AssembledProductsListPage() {
         {!loading && filtered.map((it) => {
           const isAssembled = it.itemType === "assembled"
           const Icon = isAssembled ? Package : Cpu
+          const st = stats.get(it.id)
+          const hasBom = Boolean(st?.activeBomVersion)
           return (
             <Card
               key={it.id}
@@ -238,7 +258,7 @@ export default function AssembledProductsListPage() {
                       <Icon className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <div className="font-bold text-sm text-foreground truncate">{it.name}</div>
                         {it.isFinishedGood && (
                           <span
@@ -246,6 +266,22 @@ export default function AssembledProductsListPage() {
                             title="Sellable finished good"
                           >
                             Finished
+                          </span>
+                        )}
+                        {hasBom ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary"
+                            title={`${st!.bomLineCount} lines in ${st!.activeBomVersion} Active`}
+                          >
+                            <GitBranch className="h-2.5 w-2.5" />
+                            {st!.activeBomVersion} · {st!.bomLineCount}
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400"
+                            title="No Active BOM version yet — build one from the item's details page"
+                          >
+                            no BOM
                           </span>
                         )}
                       </div>
@@ -259,18 +295,52 @@ export default function AssembledProductsListPage() {
                 {it.description && (
                   <p className="text-xs text-muted-foreground line-clamp-2">{it.description}</p>
                 )}
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-lg border border-border bg-muted/20 p-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Stage</div>
-                    <div className="text-xs font-semibold mt-0.5">{isAssembled ? "Assembled" : "Semi-assembled"}</div>
+                <div className="grid grid-cols-4 gap-1.5 text-center">
+                  <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Stage</div>
+                    <div className="text-[11px] font-semibold mt-0.5 truncate" title={isAssembled ? "Assembled" : "Semi-assembled"}>
+                      {isAssembled ? "Assy" : "Sub"}
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-muted/20 p-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">On hand</div>
-                    <div className={`text-xs font-mono font-bold mt-0.5 ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>{it.onHand.toLocaleString()}</div>
+                  <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">On hand</div>
+                    <div
+                      className={`text-[11px] font-mono font-bold mt-0.5 ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}
+                      title={`${it.onHand.toLocaleString()} ${it.baseUom}`}
+                    >
+                      {it.onHand.toLocaleString()}
+                    </div>
                   </div>
-                  <div className="rounded-lg border border-border bg-muted/20 p-2">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">UOM</div>
-                    <div className="text-xs font-mono font-bold mt-0.5">{it.baseUom}</div>
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 px-1.5 py-2"
+                    title={hasBom
+                      ? `Buildable from current stock: ${st?.buildableQty?.toLocaleString() ?? 0} units`
+                      : "Buildable qty needs an Active BOM"}
+                  >
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center justify-center gap-1">
+                      <Hammer className="h-2.5 w-2.5" /> Build
+                    </div>
+                    <div className={`text-[11px] font-mono font-bold mt-0.5 ${
+                      !hasBom ? "text-muted-foreground/60"
+                      : (st?.buildableQty ?? 0) === 0 ? "text-destructive"
+                      : (st?.buildableQty ?? 0) < 10 ? "text-amber-600 dark:text-amber-400"
+                      : "text-emerald-600 dark:text-emerald-400"
+                    }`}>
+                      {hasBom ? (st?.buildableQty ?? 0).toLocaleString() : "—"}
+                    </div>
+                  </div>
+                  <div
+                    className="rounded-lg border border-border bg-muted/20 px-1.5 py-2"
+                    title={`${st?.openOrders ?? 0} open production orders (Draft, Ready, In Progress)`}
+                  >
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center justify-center gap-1">
+                      <Factory className="h-2.5 w-2.5" /> Orders
+                    </div>
+                    <div className={`text-[11px] font-mono font-bold mt-0.5 ${
+                      (st?.openOrders ?? 0) === 0 ? "text-muted-foreground/60" : "text-foreground"
+                    }`}>
+                      {(st?.openOrders ?? 0).toLocaleString()}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
