@@ -142,22 +142,28 @@ export async function getProductionOrderItems(orderNo: string): Promise<Producti
 // ── STAGE 1 — create + explode BOM ─────────────────────────────────────────────
 export async function createProductionOrder(input: CreateProductionOrderInput): Promise<ProductionOrderView> {
   return guarded("production_order.create", async (tx, ctx) => {
-    const product = await tx.products.findFirst({
-      where: {
-        deleted_at: null,
-        ...(isUuid(input.product) ? { id: input.product } : { OR: [{ slug: input.product }, { code: input.product }] }),
-      },
-      select: { id: true, name: true },
-    });
-    if (!product) throw Errors.badRequest("Unknown product", { product: input.product });
+    // Parent resolution: the legacy `tx.products.findFirst` path is gone
+    // now that `production_orders.product_id` FK-targets `items(id)` (see
+    // migration 20260903000002_production_orders_items_fk). `input.product`
+    // accepts an item uuid or code.
+    const productRow = (await tx.$queryRaw<{ id: string; name: string }[]>`
+      SELECT id, name
+        FROM items
+       WHERE deleted_at IS NULL
+         AND item_type = 'assembled'::item_type
+         AND ${isUuid(input.product)
+              ? Prisma.sql`(id = ${input.product}::uuid OR code = ${input.product})`
+              : Prisma.sql`code = ${input.product}`}
+       LIMIT 1`)[0];
+    if (!productRow) throw Errors.badRequest("Unknown product", { product: input.product });
+    const product = productRow;
 
     // B3: source the explosion from the universal BOM (item_bom_versions +
-    // recursive item_bom_lines). The product's item mirror (F2) shares its
-    // id, so parent_item_id = product.id. `production_orders.bom_version_id`
-    // now snapshots the UNIVERSAL item_bom_versions.id — the legacy
-    // bom_versions table was dropped in the D3/D4 slice. Historical rows
-    // that recorded a legacy uuid stay untouched; the FK constraint was
-    // dropped alongside the table so those orphan pointers are harmless.
+    // recursive item_bom_lines). `production_orders.bom_version_id`
+    // snapshots the item_bom_versions.id — the legacy bom_versions table
+    // was dropped in the D3/D4 slice. Historical rows that recorded a
+    // legacy uuid stay untouched; the FK constraint was dropped alongside
+    // the table so those orphan pointers are harmless.
     const activeUniv = await tx.$queryRaw<{ id: string }[]>`
       SELECT id
         FROM item_bom_versions
@@ -200,24 +206,11 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
        GROUP BY e.child`;
     if (!demand.length) throw Errors.conflict("Active BOM has no component lines to plan");
 
-    // Every leaf must live in `components` too (production_order_items.
-    // component_id FKs to components). By F2 every raw items row has its
-    // matching components row; a leaf that is a non-raw item without a
-    // components mirror would break the FK — flag it clearly.
-    const leafIds = demand.map((d) => d.componentId);
-    const inComponents = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
-      SELECT id::text AS id FROM components
-       WHERE id IN (${Prisma.join(leafIds.map((id) => Prisma.sql`${id}::uuid`))})
-         AND deleted_at IS NULL`);
-    const componentIdSet = new Set(inComponents.map((r) => r.id));
-    const orphans = leafIds.filter((id) => !componentIdSet.has(id));
-    if (orphans.length) {
-      throw Errors.conflict(
-        "BOM contains leaf items that aren't backed by a component record",
-        { orphanItemIds: orphans },
-        "Convert those items to raw (they'll be backfilled into components), or add an Active BOM to them so they aren't leaves.",
-      );
-    }
+    // Orphan check (was: leaves must exist in `components`) removed with
+    // the FK repoint — `production_order_items.component_id` now FKs to
+    // `items(id)`, and the recursive explode above already guarantees every
+    // leaf comes from `item_bom_lines.child_item_id` which itself FKs to
+    // items. The DB enforces the invariant now instead of us pre-checking it.
 
     const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     const orderNo = await nextOrderNo(tx);
