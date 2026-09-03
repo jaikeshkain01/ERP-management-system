@@ -263,6 +263,12 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
     if (!items.length) throw Errors.conflict("Order has no pending items to allocate");
 
     // Pre-check availability for EVERY item first — allocation is all-or-nothing.
+    // `variantId` here is the universal item_variant_id. BOM-imported items
+    // don't have a legacy component_brand_variants row, so the old
+    // `JOIN component_brand_variants v ON v.component_id = <leaf>` returned
+    // zero rows even when balances were present. We now walk item_variants
+    // straight through `v.item_id`, and the sync trigger on writes back-
+    // fills component_brand_variant_id whenever a legacy twin still exists.
     type Bin = { variantId: string; warehouseId: string; locationId: string; available: number };
     const plan: { itemId: string; picks: { bin: Bin; qty: number }[] }[] = [];
     const shorts: { componentId: string; required: number; available: number }[] = [];
@@ -270,12 +276,16 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
     for (const item of items) {
       const required = Number(item.required_qty);
       const bins = await tx.$queryRaw<Bin[]>`
-        SELECT ib.component_brand_variant_id AS "variantId", ib.warehouse_id AS "warehouseId",
-               ib.location_id AS "locationId", ib.available::float8 AS available
-        FROM inventory_balances ib
-        JOIN component_brand_variants v ON v.id = ib.component_brand_variant_id
-        WHERE v.component_id = ${item.component_id}::uuid AND ib.available > 0 AND ib.deleted_at IS NULL
-        ORDER BY ib.available DESC`;
+        SELECT ib.item_variant_id  AS "variantId",
+               ib.warehouse_id     AS "warehouseId",
+               ib.location_id      AS "locationId",
+               ib.available::float8 AS available
+          FROM inventory_balances ib
+          JOIN item_variants v ON v.id = ib.item_variant_id AND v.deleted_at IS NULL
+         WHERE v.item_id = ${item.component_id}::uuid
+           AND ib.available > 0
+           AND ib.deleted_at IS NULL
+         ORDER BY ib.available DESC`;
       const total = bins.reduce((s, b) => s + b.available, 0);
       if (total < required) {
         shorts.push({ componentId: item.component_id, required, available: total });
@@ -300,21 +310,24 @@ export async function allocateProductionOrder(orderNo: string): Promise<{ order:
       );
     }
 
-    const audit = { company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId };
     let allocated = 0;
     for (const { itemId, picks } of plan) {
       for (const { bin, qty } of picks) {
-        await tx.production_material_moves.create({
-          data: {
-            ...audit,
-            production_order_item_id: itemId,
-            kind: "allocation",
-            component_brand_variant_id: bin.variantId,
-            warehouse_id: bin.warehouseId,
-            location_id: bin.locationId,
-            qty,
-          },
-        });
+        // Raw INSERT because the Prisma model still declares only the
+        // legacy component_brand_variant_id column (the `item_variant_id`
+        // field was added to the DB but hasn't been reflected in
+        // schema.prisma yet). The sync_item_variant_id BEFORE INSERT
+        // trigger back-fills the legacy column when a CBV twin exists,
+        // and leaves it NULL for BOM-imported variants — safe because
+        // production_material_moves.component_brand_variant_id is nullable.
+        await tx.$executeRaw`
+          INSERT INTO production_material_moves
+            (company_id, production_order_item_id, kind, item_variant_id,
+             warehouse_id, location_id, qty, created_by, updated_by)
+          VALUES
+            (${ctx.companyId!}::uuid, ${itemId}::uuid, 'allocation'::material_move_kind,
+             ${bin.variantId}::uuid, ${bin.warehouseId}::uuid, ${bin.locationId}::uuid,
+             ${qty}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`;
         allocated++;
       }
       await tx.production_order_items.update({ where: { id: itemId }, data: { status: "allocated", updated_by: ctx.userId } });
@@ -334,35 +347,50 @@ export async function consumeProductionOrder(orderNo: string): Promise<{ order: 
     if (po.status !== "Ready") throw Errors.conflict(`Order is not Ready to consume (status: ${po.status.replace("_", " ")})`);
 
     // Open reservations (not yet released/consumed) → the material to issue.
-    const allocations = await tx.production_material_moves.findMany({
-      where: { kind: "allocation", released_at: null, deleted_at: null, production_order_items: { production_order_id: po.id } },
-      select: { id: true, production_order_item_id: true, component_brand_variant_id: true, warehouse_id: true, location_id: true, qty: true },
-    });
+    // Reads item_variant_id (universal, NOT NULL) — the legacy CBV column
+    // is nullable for BOM-imported variants without a legacy twin, so it
+    // isn't safe to key on. Raw SELECT because the Prisma model doesn't
+    // expose item_variant_id yet (see note in allocateProductionOrder).
+    const allocations = await tx.$queryRaw<{
+      id: string; productionOrderItemId: string; itemVariantId: string;
+      warehouseId: string; locationId: string; qty: number;
+    }[]>`
+      SELECT pmm.id,
+             pmm.production_order_item_id AS "productionOrderItemId",
+             pmm.item_variant_id          AS "itemVariantId",
+             pmm.warehouse_id             AS "warehouseId",
+             pmm.location_id              AS "locationId",
+             pmm.qty::float8              AS qty
+        FROM production_material_moves pmm
+        JOIN production_order_items poi
+          ON poi.id = pmm.production_order_item_id
+       WHERE pmm.kind = 'allocation'::material_move_kind
+         AND pmm.released_at IS NULL
+         AND pmm.deleted_at IS NULL
+         AND poi.production_order_id = ${po.id}::uuid`;
     if (!allocations.length) throw Errors.conflict("Order has no open allocations to consume");
 
     const now = new Date();
     let consumed = 0;
     for (const a of allocations) {
       // Issue: append a CONSUMPTION ledger row (on_hand −qty), FEFO-tagged for traceability.
-      const lotId = await pickOutboundLot(tx, ctx, a.component_brand_variant_id, a.location_id);
+      const lotId = await pickOutboundLot(tx, ctx, a.itemVariantId, a.locationId);
       await tx.$executeRaw`
         INSERT INTO inventory_transactions
-          (company_id, type, component_brand_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, reason, created_by)
-        VALUES (${ctx.companyId!}::uuid, 'CONSUMPTION'::inventory_txn_type, ${a.component_brand_variant_id}::uuid,
-                ${a.warehouse_id}::uuid, ${a.location_id}::uuid, ${-Number(a.qty)}, ${lotId}::uuid,
+          (company_id, type, item_variant_id, warehouse_id, location_id, qty_delta, lot_id, ref_type, ref_id, reason, created_by)
+        VALUES (${ctx.companyId!}::uuid, 'CONSUMPTION'::inventory_txn_type, ${a.itemVariantId}::uuid,
+                ${a.warehouseId}::uuid, ${a.locationId}::uuid, ${-Number(a.qty)}, ${lotId}::uuid,
                 'production_order', ${po.id}::uuid, ${`Consumed by ${orderNo}`}, ${ctx.userId}::uuid)`;
       // … record the consumption move …
-      await tx.production_material_moves.create({
-        data: {
-          company_id: ctx.companyId!, created_by: ctx.userId, updated_by: ctx.userId,
-          production_order_item_id: a.production_order_item_id,
-          kind: "consumption",
-          component_brand_variant_id: a.component_brand_variant_id,
-          warehouse_id: a.warehouse_id,
-          location_id: a.location_id,
-          qty: a.qty,
-        },
-      });
+      await tx.$executeRaw`
+        INSERT INTO production_material_moves
+          (company_id, production_order_item_id, kind, item_variant_id,
+           warehouse_id, location_id, qty, created_by, updated_by)
+        VALUES
+          (${ctx.companyId!}::uuid, ${a.productionOrderItemId}::uuid,
+           'consumption'::material_move_kind, ${a.itemVariantId}::uuid,
+           ${a.warehouseId}::uuid, ${a.locationId}::uuid, ${a.qty},
+           ${ctx.userId}::uuid, ${ctx.userId}::uuid)`;
       // … and release the reservation (trigger frees reserved so it isn't double-counted).
       await tx.production_material_moves.update({ where: { id: a.id }, data: { released_at: now, updated_by: ctx.userId } });
       consumed++;
