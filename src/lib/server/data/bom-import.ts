@@ -232,7 +232,9 @@ async function ensurePurchasedVariant(
 }
 
 /** Insert a fresh raw-type child item. Uses the same defaults the inline
- *  "new BOM child" flow used to (min_stock 10, base UOM PCS). */
+ *  "new BOM child" flow used to (min_stock 10, base UOM PCS). `importSource`
+ *  is the caller's `sourceLabel` — stamped on the row so the items list can
+ *  show operators where the item first came in from. */
 async function insertChildItem(
   tx: TxClient,
   ctx: TenantContext,
@@ -243,6 +245,7 @@ async function insertChildItem(
     solderType: "SMD" | "DIP" | null;
     footprint: string | null;
     defaultSupplierId: string | null;
+    importSource: string | null;
   },
 ): Promise<string> {
   const inserted = await tx.$queryRaw<{ id: string }[]>`
@@ -252,6 +255,7 @@ async function insertChildItem(
       min_stock, reorder_qty, safety_stock,
       solder_type, footprint,
       default_supplier_id,
+      import_source,
       status, created_by, updated_by
     ) VALUES (
       ${ctx.companyId!}::uuid,
@@ -259,6 +263,7 @@ async function insertChildItem(
       10, 0, 0,
       ${args.solderType}::solder_type_kind, ${args.footprint},
       ${args.defaultSupplierId}::uuid,
+      ${args.importSource},
       'active'::item_status, ${ctx.userId}::uuid, ${ctx.userId}::uuid
     )
     RETURNING id`;
@@ -529,6 +534,7 @@ export async function importBom(parentItemId: string, input: BomImportInput): Pr
             solderType: row.solderType ?? null,
             footprint: footprintRaw || null,
             defaultSupplierId: supplierId,
+            importSource: input.sourceLabel?.trim() || null,
           });
           itemsCreated++;
           if (!partNoRaw) itemByNameFallback.set(nameFallbackKey, childItemId);

@@ -158,6 +158,15 @@ export interface ItemView {
    *  Null when there has never been a movement. ISO string. */
   lastMovementAt: string | null;
   variants: ItemVariantView[];
+  /** Provenance label the BOM importer stamped on the row when it created
+   *  this item. `null` for hand-added items and pre-slice imports. */
+  importSource: string | null;
+  /** ISO timestamp the item row was inserted. */
+  createdAt: string;
+  /** Parent items (semi-assembled / assembled) whose active or draft BOM
+   *  lists this item as a child. Empty when the item isn't yet used
+   *  anywhere. Codes only — the list UI turns them into links. */
+  usedIn: Array<{ id: string; code: string; name: string }>;
 }
 
 export interface ItemFilters {
@@ -221,7 +230,9 @@ const ITEM_SELECT = Prisma.sql`
   i.lead_time_days AS "leadTimeDays",
   i.specs,
   i.status::text AS "status",
-  i.is_finished_good AS "isFinishedGood"
+  i.is_finished_good AS "isFinishedGood",
+  i.import_source AS "importSource",
+  to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt"
 `;
 
 interface ItemRow {
@@ -268,6 +279,8 @@ interface ItemRow {
   specs: unknown;
   status: ItemStatus;
   isFinishedGood: boolean;
+  importSource: string | null;
+  createdAt: string;
 }
 
 interface VariantRow extends ItemVariantView {}
@@ -312,6 +325,35 @@ async function fetchRollups(tx: TxClient, itemIds: string[]): Promise<Map<string
   return byItem;
 }
 
+/** Batch "used in" fetch: for every child id, list the parent items whose
+ *  Active or Draft BOM references it. Groups per parent item (so the same
+ *  parent doesn't show up twice when it has both an Active and a Draft
+ *  version listing the child). */
+async function fetchUsedIn(tx: TxClient, itemIds: string[]): Promise<Map<string, Array<{ id: string; code: string; name: string }>>> {
+  const byItem = new Map<string, Array<{ id: string; code: string; name: string }>>();
+  if (itemIds.length === 0) return byItem;
+  const rows = await tx.$queryRaw<{ childId: string; parentId: string; parentCode: string; parentName: string }[]>(Prisma.sql`
+    SELECT DISTINCT
+      bl.child_item_id AS "childId",
+      p.id             AS "parentId",
+      p.code           AS "parentCode",
+      p.name           AS "parentName"
+    FROM item_bom_lines bl
+    JOIN item_bom_versions bv ON bv.id = bl.bom_version_id AND bv.deleted_at IS NULL
+    JOIN items p               ON p.id  = bv.parent_item_id AND p.deleted_at IS NULL
+    WHERE bl.deleted_at IS NULL
+      AND bv.status IN ('Active'::bom_status, 'Draft'::bom_status)
+      AND bl.child_item_id IN (${Prisma.join(itemIds.map((id) => Prisma.sql`${id}::uuid`))})
+    ORDER BY p.name ASC
+  `);
+  for (const r of rows) {
+    const list = byItem.get(r.childId) ?? [];
+    list.push({ id: r.parentId, code: r.parentCode, name: r.parentName });
+    byItem.set(r.childId, list);
+  }
+  return byItem;
+}
+
 async function fetchVariants(tx: TxClient, itemIds: string[]): Promise<Map<string, ItemVariantView[]>> {
   const byItem = new Map<string, ItemVariantView[]>();
   if (itemIds.length === 0) return byItem;
@@ -337,12 +379,18 @@ async function fetchVariants(tx: TxClient, itemIds: string[]): Promise<Map<strin
   return byItem;
 }
 
-function toView(row: ItemRow, variants: ItemVariantView[], rollup: RollupRow | undefined): ItemView {
+function toView(
+  row: ItemRow,
+  variants: ItemVariantView[],
+  rollup: RollupRow | undefined,
+  usedIn: Array<{ id: string; code: string; name: string }> = [],
+): ItemView {
   return {
     ...row, variants,
     onHand: rollup?.onHand ?? 0,
     stockValue: rollup?.stockValue ?? 0,
     lastMovementAt: rollup?.lastMovementAt ?? null,
+    usedIn,
   };
 }
 
@@ -376,8 +424,12 @@ export async function listItems(filters: ItemFilters = {}): Promise<ItemView[]> 
     `);
 
     const ids = rows.map((r) => r.id);
-    const [variants, rollups] = await Promise.all([fetchVariants(tx, ids), fetchRollups(tx, ids)]);
-    return rows.map((r) => toView(r, variants.get(r.id) ?? [], rollups.get(r.id)));
+    const [variants, rollups, usedIn] = await Promise.all([
+      fetchVariants(tx, ids),
+      fetchRollups(tx, ids),
+      fetchUsedIn(tx, ids),
+    ]);
+    return rows.map((r) => toView(r, variants.get(r.id) ?? [], rollups.get(r.id), usedIn.get(r.id) ?? []));
   });
 }
 
@@ -439,15 +491,76 @@ async function getItemInTx(tx: TxClient, id: string): Promise<ItemView> {
     WHERE i.id = ${id}::uuid AND i.deleted_at IS NULL
   `);
   if (!rows[0]) throw Errors.notFound("Item");
-  const [variants, rollups] = await Promise.all([
+  const [variants, rollups, usedIn] = await Promise.all([
     fetchVariants(tx, [rows[0].id]),
     fetchRollups(tx, [rows[0].id]),
+    fetchUsedIn(tx, [rows[0].id]),
   ]);
-  return toView(rows[0], variants.get(rows[0].id) ?? [], rollups.get(rows[0].id));
+  return toView(rows[0], variants.get(rows[0].id) ?? [], rollups.get(rows[0].id), usedIn.get(rows[0].id) ?? []);
 }
 
 export async function getItem(id: string): Promise<ItemView> {
   return guarded("item.view", (tx) => getItemInTx(tx, id));
+}
+
+// ── used-in tree (where-used, walked up N levels) ────────────────────────────
+
+export interface UsedInEdge {
+  parentId: string;
+  parentCode: string;
+  parentName: string;
+  parentItemType: ItemType;
+  childId: string;
+  depth: number;
+}
+export interface UsedInTreeResult {
+  itemId: string;
+  edges: UsedInEdge[];
+}
+
+/** Walk the BOM graph upwards from `id` up to `maxDepth` levels. Each edge
+ *  says "parent uses child". Rows in the result are already deduped so a
+ *  parent that reaches the same descendant through two BOMs shows up once
+ *  per level. Both Active and Draft BOM versions are considered — a Draft
+ *  in flight is real "where this is being used" information, even if it
+ *  hasn't been activated yet. */
+export async function getItemUsedInTree(id: string, maxDepth = 6): Promise<UsedInTreeResult> {
+  return guarded("item.view", async (tx) => {
+    if (!isUuid(id)) throw Errors.notFound("Item");
+    const depth = Math.max(1, Math.min(10, Math.trunc(maxDepth)));
+    const rows = await tx.$queryRaw<{
+      parentId: string; childId: string; depth: number;
+      parentCode: string; parentName: string; parentItemType: ItemType;
+    }[]>`
+      WITH RECURSIVE used_in AS (
+        SELECT bv.parent_item_id AS parent_id,
+               bl.child_item_id  AS child_id,
+               1 AS depth
+          FROM item_bom_lines bl
+          JOIN item_bom_versions bv ON bv.id = bl.bom_version_id AND bv.deleted_at IS NULL
+         WHERE bl.child_item_id = ${id}::uuid
+           AND bl.deleted_at IS NULL
+           AND bv.status IN ('Active'::bom_status, 'Draft'::bom_status)
+        UNION
+        SELECT bv2.parent_item_id, ui.parent_id, ui.depth + 1
+          FROM used_in ui
+          JOIN item_bom_lines    bl2 ON bl2.child_item_id  = ui.parent_id AND bl2.deleted_at IS NULL
+          JOIN item_bom_versions bv2 ON bv2.id = bl2.bom_version_id AND bv2.deleted_at IS NULL
+         WHERE bv2.status IN ('Active'::bom_status, 'Draft'::bom_status)
+           AND ui.depth < ${depth}
+      )
+      SELECT DISTINCT
+        ui.parent_id       AS "parentId",
+        ui.child_id        AS "childId",
+        ui.depth           AS "depth",
+        i.code             AS "parentCode",
+        i.name             AS "parentName",
+        i.item_type::text  AS "parentItemType"
+      FROM used_in ui
+      JOIN items i ON i.id = ui.parent_id AND i.deleted_at IS NULL
+      ORDER BY ui.depth ASC, i.name ASC`;
+    return { itemId: id, edges: rows };
+  });
 }
 
 // ── stock rollup (F5.5) ─────────────────────────────────────────────────────

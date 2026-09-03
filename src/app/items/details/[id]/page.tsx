@@ -70,6 +70,15 @@ interface PcbUsage {
   qty: number; refDes: string | null
 }
 
+// Where-used edge: one row per (parent → child) relation walked upwards
+// from this item. Multiple edges together form the "used in" tree.
+interface UsedInEdge {
+  parentId: string; parentCode: string; parentName: string
+  parentItemType: ItemType
+  childId: string
+  depth: number
+}
+
 interface StockRollup {
   itemId: string; code: string
   onHand: number; reserved: number; available: number; damaged: number
@@ -141,6 +150,7 @@ export default function ItemDetailsPage() {
   const [pcbUsage, setPcbUsage] = React.useState<PcbUsage[]>([])
   const [bom, setBom] = React.useState<ItemBom | null>(null)
   const [ledger, setLedger] = React.useState<LedgerRow[]>([])
+  const [usedInTree, setUsedInTree] = React.useState<UsedInEdge[]>([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" | "info" } | null>(null)
@@ -190,12 +200,13 @@ export default function ItemDetailsPage() {
   const load = React.useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [itemRes, stockRes, usageRes, bomRes, ledgerRes] = await Promise.all([
+      const [itemRes, stockRes, usageRes, bomRes, ledgerRes, treeRes] = await Promise.all([
         fetch(`/api/items/${encodeURIComponent(id)}`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/stock`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/pcb-usage`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/bom`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/ledger`, { cache: "no-store" }),
+        fetch(`/api/items/${encodeURIComponent(id)}/used-in-tree`, { cache: "no-store" }),
       ])
       if (!itemRes.ok) {
         const body = await itemRes.json().catch(() => null)
@@ -226,6 +237,12 @@ export default function ItemDetailsPage() {
         setLedger(ledgerBody.data ?? [])
       } else {
         setLedger([])
+      }
+      if (treeRes.ok) {
+        const treeBody = await treeRes.json() as { data: { itemId: string; edges: UsedInEdge[] } }
+        setUsedInTree(treeBody.data?.edges ?? [])
+      } else {
+        setUsedInTree([])
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load item")
@@ -688,15 +705,24 @@ export default function ItemDetailsPage() {
             the left column (KPI strip + sections) via `self-stretch`, so it
             sits flush with the BOM section start regardless of how many
             left-hand sections render. */}
-        <aside className="self-stretch">
-          <Card className="border border-border shadow-sm overflow-hidden h-full flex flex-col">
-            <CardHeader className="border-b border-border bg-muted/10 px-4 py-3 shrink-0">
+        {/* Sidebar. Was `self-stretch` with one full-height Inventory card
+            when it held a single panel; now that it stacks a Used-in card on
+            top, the flex-full-height trick lets the Inventory card spill
+            over the BOM section below. Sticky positioning keeps the whole
+            sidebar in view as the user scrolls the long left column. */}
+        <aside className="space-y-6 lg:sticky lg:top-4 lg:self-start">
+          {/* Where used — walked upwards through the BOM graph. Empty state
+              stays visible so operators know the check ran; a raw part not
+              yet placed on any BOM is common in a fresh catalog. */}
+          <UsedInTreeCard rootId={item.id} rootCode={item.code} rootName={item.name} edges={usedInTree} />
+          <Card className="border border-border shadow-sm overflow-hidden">
+            <CardHeader className="border-b border-border bg-muted/10 px-4 py-3">
               <div className="flex items-center gap-2">
                 <Boxes className="h-4 w-4 text-primary" />
                 <CardTitle className="text-sm font-bold">Inventory</CardTitle>
               </div>
             </CardHeader>
-            <CardContent className="p-4 space-y-4 flex-1 min-h-0 overflow-y-auto">
+            <CardContent className="p-4 space-y-4">
               {stock ? (
                 <>
                   {/* Damaged summary — folded in here from the removed top KPI. */}
@@ -1228,6 +1254,106 @@ function KV({ label, value, mono }: { label: string; value: React.ReactNode; mon
       <span className="text-xs font-semibold text-muted-foreground">{label}</span>
       <span className={`text-sm text-right ${mono ? "font-mono" : ""}`}>{value}</span>
     </div>
+  )
+}
+
+// ── Used-in tree (right sidebar) ────────────────────────────────────────────
+
+const USED_IN_TYPE_ICON: Record<ItemType, React.ComponentType<{ className?: string }>> = {
+  raw: Nut,
+  semi_assembled: Cpu,
+  assembled: Package,
+  consumable: Boxes,
+  asset: Laptop,
+  packaging: Wrench,
+}
+
+/** Nested "where used" list. Roots are the direct parents of the item (edges
+ *  with depth = 1); every parent then recursively drops its own parents
+ *  underneath, until the server-side walk (default 6 levels) runs out. */
+function UsedInTreeCard({ rootId, rootCode, rootName, edges }: {
+  rootId: string; rootCode: string; rootName: string; edges: UsedInEdge[]
+}) {
+  const directParents = React.useMemo(() => edges.filter((e) => e.childId === rootId), [edges, rootId])
+  const totalParents = React.useMemo(() => new Set(edges.map((e) => e.parentId)).size, [edges])
+  const truncated = edges.length > 0 && edges.every((e) => e.depth < 6) === false && edges.some((e) => e.depth === 6)
+  return (
+    <Card className="border border-border shadow-sm overflow-hidden">
+      <CardHeader className="border-b border-border bg-muted/10 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <ListTree className="h-4 w-4 text-primary" />
+          <CardTitle className="text-sm font-bold">Used in</CardTitle>
+          {totalParents > 0 && (
+            <span className="ml-auto rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold">
+              {totalParents} parent{totalParents === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="p-4">
+        {directParents.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic">
+            Not referenced by any assembly&apos;s active or draft BOM yet.
+          </div>
+        ) : (
+          <>
+            <div className="mb-3 flex items-start gap-2">
+              <div className="mt-0.5 h-6 w-6 shrink-0 rounded-md bg-primary/10 text-primary flex items-center justify-center">
+                <ChevronDown className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">This item</div>
+                <div className="text-sm font-bold font-mono truncate" title={rootName}>{rootCode}</div>
+              </div>
+            </div>
+            <ul className="space-y-1.5">
+              {directParents.map((e) => (
+                <UsedInNode key={`${e.parentId}-${e.childId}`} edge={e} edges={edges} />
+              ))}
+            </ul>
+            {truncated && (
+              <div className="mt-3 text-[11px] italic text-muted-foreground">
+                Deeper parents may exist beyond the 6-level walk.
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function UsedInNode({ edge, edges }: { edge: UsedInEdge; edges: UsedInEdge[] }) {
+  const Icon = USED_IN_TYPE_ICON[edge.parentItemType] ?? Layers
+  const children = React.useMemo(
+    () => edges.filter((e) => e.childId === edge.parentId),
+    [edge.parentId, edges],
+  )
+  return (
+    <li>
+      <div className="flex items-start gap-2 rounded-md hover:bg-muted/30 -mx-1 px-1 py-0.5">
+        <div className="mt-0.5 h-6 w-6 shrink-0 rounded-md bg-muted/60 text-muted-foreground flex items-center justify-center">
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <Link
+            href={`/items/details/${encodeURIComponent(edge.parentId)}`}
+            className="text-xs font-bold font-mono text-primary hover:underline block truncate"
+            title={edge.parentName}
+          >
+            {edge.parentCode}
+          </Link>
+          <div className="text-[11px] text-muted-foreground truncate" title={edge.parentName}>{edge.parentName}</div>
+        </div>
+      </div>
+      {children.length > 0 && (
+        <ul className="ml-3 mt-1 border-l border-border pl-3 space-y-1.5">
+          {children.map((c) => (
+            <UsedInNode key={`${c.parentId}-${c.childId}`} edge={c} edges={edges} />
+          ))}
+        </ul>
+      )}
+    </li>
   )
 }
 

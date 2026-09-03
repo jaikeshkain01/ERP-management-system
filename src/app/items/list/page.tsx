@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
-import { Boxes, Cpu, Package, Nut, Search, X, RefreshCw, AlertTriangle, Pencil, Trash2, Save, Check, AlertCircle, Info, ExternalLink, Upload } from "lucide-react"
+import { Boxes, Cpu, Package, Nut, Search, X, RefreshCw, AlertTriangle, Pencil, Trash2, Save, Check, AlertCircle, Info, ExternalLink, Upload, Merge } from "lucide-react"
 import { extractError } from "@/lib/api-error"
 
 type ItemType =
@@ -59,6 +59,9 @@ interface Item {
   onHand: number             // F5.5 rollup
   lastMovementAt: string | null
   variants: Variant[]
+  importSource: string | null
+  createdAt: string
+  usedIn: Array<{ id: string; code: string; name: string }>
 }
 
 // Colour + icon per item_type. Kept in one place so tags/filters stay in sync.
@@ -326,6 +329,14 @@ function UniversalItemList() {
             <Upload className="h-4 w-4" />
             <span>Import BOM</span>
           </Button>
+          <Button
+            variant="outline"
+            className="gap-2 font-semibold"
+            render={<Link href="/items/merger" />}
+          >
+            <Merge className="h-4 w-4" />
+            <span>Merger</span>
+          </Button>
           <Button variant="outline" className="gap-2 font-semibold" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
@@ -414,16 +425,18 @@ function UniversalItemList() {
                   <th className="px-6 py-3 font-semibold">Name</th>
                   <th className="px-6 py-3 font-semibold w-40">Type</th>
                   <th className="px-6 py-3 font-semibold">Category</th>
+                  <th className="px-6 py-3 font-semibold">Origin / Used in</th>
                   <th className="px-6 py-3 font-semibold text-center w-24">Variants</th>
                   <th className="px-6 py-3 font-semibold text-right w-28">On hand</th>
                   <th className="px-6 py-3 font-semibold text-center w-16">UOM</th>
+                  <th className="px-6 py-3 font-semibold w-28">Created</th>
                   <th className="px-6 py-3 font-semibold text-right w-28">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
                   <tr key={`sk-${i}`}>
-                    {Array.from({ length: 8 }).map((__, j) => (
+                    {Array.from({ length: 10 }).map((__, j) => (
                       <td key={j} className="px-6 py-4"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -456,6 +469,29 @@ function UniversalItemList() {
                         </span>
                       </td>
                       <td className="px-6 py-4 text-muted-foreground text-xs font-medium">{it.categoryPath ?? "—"}</td>
+                      <td className="px-6 py-4">
+                        <div className="flex flex-wrap items-center gap-1.5 max-w-[260px]">
+                          {it.importSource && (
+                            <span
+                              className="inline-flex items-center rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold max-w-[220px] truncate"
+                              title={`Imported from ${it.importSource}`}
+                            >
+                              Imported: {it.importSource}
+                            </span>
+                          )}
+                          {it.usedIn.length > 0 && (
+                            <span
+                              className="inline-flex items-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 text-[10px] font-bold"
+                              title={it.usedIn.map((p) => `${p.code} — ${p.name}`).join("\n")}
+                            >
+                              Used in {it.usedIn.length}
+                            </span>
+                          )}
+                          {!it.importSource && it.usedIn.length === 0 && (
+                            <span className="text-[11px] text-muted-foreground/60">—</span>
+                          )}
+                        </div>
+                      </td>
                       <td className="px-6 py-4 text-center font-mono font-semibold text-muted-foreground/80">{it.variants.length}</td>
                       <td className={`px-6 py-4 text-right font-mono font-semibold ${
                         it.onHand === 0
@@ -467,6 +503,9 @@ function UniversalItemList() {
                         {it.onHand.toLocaleString()}
                       </td>
                       <td className="px-6 py-4 text-center font-mono text-xs text-muted-foreground">{it.baseUom}</td>
+                      <td className="px-6 py-4 text-xs text-muted-foreground font-mono" title={it.createdAt ? new Date(it.createdAt).toLocaleString() : ""}>
+                        {it.createdAt ? it.createdAt.slice(0, 10) : "—"}
+                      </td>
                       <td className="px-6 py-4 text-right">
                         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold border ${STATUS_TONE[it.status]}`}>
                           {it.status}
@@ -477,7 +516,7 @@ function UniversalItemList() {
                 })}
                 {!loading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-6 py-14 text-center">
+                    <td colSpan={10} className="px-6 py-14 text-center">
                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
                         <Search className="h-8 w-8 opacity-30" />
                         <span className="text-sm font-medium">No items match your search and filters</span>
