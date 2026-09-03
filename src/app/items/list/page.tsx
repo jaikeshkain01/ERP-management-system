@@ -130,13 +130,28 @@ function UniversalItemList() {
   // silently ignored.
   const searchParams = useSearchParams()
   const preselectId = searchParams.get("id")
+  // Legacy /products/list and /pcb-management/list now redirect here with
+  // `?itemType=assembled` / `?itemType=semi_assembled`. Both filters honour
+  // the URL on first mount so bookmarks and cross-workspace links land on
+  // the right view; the user can widen them via the chip strip afterwards.
+  const initialTypeFilter: ItemType | "all" = (() => {
+    const raw = searchParams.get("itemType")
+    return raw === "raw" || raw === "semi_assembled" || raw === "assembled"
+      || raw === "consumable" || raw === "asset" || raw === "packaging"
+      ? raw
+      : "all"
+  })()
+  const initialStatusFilter: ItemStatus | "all" = (() => {
+    const raw = searchParams.get("status")
+    return raw === "active" || raw === "inactive" || raw === "discontinued" ? raw : "all"
+  })()
 
   const [items, setItems] = React.useState<Item[]>([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [q, setQ] = React.useState("")
-  const [typeFilter, setTypeFilter] = React.useState<ItemType | "all">("all")
-  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">("all")
+  const [typeFilter, setTypeFilter] = React.useState<ItemType | "all">(initialTypeFilter)
+  const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">(initialStatusFilter)
   const [selected, setSelected] = React.useState<Item | null>(null)
   const [editing, setEditing] = React.useState(false)
   const [form, setForm] = React.useState<EditForm | null>(null)

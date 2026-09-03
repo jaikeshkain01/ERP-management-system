@@ -64,8 +64,8 @@ export const BASE_AREAS: Array<{
   href: string
 }> = [
   { label: "Items", description: "Every item — parts, sub-assemblies, products, assets.", icon: Nut, href: "/items/list" },
-  { label: "Assembled Products", description: "Assembled items + sellable finished goods.", icon: Package, href: "/products/list" },
-  { label: "Semi-assembled", description: "PCB revisions and sub-assemblies.", icon: Cpu, href: "/pcb-management/list" },
+  { label: "Assembled Products", description: "Assembled items + sellable finished goods.", icon: Package, href: "/items/list?itemType=assembled" },
+  { label: "Semi-assembled", description: "PCB revisions and sub-assemblies.", icon: Cpu, href: "/items/list?itemType=semi_assembled" },
   { label: "Suppliers & Manufacturers", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
 ]
 
@@ -167,11 +167,17 @@ export const WORKSPACES: Workspace[] = [
   // /pcb-management/structure just server-redirect to the per-item BOM
   // editor (F6.4 / B4). Keeping them as tabs would bounce the user out of
   // the workspace mid-flow. Access the BOM from each card instead.
+  // Both retired: their /list routes now server-redirect to /items/list
+  // with the right itemType filter, and their /structure routes have long
+  // done so per F6.4 / B4. The tiles are kept as separate workspaces so
+  // the launchpad still exposes "Assembled Products" and "Semi-assembled"
+  // as distinct entry points — the click just lands on a filtered items
+  // list instead of a bespoke page.
   {
     id: "products",
     label: "Assembled Products",
     icon: Package,
-    href: "/products/list",
+    href: "/items/list?itemType=assembled",
     tabs: [],
     routePrefixes: ["/products"],
   },
@@ -179,7 +185,7 @@ export const WORKSPACES: Workspace[] = [
     id: "pcb",
     label: "Semi-assembled",
     icon: Cpu,
-    href: "/pcb-management/list",
+    href: "/items/list?itemType=semi_assembled",
     tabs: [],
     routePrefixes: ["/pcb-management"],
   },
