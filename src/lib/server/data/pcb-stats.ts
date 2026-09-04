@@ -44,6 +44,10 @@ export interface SemiAssembledStats {
   bomVersions: PcbBomVersionSummary[];
   usedIn: PcbParentSummary[];
   usedInCount: number;
+  /** Units of this sub-assembly that can be built from current raw stock,
+   *  min across the leaves of its Active BOM. `null` when there's no
+   *  Active BOM version (buildable undefined then). */
+  buildableQty: number | null;
 }
 
 export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
@@ -105,17 +109,86 @@ export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
       parentsByChild.set(p.childId, arr);
     }
 
+    // 3) Buildable qty per semi_assembled item that has an Active BOM.
+    //    Same shape as products-stats: recursive explode → per-leaf demand,
+    //    then min across leaves of floor(on_hand / per_unit_qty).
+    const activeVersionIds = versions
+      .filter((v) => v.status === "Active")
+      .map((v) => v.id);
+    const demand = activeVersionIds.length === 0 ? [] : await tx.$queryRaw<{
+      parentItemId: string; leafItemId: string; perUnit: number;
+    }[]>(Prisma.sql`
+      WITH RECURSIVE explode(parent_item_id, child, qty, depth) AS (
+        SELECT bv.parent_item_id, bl.child_item_id, bl.qty::float8, 1
+          FROM item_bom_versions bv
+          JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
+         WHERE bv.id IN (${Prisma.join(activeVersionIds.map((id) => Prisma.sql`${id}::uuid`))})
+        UNION ALL
+        SELECT e.parent_item_id, bl.child_item_id, (e.qty * bl.qty)::float8, e.depth + 1
+          FROM explode e
+          JOIN item_bom_versions cbv ON cbv.parent_item_id = e.child
+                                    AND cbv.status = 'Active'
+                                    AND cbv.deleted_at IS NULL
+          JOIN item_bom_lines bl ON bl.bom_version_id = cbv.id AND bl.deleted_at IS NULL
+         WHERE e.depth < 20
+      )
+      SELECT e.parent_item_id  AS "parentItemId",
+             e.child           AS "leafItemId",
+             SUM(e.qty)::float8 AS "perUnit"
+        FROM explode e
+       WHERE NOT EXISTS (
+         SELECT 1 FROM item_bom_versions bv2
+          WHERE bv2.parent_item_id = e.child
+            AND bv2.status = 'Active'
+            AND bv2.deleted_at IS NULL
+       )
+       GROUP BY e.parent_item_id, e.child`);
+
+    const leafIds = Array.from(new Set(demand.map((d) => d.leafItemId)));
+    const stocks = leafIds.length === 0 ? [] : await tx.$queryRaw<{
+      itemId: string; onHand: number;
+    }[]>(Prisma.sql`
+      SELECT v.item_id AS "itemId",
+             COALESCE(SUM(ib.on_hand), 0)::float8 AS "onHand"
+        FROM item_variants v
+        LEFT JOIN inventory_balances ib
+               ON ib.item_variant_id = v.id AND ib.deleted_at IS NULL
+       WHERE v.item_id IN (${Prisma.join(leafIds.map((id) => Prisma.sql`${id}::uuid`))})
+         AND v.deleted_at IS NULL
+       GROUP BY v.item_id`);
+    const stockByLeaf = new Map(stocks.map((s) => [s.itemId, s.onHand]));
+
+    const demandByParent = new Map<string, { leafItemId: string; perUnit: number }[]>();
+    for (const d of demand) {
+      const arr = demandByParent.get(d.parentItemId) ?? [];
+      arr.push({ leafItemId: d.leafItemId, perUnit: d.perUnit });
+      demandByParent.set(d.parentItemId, arr);
+    }
+    const buildableByParent = new Map<string, number>();
+    for (const [parent, leaves] of demandByParent) {
+      let min = leaves.length === 0 ? 0 : Infinity;
+      for (const l of leaves) {
+        const stock = stockByLeaf.get(l.leafItemId) ?? 0;
+        const bp = l.perUnit > 0 ? Math.floor(stock / l.perUnit) : Infinity;
+        if (bp < min) min = bp;
+      }
+      buildableByParent.set(parent, min === Infinity ? 0 : min);
+    }
+
     // Emit rows for every item that has ANY signal (either a version or a
     // parent). Items without either aren't returned; the client treats
     // missing as "fresh item, no BOM, no parents yet".
     const allItemIds = new Set<string>([...versionsByChild.keys(), ...parentsByChild.keys()]);
     return Array.from(allItemIds).map<SemiAssembledStats>((itemId) => {
       const p = parentsByChild.get(itemId) ?? [];
+      const parentVersions = versionsByChild.get(itemId) ?? [];
+      const hasActive = parentVersions.some((v) => v.status === "Active");
       return {
         itemId,
-        bomVersions: versionsByChild.get(itemId) ?? [],
+        bomVersions: parentVersions,
         usedIn: p.slice(0, 5),
         usedInCount: p.length,
+        buildableQty: hasActive ? (buildableByParent.get(itemId) ?? 0) : null,
       };
     });
   });

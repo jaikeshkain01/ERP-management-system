@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
-  GitBranch, Users, Grid2X2, Rows3, Download,
+  GitBranch, Users, Grid2X2, Rows3, Download, Hammer,
 } from "lucide-react"
 
 type ItemType =
@@ -66,6 +66,7 @@ interface SemiStats {
   bomVersions: BomVersionSummary[]
   usedIn: ParentSummary[]
   usedInCount: number
+  buildableQty: number | null
 }
 
 const STATUS_TONE: Record<ItemStatus, string> = {
@@ -196,7 +197,7 @@ function SemiAssembledList() {
     }
     const header = [
       "Code", "Name", "Category", "Solder", "Footprint", "Status", "On hand", "UOM",
-      "Active BOM", "Draft BOM", "Used in (parents)",
+      "Active BOM", "Draft BOM", "Used in (parents)", "Buildable",
     ]
     const lines = [header.join(",")]
     for (const it of filtered) {
@@ -215,6 +216,7 @@ function SemiAssembledList() {
         escape(active ? `${active.version} (${active.lineCount} lines)` : ""),
         escape(draft ? `${draft.version} (${draft.lineCount} lines)` : ""),
         escape(st?.usedInCount ?? 0),
+        escape(st?.buildableQty ?? ""),
       ].join(","))
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
@@ -472,18 +474,36 @@ function SemiAssembledList() {
                   </>
                 )}
               </div>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg border border-border bg-muted/20 p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Category</div>
-                  <div className="text-xs font-semibold truncate mt-0.5" title={it.categoryPath ?? "—"}>{it.categoryPath?.split(" › ").pop() ?? "—"}</div>
+              <div className="grid grid-cols-4 gap-1.5 text-center">
+                <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
+                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Category</div>
+                  <div className="text-[11px] font-semibold truncate mt-0.5" title={it.categoryPath ?? "—"}>{it.categoryPath?.split(" › ").pop() ?? "—"}</div>
                 </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">On hand</div>
-                  <div className={`text-xs font-mono font-bold mt-0.5 ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>{it.onHand.toLocaleString()}</div>
+                <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
+                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">On hand</div>
+                  <div className={`text-[11px] font-mono font-bold mt-0.5 ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400" : "text-foreground"}`}>{it.onHand.toLocaleString()}</div>
                 </div>
-                <div className="rounded-lg border border-border bg-muted/20 p-2">
-                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Footprint</div>
-                  <div className="text-xs font-mono font-bold mt-0.5 truncate" title={it.footprint ?? "—"}>{it.footprint ?? "—"}</div>
+                <div
+                  className="rounded-lg border border-border bg-muted/20 px-1.5 py-2"
+                  title={st?.buildableQty != null
+                    ? `Buildable from current raw stock: ${st.buildableQty.toLocaleString()} units`
+                    : "Buildable qty needs an Active BOM"}
+                >
+                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold flex items-center justify-center gap-1">
+                    <Hammer className="h-2.5 w-2.5" /> Build
+                  </div>
+                  <div className={`text-[11px] font-mono font-bold mt-0.5 ${
+                    st?.buildableQty == null ? "text-muted-foreground/60"
+                    : st.buildableQty === 0 ? "text-destructive"
+                    : st.buildableQty < 10 ? "text-amber-600 dark:text-amber-400"
+                    : "text-emerald-600 dark:text-emerald-400"
+                  }`}>
+                    {st?.buildableQty != null ? st.buildableQty.toLocaleString() : "—"}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
+                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Footprint</div>
+                  <div className="text-[11px] font-mono font-bold mt-0.5 truncate" title={it.footprint ?? "—"}>{it.footprint ?? "—"}</div>
                 </div>
               </div>
               <div className="flex items-center gap-2 pt-1">
@@ -528,13 +548,14 @@ function SemiAssembledList() {
                   <th className="px-4 py-2 text-left font-bold">Active / Draft</th>
                   <th className="px-4 py-2 text-right font-bold">Used in</th>
                   <th className="px-4 py-2 text-right font-bold">On hand</th>
+                  <th className="px-4 py-2 text-right font-bold">Build</th>
                   <th className="px-4 py-2 text-left font-bold">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
                   <tr key={`sk-${i}`}>
-                    {Array.from({ length: 8 }).map((__, j) => (
+                    {Array.from({ length: 9 }).map((__, j) => (
                       <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -579,6 +600,14 @@ function SemiAssembledList() {
                       </td>
                       <td className={`px-4 py-2 text-right font-mono ${(st?.usedInCount ?? 0) === 0 ? "text-muted-foreground/60" : "text-foreground font-bold"}`}>{(st?.usedInCount ?? 0).toLocaleString()}</td>
                       <td className={`px-4 py-2 text-right font-mono ${it.onHand === 0 ? "text-muted-foreground/60" : it.minStock > 0 && it.onHand < it.minStock ? "text-amber-600 dark:text-amber-400 font-bold" : "text-foreground"}`}>{it.onHand.toLocaleString()}</td>
+                      <td className={`px-4 py-2 text-right font-mono font-bold ${
+                        st?.buildableQty == null ? "text-muted-foreground/60"
+                        : st.buildableQty === 0 ? "text-destructive"
+                        : st.buildableQty < 10 ? "text-amber-600 dark:text-amber-400"
+                        : "text-emerald-600 dark:text-emerald-400"
+                      }`}>
+                        {st?.buildableQty != null ? st.buildableQty.toLocaleString() : "—"}
+                      </td>
                       <td className="px-4 py-2">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold border ${STATUS_TONE[it.status]}`}>{it.status}</span>
                       </td>
