@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Package, Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
-  GitBranch, Factory, Hammer, Grid2X2, Rows3, Download,
+  GitBranch, Factory, Hammer, Grid2X2, Rows3, Download, IndianRupee,
 } from "lucide-react"
 
 type ItemType =
@@ -67,6 +67,17 @@ interface ProductStats {
   bomLineCount: number
   buildableQty: number | null
   openOrders: number
+  unitCostRollup: number | null
+  costCoverage: number
+}
+
+// Compact INR formatter — the cost rollup can span a few paise to lakhs, so
+// we render with a k / L suffix when big.
+function formatInr(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return "—"
+  if (value >= 100000) return `₹${(value / 100000).toFixed(1)}L`
+  if (value >= 1000) return `₹${(value / 1000).toFixed(1)}k`
+  return `₹${value.toFixed(0)}`
 }
 
 type ViewMode = "cards" | "table"
@@ -200,6 +211,7 @@ function AssembledProductsList() {
     const header = [
       "Code", "Name", "Stage", "Finished good", "Status", "Category",
       "On hand", "UOM", "Active BOM", "BOM lines", "Buildable", "Open orders",
+      "Est. cost / unit (INR)", "Cost coverage",
     ]
     const lines = [header.join(",")]
     for (const it of filtered) {
@@ -217,6 +229,8 @@ function AssembledProductsList() {
         escape(st?.bomLineCount ?? 0),
         escape(st?.buildableQty ?? ""),
         escape(st?.openOrders ?? 0),
+        escape(st?.unitCostRollup != null ? st.unitCostRollup.toFixed(2) : ""),
+        escape(st?.costCoverage != null ? `${Math.round(st.costCoverage * 100)}%` : ""),
       ].join(","))
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
@@ -458,6 +472,27 @@ function AssembledProductsList() {
                     </div>
                   </div>
                 </div>
+                {/* Cost roll-up — shown only when the item has an Active BOM.
+                    The chip flags incomplete pricing coverage so operators
+                    don't take the number as gospel when leaves are unpriced. */}
+                {hasBom && (
+                  <div
+                    className="flex items-center justify-between rounded-md border border-border/60 bg-muted/10 px-2 py-1 text-[10px]"
+                    title={st?.costCoverage === 1
+                      ? "Every BOM leaf has a known cost (lot receipt or supplier price)."
+                      : `${Math.round((st?.costCoverage ?? 0) * 100)}% of BOM leaves priced — the rest are unvalued, so the rollup is a lower bound.`}
+                  >
+                    <span className="inline-flex items-center gap-1 font-semibold text-muted-foreground">
+                      <IndianRupee className="h-2.5 w-2.5" /> Est. cost / unit
+                    </span>
+                    <span className={`font-mono font-bold ${st?.costCoverage === 1 ? "text-foreground" : "text-amber-600 dark:text-amber-400"}`}>
+                      {formatInr(st?.unitCostRollup ?? 0)}
+                      {st?.costCoverage !== 1 && st?.costCoverage != null && (
+                        <span className="ml-1 opacity-70">({Math.round(st.costCoverage * 100)}%)</span>
+                      )}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 pt-1">
                   <Button
                     render={<Link href={`/items/details/${encodeURIComponent(it.id)}?from=products#bom-section`} />}
@@ -499,6 +534,7 @@ function AssembledProductsList() {
                   <th className="px-4 py-2 text-left font-bold">BOM</th>
                   <th className="px-4 py-2 text-right font-bold">On hand</th>
                   <th className="px-4 py-2 text-right font-bold">Build</th>
+                  <th className="px-4 py-2 text-right font-bold">Est. cost</th>
                   <th className="px-4 py-2 text-right font-bold">Orders</th>
                   <th className="px-4 py-2 text-left font-bold">Status</th>
                 </tr>
@@ -506,7 +542,7 @@ function AssembledProductsList() {
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
                   <tr key={`sk-${i}`}>
-                    {Array.from({ length: 8 }).map((__, j) => (
+                    {Array.from({ length: 9 }).map((__, j) => (
                       <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -547,6 +583,16 @@ function AssembledProductsList() {
                         : "text-emerald-600 dark:text-emerald-400"
                       }`}>
                         {hasBom ? (st?.buildableQty ?? 0).toLocaleString() : "—"}
+                      </td>
+                      <td
+                        className={`px-4 py-2 text-right font-mono ${
+                          !hasBom ? "text-muted-foreground/60"
+                          : (st?.costCoverage ?? 1) < 1 ? "text-amber-600 dark:text-amber-400"
+                          : "text-foreground font-semibold"
+                        }`}
+                        title={hasBom && (st?.costCoverage ?? 1) < 1 ? `${Math.round((st?.costCoverage ?? 0) * 100)}% priced` : undefined}
+                      >
+                        {hasBom ? formatInr(st?.unitCostRollup ?? 0) : "—"}
                       </td>
                       <td className={`px-4 py-2 text-right font-mono ${(st?.openOrders ?? 0) === 0 ? "text-muted-foreground/60" : "text-foreground font-bold"}`}>{(st?.openOrders ?? 0).toLocaleString()}</td>
                       <td className="px-4 py-2">

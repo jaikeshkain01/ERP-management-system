@@ -38,6 +38,14 @@ export interface AssembledProductStats {
   buildableQty: number | null;
   /** Draft + Ready + In_Progress production_orders keyed to this item. */
   openOrders: number;
+  /** Σ (per_unit_qty × best_price) across leaves. Best-price is the
+   *  cheapest lot unit_cost we've ever received for the leaf; falls back
+   *  to cheapest supplier_component_prices row when no lot exists.
+   *  `null` when no Active BOM. */
+  unitCostRollup: number | null;
+  /** Fraction of leaves (0-1) that had a known price. 1.0 = fully
+   *  priced; anything below means the rollup is a lower bound. */
+  costCoverage: number;
 }
 
 export async function getAssembledProductStats(): Promise<AssembledProductStats[]> {
@@ -110,6 +118,33 @@ export async function getAssembledProductStats(): Promise<AssembledProductStats[
        GROUP BY v.item_id`);
     const stockByLeaf = new Map(stocks.map((s) => [s.itemId, s.onHand]));
 
+    // 3b) Best price per leaf. Prefer the cheapest lot unit_cost we've ever
+    //     received (that's real, tenant-specific), fall back to the cheapest
+    //     current supplier_component_prices row (F2 mirror lets us join
+    //     scp.component_id → items.id). One SQL, one row per leaf.
+    const prices = leafIds.length === 0 ? [] : await tx.$queryRaw<{
+      itemId: string; price: number | null;
+    }[]>(Prisma.sql`
+      SELECT i.id AS "itemId",
+             LEAST(
+               (SELECT MIN(il.unit_cost)::float8
+                  FROM item_lots il
+                  JOIN item_variants iv ON iv.id = il.item_variant_id
+                 WHERE iv.item_id = i.id
+                   AND il.unit_cost IS NOT NULL
+                   AND il.deleted_at IS NULL),
+               (SELECT MIN(scp.price)::float8
+                  FROM supplier_component_prices scp
+                 WHERE scp.component_id = i.id
+                   AND scp.valid_to IS NULL
+                   AND scp.deleted_at IS NULL)
+             ) AS price
+        FROM items i
+       WHERE i.id IN (${Prisma.join(leafIds.map((id) => Prisma.sql`${id}::uuid`))})
+         AND i.deleted_at IS NULL`);
+    const priceByLeaf = new Map<string, number | null>();
+    for (const p of prices) priceByLeaf.set(p.itemId, p.price);
+
     // 4) Open production orders per assembled item.
     const orders = await tx.$queryRaw<{ itemId: string; openCount: number }[]>`
       SELECT product_id       AS "itemId",
@@ -135,10 +170,17 @@ export async function getAssembledProductStats(): Promise<AssembledProductStats[
     return versions.map<AssembledProductStats>((v) => {
       const leaves = demandByParent.get(v.itemId) ?? [];
       let buildable = leaves.length === 0 ? 0 : Infinity;
+      let costRollup = 0;
+      let priced = 0;
       for (const l of leaves) {
         const stock = stockByLeaf.get(l.leafItemId) ?? 0;
         const bp = l.perUnit > 0 ? Math.floor(stock / l.perUnit) : Infinity;
         if (bp < buildable) buildable = bp;
+        const price = priceByLeaf.get(l.leafItemId);
+        if (price != null && Number.isFinite(price)) {
+          costRollup += l.perUnit * price;
+          priced++;
+        }
       }
       return {
         itemId: v.itemId,
@@ -146,6 +188,8 @@ export async function getAssembledProductStats(): Promise<AssembledProductStats[
         bomLineCount: v.lineCount,
         buildableQty: buildable === Infinity ? 0 : buildable,
         openOrders: openByItem.get(v.itemId) ?? 0,
+        unitCostRollup: leaves.length === 0 ? 0 : costRollup,
+        costCoverage: leaves.length === 0 ? 1 : priced / leaves.length,
       };
     });
   });
