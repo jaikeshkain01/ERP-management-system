@@ -217,7 +217,7 @@ async function resolveVariantByKeys(tx: TxClient, genericPN: string, brandSlug: 
       company_id: comp.company_id,
       component_id: comp.id,
       brand_id: brand.id,
-      part_no: comp.generic_pn,
+      part_no: comp.generic_pn ?? "",
       created_by: comp.created_by,
       updated_by: comp.created_by,
     },
@@ -343,7 +343,7 @@ export async function getComponentStock(idOrPn: string): Promise<ComponentStockV
       HAVING SUM(t.qty_delta) <> 0
       ORDER BY il.expiry_date NULLS LAST, il.lot_no`;
 
-    return { componentId: comp.id, genericPN: comp.generic_pn, ...tot, byWarehouse, byVariant, byLot };
+    return { componentId: comp.id, genericPN: comp.generic_pn ?? "", ...tot, byWarehouse, byVariant, byLot };
   });
 }
 

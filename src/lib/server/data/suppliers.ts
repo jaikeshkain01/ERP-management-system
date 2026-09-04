@@ -279,7 +279,7 @@ export async function upsertSupplierPrice(idOrSlug: string, input: UpsertSupplie
 
     return {
       id: priceId,
-      componentId: component.generic_pn, genericPN: component.generic_pn, componentName: component.name,
+      componentId: component.generic_pn ?? "", genericPN: component.generic_pn ?? "", componentName: component.name,
       brandId: input.brand, brandSlug: brand.slug, brandName: brand.name,
       price: input.price, currency, leadTimeDays: input.leadTimeDays ?? null,
     };

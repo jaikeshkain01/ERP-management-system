@@ -455,7 +455,7 @@ export async function addComponentVariant(idOrSlug: string, input: AddVariantInp
 
     const brand = await tx.brands.findUnique({ where: { id: brandId }, select: { slug: true, name: true } });
     return {
-      componentId: comp.generic_pn,
+      componentId: comp.generic_pn ?? "",
       brandId: brand?.slug ?? brandId,
       brandName: brand?.name ?? input.brand.trim(),
       partNo: input.partNo.trim(),
@@ -523,7 +523,7 @@ export async function updateComponentVariant(idOrSlug: string, variantId: string
     const brand = await tx.brands.findUnique({ where: { id: brandId }, select: { slug: true, name: true } });
     const stock = await variantStock(tx, variant.id);
     return {
-      componentId: comp.generic_pn,
+      componentId: comp.generic_pn ?? "",
       brandId: brand?.slug ?? brandId,
       brandName: brand?.name ?? "",
       partNo: updated.part_no,
@@ -606,7 +606,7 @@ export async function deleteComponent(idOrSlug: string): Promise<{ id: string; g
       where: { id: comp.id },
       data: { deleted_at: new Date(), updated_by: ctx.userId },
     });
-    return { id: comp.id, genericPN: comp.generic_pn };
+    return { id: comp.id, genericPN: comp.generic_pn ?? "" };
   });
 }
 
@@ -701,7 +701,11 @@ function buildWhere(f: ComponentFilters): Prisma.componentsWhereInput {
 function fromDb(
   c: {
     id: string;
-    generic_pn: string;
+    // generic_pn used to be NOT NULL in the DB; F2/F5 slice added nullability
+    // for items that don't carry a generic part number. Legacy consumers of
+    // this view (the retired /components pages) still expect a string, so we
+    // coerce here to keep the shape compatible.
+    generic_pn: string | null;
     name: string;
     category: string | null;
     description: string | null;
@@ -721,7 +725,7 @@ function fromDb(
   const stock = agg?.onHand ?? 0;
   return {
     id: c.id,
-    genericPN: c.generic_pn,
+    genericPN: c.generic_pn ?? "",
     name: c.name,
     category: c.category,
     categoryId: meta?.categoryId ?? null,

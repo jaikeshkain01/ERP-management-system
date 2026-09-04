@@ -473,7 +473,8 @@ export interface RecommendationsView {
  */
 export async function getRecommendations(componentKey?: string): Promise<RecommendationsView> {
   return guarded("purchase_request.view", async (tx) => {
-    let comp: { id: string; generic_pn: string; name: string } | null = null;
+    // generic_pn is nullable in the current schema — comp shape mirrors it.
+    let comp: { id: string; generic_pn: string | null; name: string } | null = null;
     let suggestedQty = 0;
 
     if (componentKey) {
@@ -536,7 +537,7 @@ export async function getRecommendations(componentKey?: string): Promise<Recomme
       ORDER BY scp.price`;
 
     return {
-      componentPN: comp.generic_pn,
+      componentPN: comp.generic_pn ?? "",
       componentName: comp.name,
       suggestedQty,
       recommendations: offers.map((o) => ({
