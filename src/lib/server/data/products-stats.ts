@@ -145,14 +145,16 @@ export async function getAssembledProductStats(): Promise<AssembledProductStats[
     const priceByLeaf = new Map<string, number | null>();
     for (const p of prices) priceByLeaf.set(p.itemId, p.price);
 
-    // 4) Open production orders per assembled item.
+    // 4) Open production orders per assembled item. The enum literal
+    //    is 'In Progress' (with a space) — 'In_Progress' is a common
+    //    mistranscription and Postgres rejects it as an invalid input.
     const orders = await tx.$queryRaw<{ itemId: string; openCount: number }[]>`
       SELECT product_id       AS "itemId",
              COUNT(*)::int    AS "openCount"
         FROM production_orders
        WHERE company_id = ${ctx.companyId!}::uuid
          AND deleted_at IS NULL
-         AND status IN ('Draft'::prod_order_status, 'Ready'::prod_order_status, 'In_Progress'::prod_order_status)
+         AND status IN ('Draft'::prod_order_status, 'Ready'::prod_order_status, 'In Progress'::prod_order_status)
        GROUP BY product_id`;
 
     // Fold demand into per-parent buildable qty (min across leaves).

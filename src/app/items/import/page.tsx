@@ -648,6 +648,17 @@ function BomImport() {
             continue
           }
 
+          // Activate the freshly-imported Draft so it shows up as Active
+          // on /products/list and /pcb-management/list right away.
+          // Attach mode is trickier — multiple sheets can fold into the
+          // same parent's Draft, so we defer activation until the loop
+          // finishes (see the post-loop pass below).
+          if (!attachMode && agg.bomVersionId) {
+            try {
+              await fetch(`/api/items/${parentIdLocal}/bom/${agg.bomVersionId}/activate`, { method: "POST" })
+            } catch { /* non-fatal — user can activate manually from the BOM editor */ }
+          }
+
           gathered.push({
             parentItemId: parentIdLocal!,
             parentCode: attachMode
@@ -669,6 +680,17 @@ function BomImport() {
           const msg = e instanceof Error ? e.message : "network error"
           errs.push(`${s.sheetName}: BOM import — ${msg}`)
           setProgress((prev) => prev.map((p) => (p.sheetIndex === i ? { ...p, phase: "error", message: msg } : p)))
+        }
+      }
+      // Attach mode: every sheet folded into a single parent Draft. Now
+      // that all chunks across all sheets are done, activate that one
+      // Draft (the last successful gather has the right bomVersionId).
+      if (attachMode && gathered.length > 0) {
+        const last = gathered[gathered.length - 1]
+        if (last?.bomVersionId) {
+          try {
+            await fetch(`/api/items/${parentId}/bom/${last.bomVersionId}/activate`, { method: "POST" })
+          } catch { /* non-fatal — user can activate manually */ }
         }
       }
       setResults(gathered)

@@ -755,6 +755,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
       if (!isEdit && savedId && stagedBom && stagedBom.rows.length > 0) {
         const IMPORT_CHUNK_SIZE = 250
         let draftCreated = false
+        let lastBomVersionId: string | null = null
         try {
           for (let cursor = 0; cursor < stagedBom.rows.length; cursor += IMPORT_CHUNK_SIZE) {
             const chunk = stagedBom.rows.slice(cursor, cursor + IMPORT_CHUNK_SIZE).map((r: StagedBomRow) => ({
@@ -783,7 +784,16 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               failed.push(`BOM: ${extractError(bb, "failed").message}`)
               break
             }
+            const bomBody = await br.json().catch(() => null)
+            lastBomVersionId = bomBody?.data?.bomVersionId ?? lastBomVersionId
             draftCreated = true
+          }
+          // All chunks written: flip the Draft to Active so the item shows
+          // with an Active BOM on the module lists straight away.
+          if (draftCreated && lastBomVersionId) {
+            try {
+              await fetch(`/api/items/${savedId}/bom/${lastBomVersionId}/activate`, { method: "POST" })
+            } catch { /* non-fatal — user can activate manually */ }
           }
           if (draftCreated) clearStagedBom()
         } catch (e) {
