@@ -24,7 +24,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   Package, Cpu, Search, RefreshCw, Plus, Layers, ExternalLink, AlertCircle, Boxes,
   GitBranch, Factory, Hammer, Grid2X2, Rows3, Download, IndianRupee,
+  CheckSquare, Square, X, Loader2, Sparkles, Ban, Trash2, AlertTriangle,
 } from "lucide-react"
+
+// Bulk actions the server accepts. Kept as a const array so the toolbar
+// can iterate over just the ones this module wants to expose.
+type BulkAction = "activate" | "deactivate" | "discontinue" | "mark_finished" | "unmark_finished" | "delete"
 
 type ItemType =
   | "raw"
@@ -120,6 +125,23 @@ function AssembledProductsList() {
   const [role, setRole] = React.useState<Role>(initialRole)
   const [view, setView] = React.useState<ViewMode>(initialView)
 
+  // Row selection + bulk action state. Selection lives in memory — filters
+  // that hide a selected row keep it selected so the count is honest, and
+  // hitting Clear or a successful action drops the set.
+  const [selected, setSelected] = React.useState<Set<string>>(new Set())
+  const [bulkBusy, setBulkBusy] = React.useState<BulkAction | null>(null)
+  const [bulkReport, setBulkReport] = React.useState<{
+    action: BulkAction
+    succeeded: number
+    failed: Array<{ id: string; reason: string }>
+  } | null>(null)
+  const toggleOne = (id: string) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+  const clearSelection = () => setSelected(new Set())
+
   // Push filter state back into the URL so refresh / bookmark keeps the
   // same view. `replace` (not `push`) so the browser back button doesn't
   // fill up with every toggle.
@@ -197,6 +219,67 @@ function AssembledProductsList() {
     assembled: items.filter((it) => it.itemType === "assembled").length,
     finished: items.filter((it) => it.isFinishedGood).length,
   }), [items])
+
+  // visibleSelected are IDs that are both selected AND currently pass the
+  // filter — the select-all header targets this set so it can't accidentally
+  // toggle rows the user can't see.
+  const visibleIds = React.useMemo(() => new Set(filtered.map((it) => it.id)), [filtered])
+  const visibleSelected = React.useMemo(
+    () => filtered.filter((it) => selected.has(it.id)),
+    [filtered, selected],
+  )
+  const allVisibleSelected = filtered.length > 0 && filtered.every((it) => selected.has(it.id))
+  const someVisibleSelected = visibleSelected.length > 0 && !allVisibleSelected
+  const toggleAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allVisibleSelected) {
+        for (const it of filtered) next.delete(it.id)
+      } else {
+        for (const it of filtered) next.add(it.id)
+      }
+      return next
+    })
+  }
+
+  // Bulk action executor. Only touches IDs that are BOTH selected AND
+  // currently visible (a filter change could hide a row after selection).
+  // Client-side confirm on destructive actions (delete + discontinue).
+  const runBulk = React.useCallback(async (action: BulkAction) => {
+    if (bulkBusy) return
+    const targetIds = filtered.filter((it) => selected.has(it.id)).map((it) => it.id)
+    if (targetIds.length === 0) return
+    if (action === "delete" && !confirm(`Soft-delete ${targetIds.length} item${targetIds.length === 1 ? "" : "s"}? Items with on-hand stock or live BOM references will be rejected individually.`)) return
+    if (action === "discontinue" && !confirm(`Mark ${targetIds.length} item${targetIds.length === 1 ? "" : "s"} as discontinued?`)) return
+    setBulkBusy(action)
+    setBulkReport(null)
+    try {
+      const res = await fetch("/api/items/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: targetIds, action }),
+      })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setBulkReport({ action, succeeded: 0, failed: targetIds.map((id) => ({ id, reason: body?.error?.message ?? `Request failed (${res.status})` })) })
+        return
+      }
+      const data = body?.data as { succeeded: string[]; failed: Array<{ id: string; reason: string }> }
+      setBulkReport({ action, succeeded: data.succeeded.length, failed: data.failed })
+      // Drop successful ids from selection so the toolbar reflects the remaining
+      // failed rows — the user can retry or fix the underlying reason.
+      setSelected((prev) => {
+        const next = new Set(prev)
+        for (const id of data.succeeded) next.delete(id)
+        return next
+      })
+      // Refresh the list so status changes / soft-deletes are visible.
+      await load()
+    } finally {
+      setBulkBusy(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, selected, bulkBusy])
 
   // CSV export of the currently filtered set. Columns match what the card
   // grid shows — including the assembled-only stats — so the export is
@@ -355,6 +438,89 @@ function AssembledProductsList() {
         </div>
       )}
 
+      {/* Bulk-action toolbar. Appears whenever any rows in the current filter
+          are selected. The buttons touch only visible+selected ids so a
+          hidden selection doesn't get mass-actioned by mistake. */}
+      {visibleSelected.length > 0 && (
+        <div className="sticky top-2 z-30 flex flex-wrap items-center gap-2 rounded-xl border border-primary/40 bg-primary/5 backdrop-blur-sm px-3 py-2 shadow-md">
+          <span className="text-xs font-bold text-primary">
+            {visibleSelected.length} selected
+            {selected.size > visibleSelected.length && (
+              <span className="ml-1 text-muted-foreground font-medium">
+                ({selected.size - visibleSelected.length} hidden by filters)
+              </span>
+            )}
+          </span>
+          <span className="text-muted-foreground/40">·</span>
+          {[
+            { action: "activate" as const, label: "Activate", icon: Sparkles, tone: "text-emerald-600 dark:text-emerald-400" },
+            { action: "deactivate" as const, label: "Deactivate", icon: Ban, tone: "text-slate-600 dark:text-slate-400" },
+            { action: "discontinue" as const, label: "Discontinue", icon: Ban, tone: "text-rose-600 dark:text-rose-400" },
+            { action: "mark_finished" as const, label: "Mark Finished", icon: CheckSquare, tone: "text-emerald-600 dark:text-emerald-400" },
+            { action: "unmark_finished" as const, label: "Unmark Finished", icon: Square, tone: "text-muted-foreground" },
+            { action: "delete" as const, label: "Delete", icon: Trash2, tone: "text-destructive" },
+          ].map(({ action, label, icon: Icon, tone }) => {
+            const busy = bulkBusy === action
+            return (
+              <button
+                key={action}
+                type="button"
+                onClick={() => void runBulk(action)}
+                disabled={bulkBusy !== null}
+                className={`inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs font-semibold transition-colors hover:bg-muted/50 disabled:opacity-50 disabled:cursor-not-allowed ${tone}`}
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Icon className="h-3 w-3" />}
+                {label}
+              </button>
+            )
+          })}
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={bulkBusy !== null}
+            className="ml-auto inline-flex items-center gap-1 rounded-md text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+          >
+            <X className="h-3 w-3" /> Clear
+          </button>
+        </div>
+      )}
+
+      {/* Bulk-run report. Green when nothing failed, red with per-id
+          reasons when anything did — the failed rows stay selected so the
+          user can fix and retry, matching the merger-page pattern. */}
+      {bulkReport && (
+        <div className={`rounded-xl border px-3 py-2 space-y-1 ${
+          bulkReport.failed.length === 0
+            ? "border-emerald-500/40 bg-emerald-500/5"
+            : "border-destructive/40 bg-destructive/5"
+        }`}>
+          <div className={`flex items-center gap-2 text-xs font-bold ${
+            bulkReport.failed.length === 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
+          }`}>
+            {bulkReport.failed.length === 0 ? <CheckSquare className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
+            Bulk {bulkReport.action.replace("_", " ")} — {bulkReport.succeeded} succeeded, {bulkReport.failed.length} failed
+            <button
+              type="button"
+              onClick={() => setBulkReport(null)}
+              className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+            >dismiss</button>
+          </div>
+          {bulkReport.failed.length > 0 && (
+            <ul className="text-[11px] text-destructive space-y-0.5 max-h-32 overflow-y-auto">
+              {bulkReport.failed.slice(0, 20).map((f) => (
+                <li key={f.id}>
+                  <span className="font-mono">{items.find((it) => it.id === f.id)?.code ?? f.id.slice(0, 8)}</span>
+                  {" — "}{f.reason}
+                </li>
+              ))}
+              {bulkReport.failed.length > 20 && (
+                <li className="italic opacity-70">…{bulkReport.failed.length - 20} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* Card grid (view === "cards") */}
       {view === "cards" && (
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -376,13 +542,30 @@ function AssembledProductsList() {
           return (
             <Card
               key={it.id}
-              className="flex flex-col transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 border border-border bg-card group relative overflow-hidden cursor-pointer"
+              className={`flex flex-col transition-all duration-300 hover:shadow-lg hover:-translate-y-0.5 border bg-card group relative overflow-hidden cursor-pointer ${
+                selected.has(it.id) ? "border-primary shadow-md ring-1 ring-primary/40" : "border-border"
+              }`}
               onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}?from=products`)}
             >
               <div className={`absolute top-0 right-0 h-16 w-16 -mr-4 -mt-4 rounded-full transition-all group-hover:scale-110 ${isAssembled ? "bg-primary/5" : "bg-sky-500/5"}`} />
               <CardHeader className="pb-3">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                  {/* Selection checkbox — stopPropagation keeps the card
+                      navigate-on-click behaviour unchanged. */}
+                  <label
+                    className="mt-1 shrink-0 cursor-pointer"
+                    onClick={(e) => e.stopPropagation()}
+                    title={selected.has(it.id) ? "Deselect this item" : "Select for bulk action"}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(it.id)}
+                      onChange={() => toggleOne(it.id)}
+                      className="h-4 w-4 cursor-pointer accent-primary"
+                      aria-label={`Select ${it.code}`}
+                    />
+                  </label>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${isAssembled ? "bg-primary/10 text-primary border-primary/10" : "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/10"}`}>
                       <Icon className="h-5 w-5" />
                     </div>
@@ -528,6 +711,16 @@ function AssembledProductsList() {
             <table className="w-full text-xs">
               <thead className="bg-muted/40 text-muted-foreground uppercase text-[10px] border-b border-border">
                 <tr>
+                  <th className="px-3 py-2 w-9">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      ref={(el) => { if (el) el.indeterminate = someVisibleSelected }}
+                      onChange={toggleAllVisible}
+                      className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                      aria-label={allVisibleSelected ? "Deselect all visible" : "Select all visible"}
+                    />
+                  </th>
                   <th className="px-4 py-2 text-left font-bold">Code</th>
                   <th className="px-4 py-2 text-left font-bold">Name</th>
                   <th className="px-4 py-2 text-left font-bold">Category</th>
@@ -542,7 +735,7 @@ function AssembledProductsList() {
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
                   <tr key={`sk-${i}`}>
-                    {Array.from({ length: 9 }).map((__, j) => (
+                    {Array.from({ length: 10 }).map((__, j) => (
                       <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -554,8 +747,19 @@ function AssembledProductsList() {
                     <tr
                       key={it.id}
                       onClick={() => router.push(`/items/details/${encodeURIComponent(it.id)}?from=products`)}
-                      className="cursor-pointer hover:bg-muted/20 transition-colors"
+                      className={`cursor-pointer hover:bg-muted/20 transition-colors ${
+                        selected.has(it.id) ? "bg-primary/5" : ""
+                      }`}
                     >
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(it.id)}
+                          onChange={() => toggleOne(it.id)}
+                          className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                          aria-label={`Select ${it.code}`}
+                        />
+                      </td>
                       <td className="px-4 py-2 font-mono font-bold text-primary whitespace-nowrap">{it.code}</td>
                       <td className="px-4 py-2">
                         <div className="flex items-center gap-1.5">
