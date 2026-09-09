@@ -43,15 +43,28 @@ import {
   type StagedBom, type StagedBomRow,
 } from "@/lib/item-form-draft"
 
-type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
+type ItemStage = "under_production" | "production_complete" | "untested" | "testing" | "tested" | "faulty" | "finished"
 
-// One row per selectable stage. `slug` is the code prefix suggested by the
-// auto-code helper when no category is chosen yet. `defaultUom` matches the
-// intuitive base unit; user can override. `group` splits the picker into
-// "Build stage" (raw → semi_assembled → assembled) and "Other" (consumable,
-// asset, packaging) — orthogonal-to-build kinds live in their own bucket.
-interface StageMeta {
+function sourceKindFor(t: ItemType): "purchased" | "manufactured" {
+  return t === "sub_assembly" || t === "finished_product" ? "manufactured" : "purchased"
+}
+function defaultStageFor(t: ItemType): ItemStage {
+  return t === "sub_assembly" || t === "finished_product" ? "under_production" : "untested"
+}
+
+const STAGE_LABELS: Record<ItemStage, string> = {
+  under_production: "Under Production",
+  production_complete: "Production Complete",
+  untested: "Untested",
+  testing: "Testing",
+  tested: "Tested",
+  faulty: "Faulty",
+  finished: "Finished",
+}
+
+interface ItemTypeMeta {
   value: ItemType
   label: string
   hint: string
@@ -62,15 +75,15 @@ interface StageMeta {
   tone: string
   group: "build" | "other"
 }
-const ITEM_TYPES: StageMeta[] = [
-  { value: "raw",            label: "Raw",             hint: "Purchased material or part",             slug: "RAW", defaultUom: "PCS", defaultSource: "purchased",    icon: Nut,     tone: "border-primary/30 bg-primary/5",         group: "build" },
-  { value: "semi_assembled", label: "Semi-assembled",  hint: "A sub-assembly built in-house",          slug: "SUB", defaultUom: "PCS", defaultSource: "manufactured", icon: Cpu,     tone: "border-sky-500/30 bg-sky-500/5",         group: "build" },
-  { value: "assembled",      label: "Assembled",       hint: "A fully-built board or product",         slug: "FG",  defaultUom: "PCS", defaultSource: "manufactured", icon: Package, tone: "border-emerald-500/30 bg-emerald-500/5", group: "build" },
-  { value: "consumable",     label: "Consumable",      hint: "Solder, flux, cleaner, adhesive, tape…", slug: "CON", defaultUom: "PCS", defaultSource: "purchased",    icon: Boxes,   tone: "border-amber-500/30 bg-amber-500/5",     group: "other" },
-  { value: "asset",          label: "Asset",           hint: "IT gear, tools, machines, fixtures",     slug: "AST", defaultUom: "PCS", defaultSource: "purchased",    icon: Laptop,  tone: "border-violet-500/30 bg-violet-500/5",   group: "other" },
-  { value: "packaging",      label: "Packaging",       hint: "Boxes, bags, foam, labels",              slug: "PKG", defaultUom: "PCS", defaultSource: "purchased",    icon: Wrench,  tone: "border-slate-500/30 bg-slate-500/5",     group: "other" },
+const ITEM_TYPES: ItemTypeMeta[] = [
+  { value: "raw",            label: "Raw",              hint: "Purchased material or part",             slug: "RAW", defaultUom: "PCS", defaultSource: "purchased",    icon: Nut,     tone: "border-primary/30 bg-primary/5",         group: "build" },
+  { value: "sub_assembly", label: "Sub-Assemblies",   hint: "A sub-assembly built in-house",          slug: "SUB", defaultUom: "PCS", defaultSource: "manufactured", icon: Cpu,     tone: "border-sky-500/30 bg-sky-500/5",         group: "build" },
+  { value: "finished_product",      label: "Finished Products", hint: "A fully-built board or product",        slug: "FG",  defaultUom: "PCS", defaultSource: "manufactured", icon: Package, tone: "border-emerald-500/30 bg-emerald-500/5", group: "build" },
+  { value: "consumable",     label: "Consumable",       hint: "Solder, flux, cleaner, adhesive, tape…", slug: "CON", defaultUom: "PCS", defaultSource: "purchased",    icon: Boxes,   tone: "border-amber-500/30 bg-amber-500/5",     group: "other" },
+  { value: "asset",          label: "Asset",            hint: "IT gear, tools, machines, fixtures",     slug: "AST", defaultUom: "PCS", defaultSource: "purchased",    icon: Laptop,  tone: "border-violet-500/30 bg-violet-500/5",   group: "other" },
+  { value: "packaging",      label: "Packaging",        hint: "Boxes, bags, foam, labels",              slug: "PKG", defaultUom: "PCS", defaultSource: "purchased",    icon: Wrench,  tone: "border-slate-500/30 bg-slate-500/5",     group: "other" },
 ]
-const ITEM_TYPE_BY_VALUE: Record<ItemType, StageMeta> = Object.fromEntries(ITEM_TYPES.map((t) => [t.value, t])) as Record<ItemType, StageMeta>
+const ITEM_TYPE_BY_VALUE: Record<ItemType, ItemTypeMeta> = Object.fromEntries(ITEM_TYPES.map((t) => [t.value, t])) as Record<ItemType, ItemTypeMeta>
 
 const UOM_OPTIONS = ["PCS", "Reel", "Tray", "Meter", "Set", "Box", "Roll", "Kg", "Litre"]
 
@@ -91,7 +104,7 @@ export interface UniversalItemInitial {
   itemType: ItemType; baseUom: string;
   minStock: number; reorderQty: number; safetyStock: number; leadTimeDays: number | null;
   specs: unknown; status: ItemStatus;
-  /** Slice 3: sellable flag. Independent of stage. */
+  /** Slice 3: sellable flag. Independent of item type. */
   isFinishedGood: boolean;
   solderType: "SMD" | "DIP" | null; footprint: string | null; spq: number | null;
   packageLengthMm: number | null; packageWidthMm: number | null; packageHeightMm: number | null;
@@ -148,12 +161,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const isEdit = mode === "edit"
   const fromId = searchParams.get("from")
 
-  // `?type=X` on /items/add pre-selects the stage — driven by the
+  // `?type=X` on /items/add pre-selects the item type — driven by the
   // "Add item" buttons on the filtered Semi-assembled / Assembled Products
-  // list pages so the user doesn't have to change stage after landing here.
+  // list pages so the user doesn't have to change item type after landing here.
   // Ignored in edit mode (initial always wins) and when the value isn't a
   // recognized ItemType.
-  const validTypes = new Set<ItemType>(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"])
+  const validTypes = new Set<ItemType>(["raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"])
   const typeFromQuery = !isEdit ? searchParams?.get("type") ?? null : null
   const initialTypeFromQuery: ItemType | null =
     typeFromQuery && validTypes.has(typeFromQuery as ItemType) ? (typeFromQuery as ItemType) : null
@@ -190,9 +203,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   // Mark touched when the caller pre-selected via ?type=, so the category-→-
   // type auto-detect doesn't clobber it on first render.
   const [typeTouched, setTypeTouched] = React.useState(isEdit || initialTypeFromQuery !== null)
-  const [sourceKind, setSourceKind] = React.useState<"purchased" | "manufactured">(
-    initial?.variants.some((v) => v.sourceKind === "manufactured") ? "manufactured" : "purchased",
-  )
+  // Source kind is derived from item type — no longer user-selectable.
+  const sourceKind = sourceKindFor(itemType)
   const [categoryId, setCategoryId] = React.useState(initial?.categoryId ?? "")
   const [name, setName] = React.useState(initial?.name ?? "")
   const [code, setCode] = React.useState(initial?.code ?? "")
@@ -200,7 +212,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const [genericPn, setGenericPn] = React.useState(initial?.genericPn ?? "")
   const [description, setDescription] = React.useState(initial?.description ?? "")
   const [baseUom, setBaseUom] = React.useState(initial?.baseUom ?? "PCS")
-  // Slice 3: sellable flag. Independent of stage — a Populated PCB can be
+  // Slice 3: sellable flag. Independent of item type — a sub-assembly can be
   // semi_assembled AND a finished good. Defaults false in add mode; edit
   // mode reflects whatever is stored.
   const [isFinishedGood, setIsFinishedGood] = React.useState<boolean>(initial?.isFinishedGood ?? false)
@@ -301,7 +313,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   const [solderType, setSolderType] = React.useState<"SMD" | "DIP">(initial?.solderType ?? "SMD")
   const [footprint,  setFootprint]  = React.useState(initial?.footprint ?? "")
   const [spq,        setSpq]        = React.useState(initial?.spq == null ? "" : String(initial.spq))
-  const boardApplicable = itemType === "raw" || itemType === "semi_assembled"
+  const boardApplicable = itemType === "raw" || itemType === "sub_assembly"
   // Close the section automatically when the item type changes to something
   // where board data doesn't apply — avoids submitting stale board data for
   // an asset the user later reclassified.
@@ -406,7 +418,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   //  Inline row-by-row entry was retired — see the JSX below.
   const bomApplicable = itemType !== "raw"
 
-  // Auto-close the section if the stage flips to raw (nothing there is valid).
+  // Auto-close the section if the item type flips to raw (nothing there is valid).
   React.useEffect(() => {
     if (!bomApplicable && openSections.has("bom")) {
       setOpenSections((prev) => { const n = new Set(prev); n.delete("bom"); return n })
@@ -430,17 +442,12 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     setSpecs(next)
   }
 
-  // Switching stage toggles the default source (a finished good is always
-  // manufactured, a raw part is always purchased), the default UOM, and — if
-  // the current category no longer belongs to this stage — clears the picker
-  // so the user re-picks from the (now stage-scoped) list. One-way flow:
-  // Stage → Category. There is no reverse Category → Stage auto-detect
-  // any more (Slice 2 makes categories a proper subset of a stage).
+  // Switching item type toggles the default source, UOM, and clears the
+  // category if it no longer belongs to the new item type.
   const handlePickType = (t: ItemType) => {
     const meta = ITEM_TYPE_BY_VALUE[t]
     setItemType(t)
     setTypeTouched(true)
-    setSourceKind(meta.defaultSource)
     setBaseUom(meta.defaultUom)
     const cat = d.getCategory(categoryId)
     if (cat && cat.defaultItemType && cat.defaultItemType !== t) setCategoryId("")
@@ -460,7 +467,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
   // and jump to /items/import, then load it back on this component's next
   // mount so nothing they typed is lost.
   const snapshotForm = React.useCallback(() => ({
-    itemType, sourceKind, categoryId, name, code, codeTouched,
+    itemType, categoryId, name, code, codeTouched,
     genericPn, description, baseUom, isFinishedGood,
     openSections: Array.from(openSections),
     collapsedSections: Array.from(collapsedSections),
@@ -472,7 +479,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     usefulLifeMonths, salvageValue, depreciationMethod, conditionKind,
     specs, mfrRows,
   }), [
-    itemType, sourceKind, categoryId, name, code, codeTouched,
+    itemType, categoryId, name, code, codeTouched,
     genericPn, description, baseUom, isFinishedGood,
     openSections, collapsedSections,
     minStock, reorderQty, safetyStock, leadTimeDays,
@@ -504,7 +511,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
       type Snap = ReturnType<typeof snapshotForm>
       const s = draft.data as Partial<Snap>
       if (s.itemType) { setItemType(s.itemType); setTypeTouched(true) }
-      if (s.sourceKind) setSourceKind(s.sourceKind)
+      // sourceKind is now derived from itemType — no need to restore it
       if (typeof s.categoryId === "string") setCategoryId(s.categoryId)
       if (typeof s.name === "string") setName(s.name)
       if (typeof s.code === "string") { setCode(s.code); if (s.codeTouched) setCodeTouched(true) }
@@ -657,11 +664,8 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             depreciationMethod: depreciationMethod || null,
             conditionKind:      conditionKind || null,
           } : {}),
-          // sourceKind is captured in Section-1 state but not sent yet — the F1
-          // create endpoint keys source on the variant, not the item. P3 posts
-          // brand variants as a follow-up POST /api/items/[id]/variants instead
-          // (the endpoint accepts brand names and resolves them server-side,
-          // which we do not do inline in createItem's variants[] input).
+          // sourceKind is derived from itemType server-side. Brand variants
+          // are posted as a follow-up POST /api/items/[id]/variants.
         }),
       })
       const body = await res.json().catch(() => null)
@@ -852,7 +856,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
     // Section 1 — identity keys are NOT copied (code, genericPN, serial).
     setItemType(src.itemType)
     setTypeTouched(true)
-    setSourceKind(src.variants.some((v) => v.sourceKind === "manufactured") ? "manufactured" : "purchased")
+    // sourceKind is derived from itemType — no setter needed
     setCategoryId(src.categoryId ?? "")
     setName(`${src.name} (Copy)`)
     setCodeTouched(false); setCode("")
@@ -1114,7 +1118,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   </div>
                 </div>
                 <span className="shrink-0 text-[10px] font-bold uppercase rounded-full border border-border bg-muted/30 px-2 py-0.5 text-muted-foreground">
-                  {t.itemType.replace("_", " ")}
+                  {ITEM_TYPE_BY_VALUE[t.itemType]?.label ?? t.itemType.replace("_", " ")}
                 </span>
               </button>
             ))}
@@ -1130,23 +1134,20 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
             <CardDescription>Type, category, code, name — the core of every item.</CardDescription>
           </CardHeader>
           <CardContent className="p-6 space-y-6">
-            {/* Stage picker — two groups: Build stage + Other. Item type in the
-                DB is still `item_type`; this UI just labels it "Stage" so it
-                reads naturally to a manufacturing person. */}
             <div className="space-y-3">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                Stage
-                {isEdit && <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/80 normal-case tracking-normal"><Lock className="h-3 w-3" /> keep in mind: changing stage on an existing item reclassifies it everywhere</span>}
+                Item Type
+                {isEdit && <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground/80 normal-case tracking-normal"><Lock className="h-3 w-3" /> keep in mind: changing item type on an existing item reclassifies it everywhere</span>}
               </label>
               {(["build", "other"] as const).map((group) => {
-                const stages = ITEM_TYPES.filter((t) => t.group === group)
+                const types = ITEM_TYPES.filter((t) => t.group === group)
                 return (
                   <div key={group} className="space-y-1.5">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                      {group === "build" ? "Build stage" : "Other"}
+                      {group === "build" ? "Build" : "Other"}
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {stages.map((t) => {
+                      {types.map((t) => {
                         const Icon = t.icon
                         const active = itemType === t.value
                         return (
@@ -1172,36 +1173,33 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
               })}
             </div>
 
-            {/* Source toggle */}
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Source</label>
-              <div className="flex items-center gap-2">
-                {(["purchased", "manufactured"] as const).map((s) => {
-                  const active = sourceKind === s
-                  const Icon = s === "purchased" ? ShoppingBag : Factory
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setSourceKind(s)}
-                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition-all cursor-pointer ${
-                        active ? "border-primary/60 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:bg-muted/30"
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      {s === "purchased" ? "Purchased" : "Made in-house"}
-                    </button>
-                  )
-                })}
-                <span className="text-[11px] text-muted-foreground italic ml-1">
-                  Drives the Manufacturer section in a later phase — for now it's a hint on the item.
-                </span>
+            {/* Source + Default Stage — both derived from item type */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Source</label>
+                <div className="h-9 flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 text-sm">
+                  {sourceKind === "purchased"
+                    ? <><ShoppingBag className="h-3.5 w-3.5 text-muted-foreground" /><span className="font-semibold">Purchased</span></>
+                    : <><Factory className="h-3.5 w-3.5 text-muted-foreground" /><span className="font-semibold">Made in-house</span></>}
+                  <span className="text-[10px] text-muted-foreground/70 italic ml-auto"><Lock className="h-3 w-3 inline -mt-0.5 mr-0.5" />derived from item type</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Default Stage</label>
+                <div className="h-9 flex items-center gap-2 rounded-md border border-border bg-muted/20 px-3 text-sm">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                    sourceKind === "manufactured"
+                      ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                      : "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400"
+                  }`}>
+                    {STAGE_LABELS[defaultStageFor(itemType)]}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground/70 italic ml-auto">new pieces start here</span>
+                </div>
               </div>
             </div>
 
-            {/* Finished-good flag (Slice 3). Independent of stage — a Populated
-                PCB can be semi_assembled AND sellable. Feeds the future sales
-                module; nothing else consumes it yet. */}
+            {/* Finished-good flag (Slice 3). Independent of item type. */}
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Role</label>
               <label className="flex items-start gap-2.5 rounded-lg border border-border bg-background px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors">
@@ -1214,13 +1212,13 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 <div className="flex-1">
                   <div className="text-sm font-semibold text-foreground">This is a finished good (we sell it)</div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
-                    Independent of stage — a Populated PCB can be a sub-assembly <em>and</em> a finished good. Feeds the sales module.
+                    Independent of item type — a sub-assembly can also be a finished good. Feeds the sales module.
                   </div>
                 </div>
               </label>
             </div>
 
-            {/* Category — filtered to the chosen stage */}
+            {/* Category — filtered to the chosen item type */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
@@ -1234,13 +1232,13 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   <Plus className="h-3 w-3" /> {showAddCat ? "Cancel" : "Add category"}
                 </button>
               </div>
-              <CategoryCascade value={categoryId} onChange={setCategoryId} allLabel="— Select a category —" stageFilter={itemType} />
+              <CategoryCascade value={categoryId} onChange={setCategoryId} allLabel="— Select a category —" itemTypeFilter={itemType} />
               {showAddCat && (
                 <div className="rounded-lg border border-border bg-muted/10 p-3 space-y-2">
                   <p className="text-[11px] text-muted-foreground">
                     New category will be added {categoryId
                       ? <>under <span className="font-mono text-foreground">{d.getCategory(categoryId)?.path}</span></>
-                      : "as a top-level root"}, under stage <span className="font-mono text-foreground">{ITEM_TYPE_BY_VALUE[itemType].label}</span>.
+                      : "as a top-level root"}, under item type <span className="font-mono text-foreground">{ITEM_TYPE_BY_VALUE[itemType].label}</span>.
                   </p>
                   <div className="flex items-center gap-2">
                     <Input
@@ -1257,7 +1255,7 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                 </div>
               )}
               <span className="text-[11px] text-muted-foreground">
-                Categories are scoped to the stage picked above. Change the stage to see a different set.
+                Categories are scoped to the item type picked above. Change the item type to see a different set.
               </span>
             </div>
 
@@ -2102,13 +2100,13 @@ export default function UniversalItemForm({ mode, initial }: UniversalItemFormPr
                   { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Reorder point + lead time = planner works." },
                   { key: "packaging", label: "Packaging",         icon: Package, why: "Only if size/weight matters for storage." },
                 ],
-                semi_assembled: [
+                sub_assembly: [
                   { key: "bom",       label: "Assembly / BOM",    icon: Layers,  why: "What raws go into this sub-assembly." },
                   { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Add here only if you also BUY it from a vendor." },
                   { key: "stock",     label: "Stock Info",        icon: Boxes,   why: "Reorder point + lead time." },
                   { key: "board",     label: "Board Info",        icon: Cpu,     why: "For populated PCBs — solder type, footprint." },
                 ],
-                assembled: [
+                finished_product: [
                   { key: "bom",       label: "Assembly / BOM",    icon: Layers,  why: "The full recipe of sub-assemblies + raws." },
                   { key: "packaging", label: "Packaging",         icon: Package, why: "Shipping dims + weight for finished goods." },
                   { key: "mfr",       label: "Manufacturer Info", icon: Factory, why: "Only if you also source it externally." },

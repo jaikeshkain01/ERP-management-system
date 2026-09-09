@@ -17,7 +17,7 @@ import { Client } from "pg";
 const url = process.env.DIRECT_URL || process.env.DATABASE_URL;
 if (!url) { console.error("DIRECT_URL / DATABASE_URL not set"); process.exit(2); }
 
-type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging";
+type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging";
 
 // Tree literal — each node may have children. `defaultItemType` is the type
 // suggested when this category is picked in the add form.
@@ -26,12 +26,12 @@ interface Node { name: string; defaultItemType?: ItemType; children?: Node[] }
 const TAXONOMY: Node[] = [
   {
     name: "Electronics", defaultItemType: "raw", children: [
-      { name: "Resistors",              defaultItemType: "raw" },
+      { name: "Resistance",             defaultItemType: "raw" },
       { name: "Capacitors",             defaultItemType: "raw" },
       { name: "Inductors & Magnetics",  defaultItemType: "raw" },
       { name: "Diodes",                 defaultItemType: "raw" },
       { name: "Transistors",            defaultItemType: "raw" },
-      { name: "Integrated Circuits",    defaultItemType: "raw" },
+      { name: "IC",                      defaultItemType: "raw" },
       { name: "Connectors",             defaultItemType: "raw" },
       { name: "Sensors",                defaultItemType: "raw" },
       { name: "Crystals & Oscillators", defaultItemType: "raw" },
@@ -55,8 +55,8 @@ const TAXONOMY: Node[] = [
     ],
   },
   { name: "PCBs (blank)",     defaultItemType: "raw" },
-  { name: "Sub-assemblies",   defaultItemType: "semi_assembled" },
-  { name: "Finished Goods",   defaultItemType: "assembled" },
+  { name: "Sub-assemblies",   defaultItemType: "sub_assembly" },
+  { name: "Finished Goods",   defaultItemType: "finished_product" },
   {
     name: "Consumables", defaultItemType: "consumable", children: [
       { name: "Solder & Flux",       defaultItemType: "consumable" },

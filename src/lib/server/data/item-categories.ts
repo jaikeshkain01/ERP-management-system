@@ -20,14 +20,14 @@ export interface ItemCategoryView {
   name: string;
   slug: string;
   path: string;
-  /** The stage this category belongs to (Slice 1: NOT NULL). Every category
-   *  is now partitioned by stage — the add-form category picker filters
-   *  on it, and inline-creates place the new node under the current stage. */
+  /** The item type this category belongs to. Every category is partitioned
+   *  by item type — the add-form category picker filters on it, and
+   *  inline-creates place the new node under the current item type. */
   defaultItemType: string;
   sortOrder: number;
 }
 
-const ITEM_TYPES = new Set(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"]);
+const ITEM_TYPES = new Set(["raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"]);
 const slugify = (s: string) =>
   s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
@@ -53,7 +53,7 @@ export async function listItemCategories(): Promise<ItemCategoryView[]> {
 export interface CreateItemCategoryInput {
   name: string;
   parentId?: string | null;
-  /** Required (Slice 1): every category belongs to exactly one stage. */
+  /** Required: every category belongs to exactly one item type. */
   defaultItemType: string;
 }
 
@@ -67,7 +67,7 @@ export async function createItemCategory(input: CreateItemCategoryInput): Promis
 
     const defaultItemType = input.defaultItemType;
     if (!defaultItemType || !ITEM_TYPES.has(defaultItemType)) {
-      throw Errors.badRequest("Category stage (defaultItemType) is required", { defaultItemType });
+      throw Errors.badRequest("Category item type (defaultItemType) is required", { defaultItemType });
     }
 
     let parentPath: string | null = null;

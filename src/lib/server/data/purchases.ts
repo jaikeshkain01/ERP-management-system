@@ -17,6 +17,7 @@ import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
 import { formatINR, formatLeadTime } from "@/lib/catalog";
+import { generateSerials } from "@/lib/server/data/inventory";
 
 // Flattened one-row-per-item view shapes, consumed directly by the purchasing pages.
 export interface PurchaseRequestView {
@@ -422,7 +423,7 @@ export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; 
       });
       if (!variant) throw Errors.conflict("No brand variant exists for a PO line component/brand");
 
-      await tx.inventory_transactions.create({
+      const txn = await tx.inventory_transactions.create({
         data: {
           company_id: ctx.companyId!,
           type: "IN",
@@ -435,7 +436,9 @@ export async function receivePurchaseOrder(poNo: string): Promise<{ po: string; 
           reason: `Goods-in ${poNo}`,
           created_by: ctx.userId,
         },
+        select: { lot_id: true },
       });
+      await generateSerials(tx, ctx, variant.id, remaining, txn.lot_id);
       await tx.purchase_order_items.update({
         where: { id: item.id },
         data: { received_qty: item.qty, updated_by: ctx.userId },

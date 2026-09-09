@@ -30,7 +30,7 @@ import { ItemStockMoveDialog, type StockMoveItem } from "@/components/inventory/
 import { ItemAdjustmentDialog, type AdjustmentItem } from "@/components/inventory/item-adjustment-dialog"
 import { classifyAbc, summarizeAbc, type AbcTier } from "@/lib/inventory/abc-classification"
 
-type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
 type StockStatus = "Healthy" | "Low" | "Out of Stock"
 
@@ -43,15 +43,18 @@ interface Item {
   minStock: number; reorderQty: number; status: ItemStatus
   onHand: number; stockValue: number; lastMovementAt: string | null
   variants: Variant[]
+  importSource: string | null
+  createdAt: string
+  usedIn: Array<{ id: string; code: string; name: string }>
 }
 
 const TYPE_ICON: Record<ItemType, React.ComponentType<{ className?: string }>> = {
-  raw: Nut, semi_assembled: Cpu, assembled: Package, consumable: Boxes, asset: Laptop, packaging: Wrench,
+  raw: Nut, sub_assembly: Cpu, finished_product: Package, consumable: Boxes, asset: Laptop, packaging: Wrench,
 }
 const TYPE_META: Record<ItemType, { label: string; tone: string }> = {
   raw:            { label: "Raw",          tone: "bg-primary/10 text-primary border-primary/20" },
-  semi_assembled: { label: "Semi-assembled", tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
-  assembled:      { label: "Finished",     tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  sub_assembly: { label: "Sub-Assemblies", tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  finished_product: { label: "Finished Products", tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   consumable:     { label: "Consumable",   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   asset:          { label: "Asset",        tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   packaging:      { label: "Packaging",    tone: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
@@ -180,7 +183,7 @@ export default function InventoryPage() {
   }, [items, query, typeFilter, statusFilter, abcFilter, abcTiers])
 
   const toMoveItem = (it: Item): StockMoveItem => ({
-    id: it.id, code: it.code, name: it.name, baseUom: it.baseUom,
+    id: it.id, code: it.code, name: it.name, baseUom: it.baseUom, onHand: it.onHand,
     variants: it.variants.map((v) => ({ id: v.id, sourceKind: v.sourceKind, brandSlug: v.brandSlug, partNo: v.partNo, isDefault: v.isDefault })),
   })
   const toAdjustItem = (it: Item): AdjustmentItem => ({
@@ -236,9 +239,9 @@ export default function InventoryPage() {
           </div>
           {/* Type chips */}
           <div className="mt-3 flex flex-wrap items-center gap-1.5">
-            {(["all", "raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"] as const).map((t) => {
+            {(["all", "raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"] as const).map((t) => {
               const active = typeFilter === t
-              const label = t === "all" ? "All types" : t === "semi_assembled" ? "Semi-assembled" : t === "assembled" ? "Assembled" : t[0].toUpperCase() + t.slice(1)
+              const label = t === "all" ? "All types" : t === "sub_assembly" ? "Sub-Assemblies" : t === "finished_product" ? "Finished Products" : t[0].toUpperCase() + t.slice(1)
               return (
                 <button key={t} onClick={() => setTypeFilter(t)}
                   className={`px-2.5 py-1 text-xs rounded-full border font-semibold transition-all ${active ? "bg-primary/10 border-primary text-primary" : "bg-background border-border text-muted-foreground hover:bg-muted/50"}`}>
@@ -283,22 +286,25 @@ export default function InventoryPage() {
             <table className="w-full text-sm text-left">
               <thead className="text-[10px] uppercase bg-muted/30 text-muted-foreground border-b border-border">
                 <tr>
-                  <th className="px-6 py-3 font-semibold">Item</th>
+                  <th className="px-4 py-3 font-semibold max-w-[220px]">Item</th>
                   <th className="px-4 py-3 font-semibold w-32">Type</th>
                   <th className="px-4 py-3 font-semibold">Generic PN</th>
                   <th className="px-4 py-3 font-semibold">Category</th>
+                  <th className="px-4 py-3 font-semibold">Origin / Used in</th>
+                  <th className="px-3 py-3 font-semibold text-center w-20">Variants</th>
                   <th className="px-6 py-3 font-semibold w-52">On hand</th>
                   <th className="px-4 py-3 font-semibold text-right w-24">Reorder</th>
                   <th className="px-3 py-3 font-semibold text-center w-16">UOM</th>
                   <th className="px-6 py-3 font-semibold text-right w-32">Value</th>
                   <th className="px-4 py-3 font-semibold text-right w-28">Last move</th>
+                  <th className="px-4 py-3 font-semibold w-24">Created</th>
                   <th className="px-6 py-3 font-semibold text-right w-32">Status</th>
                   <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
-                  <tr key={i}>{Array.from({ length: 11 }).map((__, j) => <td key={j} className="px-4 py-4"><Skeleton className="h-4 w-full" /></td>)}</tr>
+                  <tr key={i}>{Array.from({ length: 14 }).map((__, j) => <td key={j} className="px-4 py-4"><Skeleton className="h-4 w-full" /></td>)}</tr>
                 ))}
                 {!loading && rows.map((it) => {
                   const status = stockStatus(it)
@@ -316,12 +322,12 @@ export default function InventoryPage() {
                   return (
                     <React.Fragment key={it.id}>
                       <tr className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => toggleRow(it.id)}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="h-9 w-9 shrink-0 flex items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="h-4 w-4" /></div>
+                        <td className="px-4 py-3 max-w-[220px]">
+                          <div className="flex items-center gap-2">
+                            <div className="h-7 w-7 shrink-0 flex items-center justify-center rounded-md bg-muted text-muted-foreground"><Icon className="h-3.5 w-3.5" /></div>
                             <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-semibold leading-tight">{it.name}</span>
+                              <div className="flex items-center gap-1">
+                                <span className="text-xs font-semibold leading-tight truncate">{it.name}</span>
                                 <span
                                   className={`inline-flex items-center justify-center rounded border px-1 py-0 text-[9px] font-black font-mono uppercase leading-tight ${abcTone}`}
                                   title={abc === "unclassified" ? "No stock value — outside the Pareto tiers" : `Tier ${abc} — click the ABC chips above to filter`}
@@ -329,7 +335,7 @@ export default function InventoryPage() {
                                   {abc === "unclassified" ? "—" : abc}
                                 </span>
                               </div>
-                              <span className="text-[11px] font-mono text-muted-foreground">{it.code}</span>
+                              <span className="text-[10px] font-mono text-muted-foreground truncate">{it.code}</span>
                             </div>
                           </div>
                         </td>
@@ -340,6 +346,27 @@ export default function InventoryPage() {
                         </td>
                         <td className="px-4 py-4 font-mono text-xs text-muted-foreground">{it.genericPn ?? "—"}</td>
                         <td className="px-4 py-4 text-xs text-muted-foreground">{it.categoryPath ?? "—"}</td>
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap items-center gap-1">
+                            {it.importSource && (
+                              <span className="inline-flex items-center rounded-full bg-sky-500/10 text-sky-600 dark:text-sky-400 px-2 py-0.5 text-[10px] font-bold">
+                                Imported: {it.importSource}
+                              </span>
+                            )}
+                            {it.usedIn.length > 0 && (
+                              <span
+                                className="inline-flex items-center rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-2 py-0.5 text-[10px] font-bold"
+                                title={it.usedIn.map((p) => `${p.code} — ${p.name}`).join("\n")}
+                              >
+                                Used in {it.usedIn.length}
+                              </span>
+                            )}
+                            {!it.importSource && it.usedIn.length === 0 && (
+                              <span className="text-[11px] text-muted-foreground/60">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-4 text-center font-mono font-semibold text-muted-foreground/80">{it.variants.length}</td>
                         <td className="px-6 py-4">
                           <div className="flex items-center justify-between text-xs mb-1.5">
                             <span className="font-mono font-bold">{it.onHand.toLocaleString()} <span className="text-muted-foreground font-normal">{it.baseUom}</span></span>
@@ -351,6 +378,9 @@ export default function InventoryPage() {
                         <td className="px-3 py-4 text-center font-mono text-xs text-muted-foreground">{it.baseUom}</td>
                         <td className="px-6 py-4 text-right font-mono font-semibold">{it.stockValue > 0 ? formatINR(it.stockValue) : "—"}</td>
                         <td className="px-4 py-4 text-right text-xs text-muted-foreground whitespace-nowrap" title={it.lastMovementAt ? new Date(it.lastMovementAt).toLocaleString() : "No movements yet"}>{timeAgo(it.lastMovementAt)}</td>
+                        <td className="px-4 py-4 text-xs text-muted-foreground font-mono" title={it.createdAt ? new Date(it.createdAt).toLocaleString() : ""}>
+                          {it.createdAt ? it.createdAt.slice(0, 10) : "—"}
+                        </td>
                         <td className="px-6 py-4 text-right">
                           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-bold ${style.pill}`}>
                             <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />{status}
@@ -361,7 +391,7 @@ export default function InventoryPage() {
 
                       {isOpen && (
                         <tr className="bg-muted/10">
-                          <td colSpan={11} className="px-6 py-5">
+                          <td colSpan={14} className="px-6 py-5">
                             {/* Action bar. Stock In requires a Purchased variant —
                                 pure Made-in-house items grow through Production
                                 completion, not a manual receipt. Adding a
@@ -495,7 +525,7 @@ export default function InventoryPage() {
                   )
                 })}
                 {!loading && rows.length === 0 && (
-                  <tr><td colSpan={11} className="px-6 py-16 text-center">
+                  <tr><td colSpan={14} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Search className="h-8 w-8 opacity-30" />
                       <span className="text-sm font-medium">{error ? "Failed to load inventory" : "No items match your search"}</span>

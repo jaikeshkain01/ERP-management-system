@@ -73,7 +73,7 @@ export function UniversalSearch() {
     if (!universalItems) return LEGACY_PRODUCTS
     const seen = new Set(LEGACY_PRODUCTS.map((p) => p.id))
     const extras: SearchProduct[] = universalItems
-      .filter((it) => (it.itemType === "assembled" || it.isFinishedGood) && !seen.has(it.id))
+      .filter((it) => (it.itemType === "finished_product" || it.isFinishedGood) && !seen.has(it.id))
       .map((it) => ({ id: it.id, name: it.name, code: it.code, description: it.description ?? "", estimatedCost: "", pcbs: [] }))
     return [...LEGACY_PRODUCTS, ...extras]
   }, [LEGACY_PRODUCTS, universalItems])
@@ -81,7 +81,7 @@ export function UniversalSearch() {
     if (!universalItems) return LEGACY_PCBS
     const seen = new Set(LEGACY_PCBS.map((p) => p.id))
     const extras: SearchPCB[] = universalItems
-      .filter((it) => it.itemType === "semi_assembled" && !seen.has(it.id))
+      .filter((it) => it.itemType === "sub_assembly" && !seen.has(it.id))
       .map((it) => ({ id: it.id, name: it.name, productCode: "", productName: "", components: [] }))
     return [...LEGACY_PCBS, ...extras]
   }, [LEGACY_PCBS, universalItems])

@@ -64,7 +64,7 @@ export async function getAssembledProductStats(): Promise<AssembledProductStats[
         JOIN items i ON i.id = bv.parent_item_id
        WHERE i.company_id = ${ctx.companyId!}::uuid
          AND i.deleted_at IS NULL
-         AND i.item_type = 'assembled'::item_type
+         AND i.item_type = 'finished_product'::item_type
          AND bv.status = 'Active'::bom_status
          AND bv.deleted_at IS NULL`;
 

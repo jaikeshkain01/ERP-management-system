@@ -113,6 +113,7 @@ model companies {
   item_bom_versions         item_bom_versions[]
   item_categories           item_categories[]
   item_lots                 item_lots[]
+  item_serials              item_serials[]
   item_variants             item_variants[]
   items                     items[]
   notifications             notifications[]
@@ -785,6 +786,8 @@ model users {
   items_items_created_byTousers                                         items[]                     @relation("items_created_byTousers")
   items_items_custodian_user_idTousers                                  items[]                     @relation("items_custodian_user_idTousers")
   items_items_updated_byTousers                                         items[]                     @relation("items_updated_byTousers")
+  item_serials_item_serials_created_byTousers                           item_serials[]              @relation("item_serials_created_byTousers")
+  item_serials_item_serials_updated_byTousers                           item_serials[]              @relation("item_serials_updated_byTousers")
   notifications                                                         notifications[]
   pcb_revisions_pcb_revisions_created_byTousers                         pcb_revisions[]             @relation("pcb_revisions_created_byTousers")
   pcb_revisions_pcb_revisions_updated_byTousers                         pcb_revisions[]             @relation("pcb_revisions_updated_byTousers")
@@ -1058,6 +1061,7 @@ model item_lots {
   users_item_lots_created_byTousers users?                    @relation("item_lots_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   suppliers                         suppliers?                @relation(fields: [supplier_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users_item_lots_updated_byTousers users?                    @relation("item_lots_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  item_serials                      item_serials[]
 
   @@unique([company_id, id])
   @@unique([company_id, component_brand_variant_id, lot_no], map: "uq_item_lots_no", where: raw("(deleted_at IS NULL)"))
@@ -1152,7 +1156,9 @@ model items {
   is_finished_good                     Boolean                  @default(false)
   default_supplier_id                  String?                  @db.Uuid
   import_source                        String?
+  default_stage                        item_stage
   item_bom_lines                       item_bom_lines[]
+  item_serials                         item_serials[]
   item_bom_versions                    item_bom_versions?
   item_variants                        item_variants?
   suppliers                            suppliers?               @relation(fields: [company_id, default_supplier_id], references: [company_id, id], onDelete: NoAction, onUpdate: NoAction, map: "fk_items_default_supplier")
@@ -1180,6 +1186,33 @@ model items {
   @@index([company_id], map: "ix_items_is_finished_good", where: raw("((deleted_at IS NULL) AND (is_finished_good = true))"))
   @@index([company_id, status], map: "ix_items_status", where: raw("(deleted_at IS NULL)"))
   @@index([company_id, item_type], map: "ix_items_type")
+}
+
+model item_serials {
+  id                                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  company_id                           String                   @db.Uuid
+  item_id                              String                   @db.Uuid
+  serial_no                            String
+  stage                                item_stage
+  notes                                String?
+  lot_id                               String?                  @db.Uuid
+  created_by                           String?                  @db.Uuid
+  updated_by                           String?                  @db.Uuid
+  created_at                           DateTime                 @default(now()) @db.Timestamptz(6)
+  updated_at                           DateTime                 @default(now()) @db.Timestamptz(6)
+  deleted_at                           DateTime?                @db.Timestamptz(6)
+  companies                            companies                @relation(fields: [company_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  items                                items                    @relation(fields: [company_id, item_id], references: [company_id, id], onDelete: Restrict, onUpdate: NoAction)
+  item_lots                            item_lots?               @relation(fields: [lot_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_item_serials_created_byTousers users?                   @relation("item_serials_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_item_serials_updated_byTousers users?                   @relation("item_serials_updated_byTousers", fields: [updated_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([company_id, id])
+  @@unique([company_id, item_id, serial_no], map: "uq_item_serials_no", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id], map: "ix_item_serials_company")
+  @@index([company_id, item_id], map: "ix_item_serials_item")
+  @@index([company_id, stage], map: "ix_item_serials_stage", where: raw("(deleted_at IS NULL)"))
+  @@index([company_id, lot_id], map: "ix_item_serials_lot", where: raw("(deleted_at IS NULL)"))
 }
 
 enum approval_decision {
@@ -1329,8 +1362,8 @@ enum item_status {
 
 enum item_type {
   raw
-  semi_assembled
-  assembled
+  sub_assembly
+  finished_product
   consumable
   asset
   packaging
@@ -1339,6 +1372,16 @@ enum item_type {
 enum item_variant_source {
   purchased
   manufactured
+}
+
+enum item_stage {
+  under_production
+  production_complete
+  untested
+  testing
+  tested
+  faulty
+  finished
 }
 
 enum solder_type_kind {

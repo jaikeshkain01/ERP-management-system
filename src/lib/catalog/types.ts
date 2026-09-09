@@ -6,8 +6,31 @@
 export type StockStatus = "Healthy" | "Low" | "Critical"
 export type SolderType = "SMD" | "DIP"
 
-/** Lifecycle stage of an item — drives behaviour (raw is bought, finished is shipped, …). */
-export type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+/** Item type — drives behaviour (raw is bought, finished is shipped, …). */
+export type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging"
+
+/** Workflow stage for per-piece tracking. */
+export type ItemStage =
+  | "under_production"
+  | "production_complete"
+  | "untested"
+  | "testing"
+  | "tested"
+  | "faulty"
+  | "finished"
+
+/** Source kind is derived from item type — no longer user-selectable.
+ *  raw / consumable / asset / packaging → purchased
+ *  sub_assembly / finished_product     → manufactured */
+export type ItemSourceKind = "purchased" | "manufactured"
+
+export function sourceKindForItemType(t: ItemType): ItemSourceKind {
+  return t === "sub_assembly" || t === "finished_product" ? "manufactured" : "purchased"
+}
+
+export function defaultStageForItemType(t: ItemType): ItemStage {
+  return t === "sub_assembly" || t === "finished_product" ? "under_production" : "untested"
+}
 
 /** A node in the tenant's item-category tree (Phase 2A). `id` is the category uuid. */
 export interface ItemCategory {
@@ -50,7 +73,7 @@ export interface Component {
   /** Category tree node (uuid) this item belongs to, and its materialised path. */
   categoryId: string | null
   categoryPath: string | null
-  /** Lifecycle stage (raw/semi_assembled/assembled/consumable/asset/packaging). */
+  /** Item type (raw/sub_assembly/finished_product/consumable/asset/packaging). */
   itemType: ItemType
   description: string
   stock: number

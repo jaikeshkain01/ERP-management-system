@@ -256,6 +256,7 @@ async function insertChildItem(
       solder_type, footprint,
       default_supplier_id,
       import_source,
+      default_stage,
       status, created_by, updated_by
     ) VALUES (
       ${ctx.companyId!}::uuid,
@@ -264,6 +265,7 @@ async function insertChildItem(
       ${args.solderType}::solder_type_kind, ${args.footprint},
       ${args.defaultSupplierId}::uuid,
       ${args.importSource},
+      'untested'::item_stage,
       'active'::item_status, ${ctx.userId}::uuid, ${ctx.userId}::uuid
     )
     RETURNING id`;
@@ -301,7 +303,7 @@ async function assertParentImportable(tx: TxClient, parentItemId: string): Promi
   if (!row[0]) throw Errors.notFound("Item");
   if (row[0].itemType === "raw") {
     throw Errors.badRequest(
-      "Raw items don't carry a BOM — pick a semi-assembled or assembled parent",
+      "Raw items don't carry a BOM — pick a sub-assembly or finished product parent",
       { itemType: row[0].itemType },
     );
   }

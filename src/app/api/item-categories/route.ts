@@ -19,7 +19,7 @@ export async function GET() {
 const Body = z.object({
   name: z.string().trim().min(1),
   parentId: z.string().uuid().nullable().optional(),
-  defaultItemType: z.enum(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"]),
+  defaultItemType: z.enum(["raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"]),
 });
 
 export async function POST(req: Request) {

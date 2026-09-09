@@ -101,8 +101,8 @@ function SupplierDetailsContent() {
   const back = (() => {
     switch (from) {
       case "purchasing": return { href: "/purchases/requests", label: "Back to Purchase Requests", crumb: "Purchases", crumbLabel: "Purchase Requests" }
-      case "products":   return { href: "/products/list", label: "Back to Assembled Products", crumb: "Assembled Products", crumbLabel: "List" }
-      case "pcb":        return { href: "/pcb-management/list", label: "Back to Semi-assembled", crumb: "Semi-assembled", crumbLabel: "List" }
+      case "products":   return { href: "/products/list", label: "Back to Finished Products", crumb: "Finished Products", crumbLabel: "List" }
+      case "pcb":        return { href: "/pcb-management/list", label: "Back to Sub-Assemblies", crumb: "Sub-Assemblies", crumbLabel: "List" }
       default:           return { href: "/suppliers/list", label: "Back to Supplier List", crumb: "Suppliers", crumbLabel: "Supplier List" }
     }
   })()

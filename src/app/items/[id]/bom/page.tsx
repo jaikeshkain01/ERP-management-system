@@ -37,7 +37,7 @@ import { extractError } from "@/lib/api-error"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 
 // ── shapes (mirror src/lib/server/data/items.ts) ─────────────────────────────
-type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging"
 type BomStatus = "Draft" | "Active" | "Superseded" | "Obsolete"
 
 interface ParentItem {
@@ -89,7 +89,7 @@ interface DraftLine {
 // so users see consistent patterns whether they're on the add form or here.
 function suggestCode(name: string, itemType: ItemType): string {
   const slug: Record<ItemType, string> = {
-    raw: "RAW", semi_assembled: "SUB", assembled: "FG",
+    raw: "RAW", sub_assembly: "SUB", finished_product: "FG",
     consumable: "CON", asset: "AST", packaging: "PKG",
   }
   const namePart = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24)
@@ -99,8 +99,8 @@ function suggestCode(name: string, itemType: ItemType): string {
 
 const TYPE_META: Record<ItemType, { icon: React.ComponentType<{ className?: string }>; label: string }> = {
   raw:            { icon: Nut,     label: "Raw" },
-  semi_assembled: { icon: Cpu,     label: "Semi-assembled" },
-  assembled:      { icon: Package, label: "Assembled" },
+  sub_assembly: { icon: Cpu,     label: "Sub-Assemblies" },
+  finished_product:      { icon: Package, label: "Finished Products" },
   consumable:     { icon: Boxes,   label: "Consumable" },
   asset:          { icon: Laptop,  label: "Asset" },
   packaging:      { icon: Wrench,  label: "Packaging" },
@@ -883,8 +883,8 @@ export default function ItemBomEditorPage() {
                                   className="h-8 w-full rounded-md border border-border bg-background px-1.5 text-sm outline-none focus:ring-1 focus:ring-primary"
                                 >
                                   <option value="raw">Raw</option>
-                                  <option value="semi_assembled">Semi-assembled</option>
-                                  <option value="assembled">Assembled</option>
+                                  <option value="sub_assembly">Sub-Assemblies</option>
+                                  <option value="finished_product">Finished Products</option>
                                   <option value="consumable">Consumable</option>
                                   <option value="asset">Asset</option>
                                   <option value="packaging">Packaging</option>

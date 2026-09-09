@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button"
 import { extractError } from "@/lib/api-error"
 import {
   ArrowLeft, Layers, AlertTriangle, CheckCircle2, Loader2, RefreshCw,
-  Info, Merge, ExternalLink,
+  Info, Merge, ExternalLink, CheckSquare, Square, MinusSquare,
 } from "lucide-react"
 
 interface Item {
@@ -88,6 +88,7 @@ export default function MergerPage() {
   // member when the cluster is rendered; the user can override before
   // committing.
   const [keepSelection, setKeepSelection] = React.useState<Record<string, string>>({})
+  const [selectedClusters, setSelectedClusters] = React.useState<Set<string>>(new Set())
 
   const showToast = React.useCallback((info: { message: string; type: "success" | "error" | "info" }) => {
     setToast(info)
@@ -173,15 +174,16 @@ export default function MergerPage() {
   // collected into a report shown at the top of the page so the operator can
   // fix them by hand. Serial across clusters too, same rationale as single-
   // cluster merges — writes touch overlapping tables.
-  const mergeAllClusters = async () => {
-    if (bulkRunning || clusters.length === 0) return
-    if (!confirm(`Merge every cluster automatically? ${clusters.length} clusters will be processed; the row you selected as "Keep" in each cluster stays, everything else in it will be soft-deleted and re-linked.`)) return
+  const mergeClusters = async (subset: Cluster[]) => {
+    if (bulkRunning || subset.length === 0) return
+    const label = subset.length === clusters.length ? "every cluster" : `${subset.length} selected cluster${subset.length === 1 ? "" : "s"}`
+    if (!confirm(`Merge ${label} automatically? The row you selected as "Keep" in each cluster stays, everything else in it will be soft-deleted and re-linked.`)) return
     setBulkRunning(true)
     setBulkReport(null)
     const failedItems: Array<{ clusterKey: string; keepCode: string; discardCode: string; reason: string }> = []
     let mergedItems = 0
     let processedClusters = 0
-    for (const cluster of clusters) {
+    for (const cluster of subset) {
       const keepId = keepSelection[cluster.clusterKey] ?? cluster.items[0]?.id
       if (!keepId) { processedClusters++; continue }
       const keepCode = cluster.items.find((it) => it.id === keepId)?.code ?? "?"
@@ -197,7 +199,8 @@ export default function MergerPage() {
       processedClusters++
     }
     setBulkRunning(false)
-    setBulkReport({ processedClusters, totalClusters: clusters.length, mergedItems, failedItems })
+    setBulkReport({ processedClusters, totalClusters: subset.length, mergedItems, failedItems })
+    setSelectedClusters(new Set())
     showToast({
       message: failedItems.length === 0
         ? `Bulk merge done — ${mergedItems} items collapsed across ${processedClusters} clusters`
@@ -206,6 +209,33 @@ export default function MergerPage() {
     })
     void load()
   }
+
+  const mergeAllClusters = () => mergeClusters(clusters)
+
+  const mergeSelectedClusters = () => {
+    const subset = clusters.filter((c) => selectedClusters.has(c.clusterKey))
+    return mergeClusters(subset)
+  }
+
+  const toggleCluster = (key: string) => {
+    setSelectedClusters((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleAllClusters = () => {
+    if (selectedClusters.size === clusters.length) {
+      setSelectedClusters(new Set())
+    } else {
+      setSelectedClusters(new Set(clusters.map((c) => c.clusterKey)))
+    }
+  }
+
+  const allSelected = clusters.length > 0 && selectedClusters.size === clusters.length
+  const someSelected = selectedClusters.size > 0 && selectedClusters.size < clusters.length
 
   return (
     <div className="space-y-6 pb-12">
@@ -244,18 +274,45 @@ export default function MergerPage() {
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
         </Button>
         {clusters.length > 0 && (
-          <Button
-            size="sm"
-            className="gap-1.5 font-bold"
-            onClick={() => void mergeAllClusters()}
-            disabled={bulkRunning || loading || busyClusterKey !== null}
-          >
-            {bulkRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Merge className="h-3.5 w-3.5" />}
-            {bulkRunning ? "Merging all…" : `Merge all ${clusters.length} clusters`}
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={toggleAllClusters}
+              disabled={bulkRunning || loading}
+            >
+              {allSelected ? <CheckSquare className="h-3.5 w-3.5 text-primary" /> : someSelected ? <MinusSquare className="h-3.5 w-3.5 text-primary" /> : <Square className="h-3.5 w-3.5" />}
+              {allSelected ? "Deselect all" : "Select all"}
+            </Button>
+            {selectedClusters.size > 0 && (
+              <Button
+                size="sm"
+                className="gap-1.5 font-bold"
+                onClick={() => void mergeSelectedClusters()}
+                disabled={bulkRunning || loading || busyClusterKey !== null}
+              >
+                {bulkRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Merge className="h-3.5 w-3.5" />}
+                {bulkRunning ? "Merging…" : `Merge ${selectedClusters.size} selected`}
+              </Button>
+            )}
+            {selectedClusters.size === 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => void mergeAllClusters()}
+                disabled={bulkRunning || loading || busyClusterKey !== null}
+              >
+                {bulkRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Merge className="h-3.5 w-3.5" />}
+                {bulkRunning ? "Merging all…" : `Merge all ${clusters.length}`}
+              </Button>
+            )}
+          </>
         )}
         <div className="ml-auto text-xs text-muted-foreground">
           Scanned {totalItemsScanned} raw item{totalItemsScanned === 1 ? "" : "s"} · {clusters.length} cluster{clusters.length === 1 ? "" : "s"} flagged
+          {selectedClusters.size > 0 && <span className="font-bold text-primary ml-1">· {selectedClusters.size} selected</span>}
         </div>
       </div>
 
@@ -342,10 +399,21 @@ export default function MergerPage() {
             const totalStock = cluster.items.reduce((n, it) => n + it.onHand, 0)
             return (
               <Card key={cluster.clusterKey} className="border border-border overflow-hidden">
-                <CardHeader className="border-b border-border bg-muted/20 px-5 py-3">
+                <CardHeader className={`border-b border-border px-5 py-3 ${selectedClusters.has(cluster.clusterKey) ? "bg-primary/5" : "bg-muted/20"}`}>
                   <CardTitle className="text-sm font-bold flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => toggleCluster(cluster.clusterKey)}
+                      className="shrink-0 cursor-pointer text-muted-foreground hover:text-primary transition-colors"
+                      disabled={isBusy}
+                      aria-label={selectedClusters.has(cluster.clusterKey) ? "Deselect cluster" : "Select cluster"}
+                    >
+                      {selectedClusters.has(cluster.clusterKey)
+                        ? <CheckSquare className="h-4 w-4 text-primary" />
+                        : <Square className="h-4 w-4" />}
+                    </button>
                     <Layers className="h-4 w-4 text-primary" />
-                    <span className="truncate max-w-md">{cluster.items[0]?.name ?? cluster.clusterKey}</span>
+                    <span className="truncate max-w-md">{cluster.items[0]?.name ?? cluster.clusterKey.split("||")[0]}</span>
                     <span className="text-muted-foreground font-normal">— {cluster.items.length} items</span>
                     <div className="flex flex-wrap gap-1">
                       {cluster.sharedReasons.map((r) => (

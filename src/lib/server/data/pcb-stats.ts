@@ -6,7 +6,7 @@
  * history and where-used, so they get a scoped stats payload instead of
  * bloating the shared /api/items response.
  *
- * Payload per semi_assembled item:
+ * Payload per sub_assembly item:
  *   • bomVersions — every version on the item (label, status, line count)
  *   • usedIn      — assembled parents whose Active or Draft BOM lists this
  *                   item as a direct child (up to 5 for card display)
@@ -53,7 +53,7 @@ export interface SemiAssembledStats {
 export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
   return guarded("item.view", async (tx, ctx) => {
     // 1) Every semi-assembled item's BOM versions with per-version line count.
-    //    A single scan across all semi_assembled parents keeps this bounded
+    //    A single scan across all sub_assembly parents keeps this bounded
     //    by (assemblies × versions) — small in practice.
     const versions = await tx.$queryRaw<{
       itemId: string; id: string; version: string; status: string; lineCount: number;
@@ -69,14 +69,14 @@ export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
         JOIN items i ON i.id = bv.parent_item_id
        WHERE i.company_id = ${ctx.companyId!}::uuid
          AND i.deleted_at IS NULL
-         AND i.item_type = 'semi_assembled'::item_type
+         AND i.item_type = 'sub_assembly'::item_type
          AND bv.deleted_at IS NULL
        ORDER BY (bv.status = 'Active') DESC, bv.created_at DESC`;
 
     // 2) Where-used: parents whose Active or Draft BOM lists any of these
-    //    semi_assembled items as a direct child. DISTINCT because two
+    //    sub_assembly items as a direct child. DISTINCT because two
     //    versions of the same parent counting a child would double-count.
-    //    Clipped to itemIds we care about — semi_assembled catalog only.
+    //    Clipped to itemIds we care about — sub_assembly catalog only.
     const parents = await tx.$queryRaw<{
       childId: string; parentId: string; parentCode: string; parentName: string;
     }[]>`
@@ -92,7 +92,7 @@ export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
        WHERE bl.deleted_at IS NULL
          AND bv.status IN ('Active'::bom_status, 'Draft'::bom_status)
          AND c.company_id = ${ctx.companyId!}::uuid
-         AND c.item_type = 'semi_assembled'::item_type
+         AND c.item_type = 'sub_assembly'::item_type
        ORDER BY p.name ASC`;
 
     // Fold into per-child aggregates.
@@ -109,7 +109,7 @@ export async function getSemiAssembledStats(): Promise<SemiAssembledStats[]> {
       parentsByChild.set(p.childId, arr);
     }
 
-    // 3) Buildable qty per semi_assembled item that has an Active BOM.
+    // 3) Buildable qty per sub_assembly item that has an Active BOM.
     //    Same shape as products-stats: recursive explode → per-leaf demand,
     //    then min across leaves of floor(on_hand / per_unit_qty).
     const activeVersionIds = versions

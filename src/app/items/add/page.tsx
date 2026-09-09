@@ -8,7 +8,7 @@
  *
  * The Suspense boundary is required by Next.js because the form uses
  * `useSearchParams()` to honor `?type=` pre-selection from the filtered
- * Semi-assembled / Assembled Products list pages.
+ * Sub-Assemblies / Finished Products list pages.
  */
 import * as React from "react"
 import UniversalItemForm from "@/components/items/universal-item-form"

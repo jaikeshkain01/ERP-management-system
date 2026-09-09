@@ -1,15 +1,15 @@
 "use client"
 
 /**
- * Semi-assembled workspace list.
+ * Sub-Assemblies workspace list.
  *
  * Post-consolidation this page reads the universal items master and filters
- * to `itemType === 'semi_assembled'` — PCB revisions and any other sub-
+ * to `itemType === 'sub_assembly'` — PCB revisions and any other sub-
  * assembly (populated PCBs, mechanical sub-assemblies, etc.) all show up
  * here in one list. Legacy `pcbs` / `pcb_revisions` tables are no longer the
  * source; every write goes through /items/*.
  *
- * The workspace label was renamed to "Semi-assembled" (see modules.ts). The
+ * The workspace label was renamed to "Sub-Assemblies" (see modules.ts). The
  * URL path stays `/pcb-management/list` for backward-compatible bookmarks.
  */
 
@@ -30,8 +30,8 @@ type BulkAction = "activate" | "deactivate" | "discontinue" | "mark_finished" | 
 
 type ItemType =
   | "raw"
-  | "semi_assembled"
-  | "assembled"
+  | "sub_assembly"
+  | "finished_product"
   | "consumable"
   | "asset"
   | "packaging"
@@ -78,7 +78,7 @@ const STATUS_TONE: Record<ItemStatus, string> = {
   discontinued: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
 }
 
-// Solder-type filter — semi_assembled-specific because PCB revisions have
+// Solder-type filter — sub_assembly-specific because PCB revisions have
 // a solder type but a mechanical sub-assembly usually doesn't.
 type SolderFilter = "all" | "smd" | "dip" | "unspecified"
 
@@ -156,10 +156,10 @@ function SemiAssembledList() {
     setLoading(true)
     setError(null)
     try {
-      // Independent module: fetches ONLY semi_assembled items via the API's
+      // Independent module: fetches ONLY sub_assembly items via the API's
       // itemType filter — no shared payload with /products or /items/list.
       const [itemsRes, statsRes] = await Promise.all([
-        fetch("/api/items?itemType=semi_assembled", { cache: "no-store" }),
+        fetch("/api/items?itemType=sub_assembly", { cache: "no-store" }),
         fetch("/api/pcb/stats", { cache: "no-store" }),
       ])
       const [itemsBody, statsBody] = await Promise.all([
@@ -206,7 +206,7 @@ function SemiAssembledList() {
   }), [items])
 
   // CSV export of the currently filtered set. Columns include the
-  // semi_assembled-specific signals (Active + Draft revision, used-in
+  // sub_assembly-specific signals (Active + Draft revision, used-in
   // count) so the export is useful for BOM audits without a follow-up
   // query. Everything client-side.
   // Visible + selected accounting for the toolbar and select-all header —
@@ -310,10 +310,10 @@ function SemiAssembledList() {
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
             <span>Items</span><span>/</span>
-            <span className="text-foreground font-semibold">Semi-assembled</span>
+            <span className="text-foreground font-semibold">Sub-Assemblies</span>
           </div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-            Semi-assembled
+            Sub-Assemblies
           </h1>
           <p className="text-sm text-muted-foreground">
             PCB revisions and any other sub-assembly built in-house. Add or edit via the universal item flow.
@@ -351,7 +351,7 @@ function SemiAssembledList() {
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             <span>Refresh</span>
           </Button>
-          <Button render={<Link href="/items/add?type=semi_assembled" />} className="gap-2 font-semibold">
+          <Button render={<Link href="/items/add?type=sub_assembly" />} className="gap-2 font-semibold">
             <Plus className="h-4 w-4" />
             <span>Add item</span>
           </Button>
@@ -818,7 +818,7 @@ function SemiAssembledList() {
                 : "No items match your search and filters"}
             </div>
             {items.length === 0 ? (
-              <Button render={<Link href="/items/add?type=semi_assembled" />} variant="outline" className="gap-2 mt-1">
+              <Button render={<Link href="/items/add?type=sub_assembly" />} variant="outline" className="gap-2 mt-1">
                 <Plus className="h-4 w-4" /> Add the first one
               </Button>
             ) : (

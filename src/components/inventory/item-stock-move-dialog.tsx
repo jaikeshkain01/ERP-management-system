@@ -24,6 +24,7 @@ export interface StockMoveItem {
   code: string
   name: string
   baseUom: string
+  onHand?: number
   variants: StockMoveVariant[]
 }
 
@@ -60,6 +61,8 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
   const [expiry, setExpiry] = React.useState("")
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [fromStage, setFromStage] = React.useState("tested")
+  const [stages, setStages] = React.useState<{ stage: string; count: number }[]>([])
 
   const [bins, setBins] = React.useState<{ id: string; label: string; isDefault: boolean; kind: string }[]>([])
   const [binsLoaded, setBinsLoaded] = React.useState(false)
@@ -114,6 +117,27 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
     }
     return () => { live = false }
   }, [isIn])
+
+  // Outbound: load stage counts so user can pick which stage to pull serials from.
+  React.useEffect(() => {
+    if (isIn) { setStages([]); return }
+    let live = true
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/items/${item.id}/serials`, { cache: "no-store" })
+        const body = await res.json().catch(() => null)
+        if (!live || !res.ok) return
+        const data = body?.data as { stages: { stage: string; count: number }[] } | undefined
+        const available = data?.stages?.filter((s) => s.count > 0) ?? []
+        setStages(available)
+        if (available.length > 0) {
+          const hasDefault = available.some((s) => s.stage === fromStage)
+          if (!hasDefault) setFromStage(available[0].stage)
+        }
+      } catch { /* non-fatal */ }
+    })()
+    return () => { live = false }
+  }, [isIn, item.id])
 
   // Outbound: (re)load the lots available for the chosen variant at the chosen
   // source location whenever either changes. Resets any stale lot selection.
@@ -173,6 +197,7 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
           // Outbound lot targeting: manual split wins, else a pinned lot, else FEFO.
           ...(!isIn && lotAllocations ? { lotAllocations }
              : !isIn && lotId ? { lotId } : {}),
+          ...(!isIn ? { fromStage } : {}),
         }),
       })
       const body = await res.json().catch(() => null)
@@ -193,7 +218,7 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
             </div>
             <div>
               <h3 className="text-base font-extrabold text-foreground">{isIn ? "Stock In" : "Stock Out"}</h3>
-              <p className="text-xs text-muted-foreground">{item.name} · <span className="font-mono">{item.code}</span></p>
+              <p className="text-xs text-muted-foreground">{item.name} · <span className="font-mono">{item.code}</span>{item.onHand != null && <> · <span className="font-semibold text-foreground">{item.onHand.toLocaleString()} {item.baseUom}</span> available</>}</p>
             </div>
           </div>
           <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted">
@@ -268,6 +293,22 @@ export function ItemStockMoveDialog({ mode, item, onClose, onDone }: Props) {
                 <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} data-scannable="expiry"
                   className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-primary" />
               </div>
+            </div>
+          )}
+          {!isIn && stages.length > 0 && (
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Remove pieces from stage</label>
+              <select value={fromStage} onChange={(e) => setFromStage(e.target.value)}
+                className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-primary">
+                {stages.map((s) => (
+                  <option key={s.stage} value={s.stage}>
+                    {s.stage.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} ({s.count} pieces)
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-muted-foreground italic">
+                Oldest pieces (FIFO) from this stage will be retired on stock-out.
+              </p>
             </div>
           )}
           {!isIn && (

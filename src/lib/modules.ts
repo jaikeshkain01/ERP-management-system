@@ -64,8 +64,8 @@ export const BASE_AREAS: Array<{
   href: string
 }> = [
   { label: "Items", description: "Every item — parts, sub-assemblies, products, assets.", icon: Nut, href: "/items/list" },
-  { label: "Assembled Products", description: "Assembled items + sellable finished goods.", icon: Package, href: "/products/list" },
-  { label: "Semi-assembled", description: "PCB revisions and sub-assemblies.", icon: Cpu, href: "/pcb-management/list" },
+  { label: "Finished Products", description: "Finished products + sellable finished goods.", icon: Package, href: "/products/list" },
+  { label: "Sub-Assemblies", description: "PCB revisions and sub-assemblies.", icon: Cpu, href: "/pcb-management/list" },
   { label: "Suppliers & Manufacturers", description: "Vendor and manufacturer masters.", icon: Truck, href: "/suppliers/list" },
 ]
 
@@ -116,7 +116,7 @@ export type Workspace = {
    *  detail pages (details, edit, per-id BOM) that don't match a tab href
    *  fall back to these so the tab bar keeps rendering under the right
    *  workspace. Use `?from=<id>` to override when a page is legitimately
-   *  reached from more than one workspace (e.g. Assembled Products → an
+   *  reached from more than one workspace (e.g. Finished Products → an
    *  item detail page that also belongs to Items). */
   routePrefixes?: string[]
 }
@@ -174,7 +174,7 @@ export const WORKSPACES: Workspace[] = [
   // same underlying items table.
   {
     id: "products",
-    label: "Assembled Products",
+    label: "Finished Products",
     icon: Package,
     href: "/products/list",
     tabs: [],
@@ -182,7 +182,7 @@ export const WORKSPACES: Workspace[] = [
   },
   {
     id: "pcb",
-    label: "Semi-assembled",
+    label: "Sub-Assemblies",
     icon: Cpu,
     href: "/pcb-management/list",
     tabs: [],

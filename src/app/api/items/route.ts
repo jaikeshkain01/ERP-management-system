@@ -16,7 +16,7 @@ import { createItem, listItems, type ItemFilters } from "@/lib/server/data/items
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ITEM_TYPE = z.enum(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"]);
+const ITEM_TYPE = z.enum(["raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"]);
 const ITEM_STATUS = z.enum(["active", "inactive", "discontinued"]);
 
 export async function GET(req: Request) {

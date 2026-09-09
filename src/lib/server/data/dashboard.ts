@@ -136,7 +136,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
           FROM items p
           JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
           JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
-         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+         WHERE p.item_type = 'finished_product' AND p.deleted_at IS NULL
         UNION ALL
         SELECT e.product_id, e.product_name, bl.child_item_id, (e.qty * bl.qty)::numeric
           FROM explode e
@@ -242,7 +242,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
           FROM items p
           JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
           JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
-         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+         WHERE p.item_type = 'finished_product' AND p.deleted_at IS NULL
         UNION ALL
         SELECT e.product_id, e.product_name, bl.child_item_id, (e.qty * bl.qty)::numeric
           FROM explode e
@@ -281,7 +281,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
              END AS status
         FROM items p
         LEFT JOIN comp_build cb ON cb.product_id = p.id
-       WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+       WHERE p.item_type = 'finished_product' AND p.deleted_at IS NULL
        ORDER BY p.name`;
 
     // ── Low-stock components: on-hand below min or out of stock (Critical ≤ 50% of min or 0 stock) ──
@@ -360,7 +360,7 @@ export async function getDashboard(): Promise<DashboardSummary> {
           FROM items p
           JOIN item_bom_versions bv ON bv.parent_item_id = p.id AND bv.status = 'Active' AND bv.deleted_at IS NULL
           JOIN item_bom_lines bl ON bl.bom_version_id = bv.id AND bl.deleted_at IS NULL
-         WHERE p.item_type = 'assembled' AND p.deleted_at IS NULL
+         WHERE p.item_type = 'finished_product' AND p.deleted_at IS NULL
         UNION
         SELECT e.product_id, bl.child_item_id
           FROM explode e

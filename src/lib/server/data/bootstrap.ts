@@ -26,7 +26,7 @@ export async function getBootstrap(): Promise<DataSet> {
     // PCBS and PRODUCTS projections were retired with the module-consolidation
     // slice: /pcb-management/list and /products/list now redirect to the
     // universal items list, and the server-side dashboard endpoint reads
-    // straight from `items` (item_type='assembled'). The bootstrap payload
+    // straight from `items` (item_type='finished_product'). The bootstrap payload
     // no longer carries either projection — client selectors return empty
     // arrays for `d.PCBS` / `d.PRODUCTS`, which is what a migrated tenant
     // was already seeing.

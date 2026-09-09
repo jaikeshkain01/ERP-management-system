@@ -40,7 +40,7 @@ import {
   Loader2, Info, X, Package, Cpu,
 } from "lucide-react"
 
-type Stage = "assembled" | "semi_assembled"
+type Stage = "finished_product" | "sub_assembly"
 
 interface Row {
   categoryId: string
@@ -149,8 +149,8 @@ function relativeAge(iso: string): string {
 }
 
 const STAGE_META: Record<Stage, { label: string; icon: React.ComponentType<{ className?: string }>; codePrefix: string }> = {
-  assembled:      { label: "Assembled",      icon: Package, codePrefix: "FG"  },
-  semi_assembled: { label: "Semi-assembled", icon: Cpu,     codePrefix: "SUB" },
+  finished_product: { label: "Finished Products", icon: Package, codePrefix: "FG"  },
+  sub_assembly: { label: "Sub-Assemblies",    icon: Cpu,     codePrefix: "SUB" },
 }
 
 // Sheet-name → item-code slug. Matches the shape used elsewhere so imported
@@ -185,10 +185,10 @@ function BomImport() {
   const searchParams = useSearchParams()
   const d = useData()
 
-  // Default stage is honoured when the user came from the add-form (which
-  // passes ?stage=assembled|semi_assembled). Anywhere else, assume assembled.
+  // Default to sub_assembly — BOM imports are sub-assemblies unless the user
+  // explicitly picks finished_product. The add-form can override via ?stage=.
   const initialStage: Stage =
-    searchParams.get("stage") === "semi_assembled" ? "semi_assembled" : "assembled"
+    searchParams.get("stage") === "finished_product" ? "finished_product" : "sub_assembly"
 
   // Attach mode: the caller (usually the add-item form's "Import BOM" button)
   // has already created the parent item and hands us its id via `?parentId`.
@@ -982,7 +982,7 @@ function BomImport() {
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Stage</label>
                     <div className="flex items-center gap-1.5">
-                      {(["assembled", "semi_assembled"] as Stage[]).map((s) => {
+                      {(["finished_product", "sub_assembly"] as Stage[]).map((s) => {
                         const active2 = activeSheet.parentStage === s
                         return (
                           <button
@@ -1047,7 +1047,7 @@ function BomImport() {
                       value={activeSheet.parentCategoryId}
                       onChange={(id) => patchSheet(active, { parentCategoryId: id })}
                       allLabel="— Select a category —"
-                      stageFilter={activeSheet.parentStage}
+                      itemTypeFilter={activeSheet.parentStage}
                     />
                   </div>
                 </CardContent>
@@ -1087,7 +1087,7 @@ function BomImport() {
                                   value={r.categoryId}
                                   onChange={(id) => patchRow(active, i, { categoryId: id })}
                                   allLabel="— Uncategorised —"
-                                  stageFilter="raw"
+                                  itemTypeFilter="raw"
                                 />
                               </td>
                               <td className="px-2 py-1 min-w-[160px]">

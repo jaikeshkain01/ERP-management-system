@@ -14,7 +14,7 @@ const PatchBody = z.object({
   name: z.string().trim().min(1).optional(),
   parentId: z.string().uuid().nullable().optional(),
   defaultItemType: z
-    .enum(["raw", "semi_assembled", "assembled", "consumable", "asset", "packaging"])
+    .enum(["raw", "sub_assembly", "finished_product", "consumable", "asset", "packaging"])
     .nullable()
     .optional(),
 });

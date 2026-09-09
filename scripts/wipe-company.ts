@@ -52,6 +52,7 @@ async function main() {
       ["production_orders",          "production_orders"],
       ["item_bom_lines",             "item_bom_lines"],
       ["item_bom_versions",          "item_bom_versions"],
+      ["item_serials",               "item_serials"],
       ["item_lots",                  "item_lots"],
       ["item_variants",              "item_variants"],
       ["items",                      "items"],

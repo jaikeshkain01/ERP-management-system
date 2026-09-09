@@ -27,7 +27,7 @@ import { Errors } from "@/lib/server/http";
 import { assertPermission } from "@/lib/server/rbac";
 import { requireSession } from "@/lib/server/session";
 import { isUuid } from "@/lib/server/data/util";
-import { pickOutboundLot } from "@/lib/server/data/inventory";
+import { pickOutboundLot, generateSerials } from "@/lib/server/data/inventory";
 import { formatINR, formatLeadTime } from "@/lib/catalog";
 
 /** A month bucket of finished-batch output for the Reports yield chart. */
@@ -150,7 +150,7 @@ export async function createProductionOrder(input: CreateProductionOrderInput): 
       SELECT id, name
         FROM items
        WHERE deleted_at IS NULL
-         AND item_type = 'assembled'::item_type
+         AND item_type = 'finished_product'::item_type
          AND ${isUuid(input.product)
               ? Prisma.sql`(id = ${input.product}::uuid OR code = ${input.product})`
               : Prisma.sql`code = ${input.product}`}
@@ -464,12 +464,15 @@ export async function completeProductionOrder(orderNo: string): Promise<{ order:
     // Append the finished-goods PRODUCTION row. Only item_variant_id is set —
     // manufactured variants have no CBV, and the sync trigger leaves it NULL.
     // The default-lot + projection triggers handle lot assignment and balances.
-    await tx.$executeRaw`
+    const [prodTxn] = await tx.$queryRaw<{ lotId: string | null }[]>`
       INSERT INTO inventory_transactions
         (company_id, type, item_variant_id, warehouse_id, location_id, qty_delta, ref_type, ref_id, reason, created_by)
       VALUES (${ctx.companyId!}::uuid, 'PRODUCTION'::inventory_txn_type, ${variant.id}::uuid,
               ${bin.warehouse_id}::uuid, ${bin.id}::uuid, ${Number(po.qty)},
-              'production_order', ${po.id}::uuid, ${`Produced by ${orderNo}`}, ${ctx.userId}::uuid)`;
+              'production_order', ${po.id}::uuid, ${`Produced by ${orderNo}`}, ${ctx.userId}::uuid)
+      RETURNING lot_id AS "lotId"`;
+
+    await generateSerials(tx, ctx, variant.id, Number(po.qty), prodTxn?.lotId);
 
     await tx.production_orders.update({ where: { id: po.id }, data: { status: "Completed", updated_by: ctx.userId } });
     return { order: orderNo, produced: Number(po.qty), itemVariantId: variant.id };
@@ -642,7 +645,7 @@ export async function getReadiness(productKey: string | undefined, qty: number):
           SELECT id, name, code
             FROM items
            WHERE deleted_at IS NULL
-             AND item_type = 'assembled'::item_type
+             AND item_type = 'finished_product'::item_type
              AND ${isUuid(productKey)
                   ? Prisma.sql`(id = ${productKey}::uuid OR code = ${productKey})`
                   : Prisma.sql`code = ${productKey}`}
@@ -655,7 +658,7 @@ export async function getReadiness(productKey: string | undefined, qty: number):
                                       AND bv.status = 'Active'
                                       AND bv.deleted_at IS NULL
            WHERE i.deleted_at IS NULL
-             AND i.item_type = 'assembled'::item_type
+             AND i.item_type = 'finished_product'::item_type
            ORDER BY i.name LIMIT 1`
         )[0] ?? null;
     if (!product) throw Errors.notFound("Product");

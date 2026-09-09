@@ -57,17 +57,40 @@ import { resolveOrCreateBrand } from "@/lib/server/data/components";
 export type ItemVariantSource = "purchased" | "manufactured";
 export type ItemType =
   | "raw"
-  | "semi_assembled"
-  | "assembled"
+  | "sub_assembly"
+  | "finished_product"
   | "consumable"
   | "asset"
   | "packaging";
 export type ItemStatus = "active" | "inactive" | "discontinued";
 
+export type ItemStage =
+  | "under_production"
+  | "production_complete"
+  | "untested"
+  | "testing"
+  | "tested"
+  | "faulty"
+  | "finished";
+
+const ITEM_STAGES = new Set<ItemStage>([
+  "under_production", "production_complete", "untested",
+  "testing", "tested", "faulty", "finished",
+]);
+
+/** Source kind is derived from item type — no longer user-selectable. */
+function sourceKindForType(t: ItemType): ItemVariantSource {
+  return t === "sub_assembly" || t === "finished_product" ? "manufactured" : "purchased";
+}
+
+function defaultStageForType(t: ItemType): ItemStage {
+  return t === "sub_assembly" || t === "finished_product" ? "under_production" : "untested";
+}
+
 const ITEM_TYPES = new Set<ItemType>([
   "raw",
-  "semi_assembled",
-  "assembled",
+  "sub_assembly",
+  "finished_product",
   "consumable",
   "asset",
   "packaging",
@@ -146,9 +169,11 @@ export interface ItemView {
   leadTimeDays: number | null;
   specs: unknown;
   status: ItemStatus;
-  /** Sellable flag (Slice 3). Independent of stage — a Populated PCB may be
-   *  `semi_assembled` AND a finished good. Feeds the future sales module. */
+  /** Sellable flag (Slice 3). Independent of item type — a sub-assembly may
+   *  also be a finished good. Feeds the future sales module. */
   isFinishedGood: boolean;
+  /** Starting stage for new pieces of this item. Derived from item type. */
+  defaultStage: ItemStage;
   /** Inventory rollup (F5.5). Sum across every variant + location.
    *  0 when the item holds no stock. */
   onHand: number;
@@ -231,6 +256,7 @@ const ITEM_SELECT = Prisma.sql`
   i.specs,
   i.status::text AS "status",
   i.is_finished_good AS "isFinishedGood",
+  i.default_stage::text AS "defaultStage",
   i.import_source AS "importSource",
   to_char(i.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt"
 `;
@@ -279,6 +305,7 @@ interface ItemRow {
   specs: unknown;
   status: ItemStatus;
   isFinishedGood: boolean;
+  defaultStage: ItemStage;
   importSource: string | null;
   createdAt: string;
 }
@@ -693,6 +720,7 @@ export interface ItemLedgerRow {
   id: string;
   type: string;               // inventory_txn_type
   qtyDelta: number;
+  runningBalance: number;
   variantId: string;
   brandSlug: string | null;
   partNo: string | null;
@@ -702,6 +730,9 @@ export interface ItemLedgerRow {
   supplierName: string | null;
   refType: string | null;
   reason: string | null;
+  grnNo: string | null;
+  note: string | null;
+  createdByName: string | null;
   createdAt: string;          // ISO
 }
 
@@ -715,6 +746,7 @@ export async function getItemLedger(id: string, limit = 100): Promise<ItemLedger
       SELECT t.id,
              t.type::text AS "type",
              t.qty_delta::float8 AS "qtyDelta",
+             SUM(t.qty_delta::float8) OVER (ORDER BY t.created_at, t.id)::float8 AS "runningBalance",
              t.item_variant_id AS "variantId",
              b.slug AS "brandSlug",
              v.part_no AS "partNo",
@@ -724,6 +756,9 @@ export async function getItemLedger(id: string, limit = 100): Promise<ItemLedger
              sup.name  AS "supplierName",
              t.ref_type AS "refType",
              t.reason   AS "reason",
+             t.grn_no   AS "grnNo",
+             t.note     AS "note",
+             u.name     AS "createdByName",
              to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS "createdAt"
       FROM inventory_transactions t
       JOIN item_variants v ON v.id = t.item_variant_id
@@ -732,8 +767,9 @@ export async function getItemLedger(id: string, limit = 100): Promise<ItemLedger
       LEFT JOIN storage_locations sl ON sl.id = t.location_id
       LEFT JOIN item_lots il ON il.id = t.lot_id
       LEFT JOIN suppliers sup ON sup.id = il.supplier_id
+      LEFT JOIN users u ON u.id = t.created_by
       WHERE v.item_id = ${id}::uuid
-      ORDER BY t.created_at DESC
+      ORDER BY t.created_at DESC, t.id DESC
       LIMIT ${capped}`;
   });
 }
@@ -1313,12 +1349,15 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
       if (dupePn[0]) throw Errors.conflict("An item with this Generic PN already exists", { genericPn });
     }
 
+    // Source kind is derived from item type — no longer user-selectable.
+    const derivedSource = sourceKindForType(itemType);
+
     // Pre-validate variants before writing anything.
     const variantInputs = (input.variants ?? []).map((v, idx) => ({ v, idx }));
     let manufacturedCount = 0;
     const seenBrand = new Set<string>();
     for (const { v, idx } of variantInputs) {
-      const sk: ItemVariantSource = v.sourceKind ?? "purchased";
+      const sk: ItemVariantSource = v.sourceKind ?? derivedSource;
       if (sk === "purchased") {
         if (!v.brandId || !isUuid(v.brandId)) {
           throw Errors.badRequest("Purchased variant requires a brandId", { variantIndex: idx });
@@ -1343,17 +1382,10 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
     let defaultIdx = variantInputs.findIndex(({ v }) => v.isDefault);
     if (defaultIdx === -1 && variantInputs.length > 0) defaultIdx = 0;
 
-    // Auto-attach a Made-in-house variant for manufactured item types
-    // (semi_assembled + assembled) when the caller didn't supply one. This
-    // is what the production-complete path writes into (source_kind =
-    // 'manufactured') and what the Stock In dialog needs a slot for.
-    // Coexists with purchased brand variants for dual-sourced items (e.g. an
-    // assembly you normally build but sometimes buy from a contract
-    // manufacturer). Also flipped as default only when no purchased row
-    // claimed the slot — the DB partial unique index enforces "at most one
-    // manufactured per item", so a caller-supplied manufactured wins.
+    // Auto-attach a manufactured variant for sub_assembly / finished_product
+    // when the caller didn't supply one.
     const autoManufactured =
-      (itemType === "semi_assembled" || itemType === "assembled") && manufacturedCount === 0;
+      derivedSource === "manufactured" && manufacturedCount === 0;
     const autoManufacturedIsDefault = autoManufactured && defaultIdx === -1;
 
     const specs = input.specs ?? [];
@@ -1425,6 +1457,8 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
     if (depreciationMethod && !ITEM_DEPRECIATION_KIND.has(depreciationMethod)) throw Errors.badRequest("Invalid depreciationMethod");
     // Purchase date is trusted as ISO-yyyy-mm-dd from the API layer (zod does the format check).
 
+    const defaultStage = defaultStageForType(itemType);
+
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO items (
         company_id, code, generic_pn, solder_type, footprint, spq,
@@ -1438,7 +1472,7 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         depreciation_method, condition_kind,
         name, description, category_id, item_type, base_uom,
         min_stock, reorder_qty, safety_stock, lead_time_days, specs, status,
-        is_finished_good,
+        is_finished_good, default_stage,
         created_by, updated_by
       ) VALUES (
         ${ctx.companyId!}::uuid, ${code}, ${genericPn},
@@ -1454,14 +1488,14 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         ${input.categoryId ?? null}::uuid, ${itemType}::item_type, ${input.baseUom ?? "PCS"},
         ${input.minStock ?? 0}, ${input.reorderQty ?? 0}, ${input.safetyStock ?? 0},
         ${input.leadTimeDays ?? null}, ${JSON.stringify(specs)}::jsonb, ${status}::item_status,
-        ${input.isFinishedGood ?? false},
+        ${input.isFinishedGood ?? false}, ${defaultStage}::item_stage,
         ${ctx.userId}::uuid, ${ctx.userId}::uuid
       )
       RETURNING id`;
     const itemId = inserted[0].id;
 
     for (const { v, idx } of variantInputs) {
-      const sk: ItemVariantSource = v.sourceKind ?? "purchased";
+      const sk: ItemVariantSource = v.sourceKind ?? derivedSource;
       await tx.$executeRaw`
         INSERT INTO item_variants (
           company_id, item_id, source_kind, brand_id, part_no, is_default,
@@ -2221,5 +2255,66 @@ export async function deleteItem(id: string): Promise<{ id: string; code: string
       WHERE id = ${id}::uuid`;
 
     return { id, code: existing[0].code };
+  });
+}
+
+// ── Item serials (per-piece tracking) ──────────────────────────────────────
+
+export interface ItemSerialView {
+  id: string;
+  serialNo: string;
+  stage: ItemStage;
+  lotNo: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ItemSerialsByStage {
+  itemId: string;
+  defaultStage: ItemStage;
+  stages: { stage: ItemStage; count: number; serials: ItemSerialView[] }[];
+  total: number;
+}
+
+export async function getItemSerials(id: string): Promise<ItemSerialsByStage> {
+  return guarded("item.view", async (tx) => {
+    if (!isUuid(id)) throw Errors.notFound("Item");
+    const item = await tx.$queryRaw<{ id: string; defaultStage: string }[]>`
+      SELECT id, default_stage::text AS "defaultStage"
+      FROM items WHERE id = ${id}::uuid AND deleted_at IS NULL`;
+    if (!item[0]) throw Errors.notFound("Item");
+
+    const rows = await tx.$queryRaw<ItemSerialView[]>`
+      SELECT s.id, s.serial_no AS "serialNo",
+             s.stage::text AS "stage",
+             l.lot_no AS "lotNo",
+             s.notes,
+             s.created_at::text AS "createdAt",
+             s.updated_at::text AS "updatedAt"
+      FROM item_serials s
+      LEFT JOIN item_lots l ON l.id = s.lot_id
+      WHERE s.item_id = ${id}::uuid AND s.deleted_at IS NULL
+      ORDER BY s.stage, s.serial_no`;
+
+    const byStage = new Map<string, ItemSerialView[]>();
+    for (const r of rows) {
+      const list = byStage.get(r.stage) ?? [];
+      list.push(r);
+      byStage.set(r.stage, list);
+    }
+
+    const stages = Array.from(byStage.entries()).map(([stage, serials]) => ({
+      stage: stage as ItemStage,
+      count: serials.length,
+      serials,
+    }));
+
+    return {
+      itemId: id,
+      defaultStage: item[0].defaultStage as ItemStage,
+      stages,
+      total: rows.length,
+    };
   });
 }

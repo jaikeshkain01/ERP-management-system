@@ -38,7 +38,7 @@ export interface ComponentView {
   /** Category tree node (uuid) + its materialised path (Phase 2A). */
   categoryId: string | null;
   categoryPath: string | null;
-  /** Lifecycle stage: raw/semi_assembled/assembled/consumable/asset/packaging. */
+  /** Item type: raw/sub_assembly/finished_product/consumable/asset/packaging. */
   itemType: string;
   description: string | null;
   unit: string;

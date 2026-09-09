@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * Opening-balance dialog for made-in-house items (semi_assembled / assembled).
+ * Opening-balance dialog for made-in-house items (sub_assembly / finished_product).
  *
  * A pure Made-in-house item can't be received via Stock In (the button is
  * greyed on Inventory because manufactured variants aren't shopped from a

@@ -117,35 +117,41 @@ export async function listDuplicateClusters(): Promise<{ clusters: DuplicateClus
         AND i.item_type = 'raw'::item_type
       ORDER BY LOWER(TRIM(i.name)), i.created_at`;
 
-    // Group by lower-trimmed name.
-    const byName = new Map<string, typeof rows>();
+    // Group by (name + footprint + solder). Items with different footprint or
+    // solder type are genuinely different parts even when the name matches.
+    const byKey = new Map<string, typeof rows>();
     for (const r of rows) {
-      const key = r.name.trim().toLowerCase();
-      if (!key) continue;
-      const arr = byName.get(key);
+      const name = r.name.trim().toLowerCase();
+      if (!name) continue;
+      const fp = (r.footprint ?? "").trim().toLowerCase();
+      const sol = (r.solderType ?? "").trim().toLowerCase();
+      const key = `${name}||${fp}||${sol}`;
+      const arr = byKey.get(key);
       if (arr) arr.push(r);
-      else byName.set(key, [r]);
+      else byKey.set(key, [r]);
     }
 
     const clusters: DuplicateCluster[] = [];
-    for (const [clusterKey, members] of byName) {
+    for (const [compositeKey, members] of byKey) {
       if (members.length < 2) continue;
 
+      // The composite key is "name||fp||sol" — use only the name for display.
+      const clusterKey = compositeKey.split("||")[0];
+
       // Compute which reasons apply to EVERY member (cluster-wide invariants).
+      // Footprint and solder are always shared because we grouped by them.
       const first = members[0];
-      const allSameFootprint = members.every((m) => (m.footprint ?? "").trim().toLowerCase() === (first.footprint ?? "").trim().toLowerCase());
-      const allSameSolder = members.every((m) => (m.solderType ?? null) === (first.solderType ?? null));
       const allSameCategory = members.every((m) => (m.categoryId ?? null) === (first.categoryId ?? null));
       const allSameDescription = members.every((m) => (m.description ?? "").trim().toLowerCase() === (first.description ?? "").trim().toLowerCase());
 
       const sharedReasons: DuplicateCluster["sharedReasons"] = ["name"];
-      if (allSameFootprint) sharedReasons.push("footprint");
-      if (allSameSolder) sharedReasons.push("solderType");
+      if ((first.footprint ?? "").trim()) sharedReasons.push("footprint");
+      if (first.solderType) sharedReasons.push("solderType");
       if (allSameCategory) sharedReasons.push("category");
       if (allSameDescription && (first.description ?? "").trim() !== "") sharedReasons.push("description");
 
       clusters.push({
-        clusterKey,
+        clusterKey: compositeKey,
         sharedReasons,
         items: members.map((m) => ({
           id: m.id,

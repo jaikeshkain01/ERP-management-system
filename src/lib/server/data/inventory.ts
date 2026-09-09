@@ -122,6 +122,9 @@ export const InventoryTxnBody = z
       lotId: z.string().uuid(),
       qty: z.number().positive(),
     })).optional(),
+    // Outbound: which stage to pull serial pieces from. Defaults to "tested".
+    // Serials are retired (soft-deleted) FIFO from this stage on stock-out.
+    fromStage: z.string().max(50).optional(),
   })
   .superRefine((b, ctx) => {
     if (!b.variantId && !(b.genericPN && b.brandSlug)) {
@@ -403,6 +406,9 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
     // inserts go through raw SQL.
     const txnCols = Prisma.sql`(company_id, type, component_brand_variant_id, item_variant_id, warehouse_id, location_id, qty_delta, transfer_group_id, lot_id, ref_type, ref_id, grn_no, reason, note, created_by)`;
     const touched: { locationId: string }[] = [];
+    let serialQty = 0;
+    let serialLotId: string | null = null;
+    let retireQty = 0;
 
     if (input.type === "TRANSFER") {
       const fromWh = await warehouseForLocation(tx, input.fromLocationId!);
@@ -442,6 +448,8 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
       await tx.$executeRaw(Prisma.sql`INSERT INTO inventory_transactions ${txnCols} VALUES (
         ${ctx.companyId!}::uuid, 'ADJUSTMENT'::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
         ${delta}, NULL, ${adjLot}::uuid, NULL, NULL, NULL, ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
+      if (delta > 0) serialQty = delta;
+      if (delta < 0) retireQty = -delta;
       touched.push({ locationId });
     } else {
       const locationId = input.locationId ?? (await defaultLocation(tx));
@@ -472,6 +480,8 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
           ${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
           ${delta}, NULL, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
           ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
+        serialQty = delta;
+        serialLotId = lotId;
         touched.push({ locationId });
       } else if (input.lotAllocations && input.lotAllocations.length > 0) {
         // Outbound MULTI-LOT: caller manually split across lots. Validate sum
@@ -517,6 +527,7 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
             ${-alloc.qty}, NULL, ${alloc.lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
             ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
         }
+        retireQty = input.qty!;
         touched.push({ locationId });
       } else {
         // Outbound SINGLE-LOT: if the caller pinned a lot, validate + use it;
@@ -555,8 +566,18 @@ export async function createInventoryTransaction(input: InventoryTxnInput) {
           ${ctx.companyId!}::uuid, ${input.type}::inventory_txn_type, ${cbvId}::uuid, ${ivId}::uuid, ${wh}::uuid, ${locationId}::uuid,
           ${delta}, NULL, ${lotId}::uuid, ${input.refType ?? null}, ${input.refId ?? null}::uuid, ${input.grnNo ?? null},
           ${input.reason ?? null}, ${input.note ?? null}, ${ctx.userId}::uuid)`);
+        retireQty = -delta;
         touched.push({ locationId });
       }
+    }
+
+    // Auto-generate serial numbers for inbound pieces
+    if (serialQty > 0) {
+      await generateSerials(tx, ctx, ivId, serialQty, serialLotId);
+    }
+    // Retire serials on outbound (FIFO from the chosen stage, default "tested")
+    if (retireQty > 0) {
+      await retireSerials(tx, ctx, ivId, retireQty, input.fromStage ?? "tested");
     }
 
     // return the affected balance rows (post-trigger projection)
@@ -599,4 +620,104 @@ async function resolveStockVariant(
     );
   }
   return { ivId: cbvId, cbvId };
+}
+
+// ── Serial generation on stock-in ──────────────────────────────────────────
+
+/**
+ * Auto-generate serial numbers for newly received pieces. Called on any
+ * positive-delta inventory transaction (IN, RETURN, PRODUCTION, positive
+ * ADJUSTMENT). Each piece gets a row in `item_serials` at the item's
+ * default stage. serial_no is auto-increment per item (max + 1).
+ */
+export async function generateSerials(
+  tx: TxClient,
+  ctx: TenantContext,
+  variantId: string,
+  qty: number,
+  lotId?: string | null,
+): Promise<void> {
+  if (qty <= 0) return;
+
+  const intQty = Math.floor(qty);
+  if (intQty === 0) return;
+
+  const [item] = await tx.$queryRaw<{ id: string; code: string; defaultStage: string }[]>`
+    SELECT i.id, i.code, i.default_stage::text AS "defaultStage"
+    FROM items i
+    JOIN item_variants v ON v.item_id = i.id
+    WHERE v.id = ${variantId}::uuid AND i.deleted_at IS NULL
+    LIMIT 1`;
+  if (!item) return;
+
+  // Resolve lot_no for the serial prefix
+  const lot = lotId ?? null;
+  let lotNo = "NOLOT";
+  if (lot) {
+    const [lotRow] = await tx.$queryRaw<{ lotNo: string }[]>`
+      SELECT lot_no AS "lotNo" FROM item_lots WHERE id = ${lot}::uuid LIMIT 1`;
+    if (lotRow) lotNo = lotRow.lotNo;
+  }
+
+  // Find the highest existing sequence number for this item to continue from
+  const [{ maxSeq }] = await tx.$queryRaw<{ maxSeq: number | null }[]>`
+    SELECT MAX(
+      CASE WHEN serial_no ~ '-[0-9]+$'
+           THEN CAST(substring(serial_no FROM '-([0-9]+)$') AS int)
+           ELSE CAST(serial_no AS int)
+      END
+    ) AS "maxSeq"
+    FROM item_serials
+    WHERE company_id = ${ctx.companyId!}::uuid
+      AND item_id = ${item.id}::uuid
+      AND deleted_at IS NULL`;
+
+  const startSeq = (maxSeq ?? 0) + 1;
+
+  // Format: {ITEM_CODE}-{LOT_NO}-{SEQ:0000}
+  const values = Array.from({ length: intQty }, (_, i) => {
+    const seq = String(startSeq + i).padStart(4, "0");
+    const serialNo = `${item.code}-${lotNo}-${seq}`;
+    return Prisma.sql`(gen_random_uuid(), ${ctx.companyId!}::uuid, ${item.id}::uuid, ${serialNo}, ${item.defaultStage}::item_stage, ${lot}::uuid, ${ctx.userId}::uuid)`;
+  });
+
+  await tx.$executeRaw`
+    INSERT INTO item_serials (id, company_id, item_id, serial_no, stage, lot_id, created_by)
+    VALUES ${Prisma.join(values)}`;
+}
+
+/** Soft-delete N serials (FIFO by created_at) from a given stage on stock-out. */
+export async function retireSerials(
+  tx: TxClient,
+  ctx: TenantContext,
+  variantId: string,
+  qty: number,
+  fromStage: string,
+): Promise<void> {
+  if (qty <= 0) return;
+  const intQty = Math.floor(qty);
+  if (intQty === 0) return;
+
+  const [item] = await tx.$queryRaw<{ id: string }[]>`
+    SELECT i.id
+    FROM items i
+    JOIN item_variants v ON v.item_id = i.id
+    WHERE v.id = ${variantId}::uuid AND i.deleted_at IS NULL
+    LIMIT 1`;
+  if (!item) return;
+
+  await tx.$executeRaw`
+    UPDATE item_serials
+       SET deleted_at = now(),
+           updated_by = ${ctx.userId}::uuid,
+           updated_at = now()
+     WHERE id IN (
+       SELECT id FROM item_serials
+        WHERE company_id = ${ctx.companyId!}::uuid
+          AND item_id = ${item.id}::uuid
+          AND stage = ${fromStage}::item_stage
+          AND deleted_at IS NULL
+        ORDER BY created_at ASC
+        LIMIT ${intQty}
+     )`;
 }

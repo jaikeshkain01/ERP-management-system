@@ -14,8 +14,8 @@ export type WorkspaceStat = {
  */
 export function buildWorkspaceStats(d: Selectors): Record<string, WorkspaceStat> {
   const totalItems       = d.COMPONENTS.length
-  const semiAssembledCnt = d.COMPONENTS.filter((c) => c.itemType === "semi_assembled").length
-  const assembledCnt     = d.COMPONENTS.filter((c) => c.itemType === "assembled").length
+  const semiAssembledCnt = d.COMPONENTS.filter((c) => c.itemType === "sub_assembly").length
+  const assembledCnt     = d.COMPONENTS.filter((c) => c.itemType === "finished_product").length
   // Inventory scans only stock-carrying stages — assets and packaging skew
   // "below minimum" alerts since they rarely have a min set.
   const lowStockCnt      = d.COMPONENTS.filter((c) =>
@@ -26,7 +26,7 @@ export function buildWorkspaceStats(d: Selectors): Record<string, WorkspaceStat>
     components: { value: String(totalItems), label: "items in catalog" },
     inventory: { value: String(lowStockCnt), label: "parts below minimum", tone: lowStockCnt > 0 ? "warning" : "default" },
     products: { value: String(assembledCnt), label: "assembled items" },
-    pcb: { value: String(semiAssembledCnt), label: "semi-assembled items" },
+    pcb: { value: String(semiAssembledCnt), label: "sub-assembly items" },
     production: { value: "—", label: "orders in progress" },
     purchasing: { value: "—", label: "purchase requests" },
     suppliers: { value: `${d.SUPPLIERS.length}/${d.BRANDS.length}`, label: "suppliers / brands" },

@@ -23,13 +23,14 @@ import {
   ArrowLeft, Nut, Cpu, Package, Boxes, Wrench, Laptop, Factory,
   Pencil, Trash2, AlertCircle, AlertTriangle, CheckCircle2, Info,
   ShoppingBag, Sliders, Layers, GitBranch, PackagePlus, History,
-  ListTree, Table2, ChevronRight, ChevronDown, ArrowDown, Loader2,
+  ListTree, Table2, ChevronRight, ChevronDown, ArrowDown, Loader2, Hash,
+  ArrowUpRight, ArrowDownLeft, ArrowLeftRight, User, FileText, StickyNote,
 } from "lucide-react"
 import { DragScrollArea } from "@/components/ui/drag-scroll-area"
 import { extractError } from "@/lib/api-error"
 
 // ── shapes (mirror src/lib/server/data/items.ts ItemView) ─────────────────
-type ItemType = "raw" | "semi_assembled" | "assembled" | "consumable" | "asset" | "packaging"
+type ItemType = "raw" | "sub_assembly" | "finished_product" | "consumable" | "asset" | "packaging"
 type ItemStatus = "active" | "inactive" | "discontinued"
 
 interface Variant {
@@ -92,11 +93,13 @@ interface StockRollup {
 }
 
 interface LedgerRow {
-  id: string; type: string; qtyDelta: number; variantId: string
+  id: string; type: string; qtyDelta: number; runningBalance: number; variantId: string
   brandSlug: string | null; partNo: string | null
   warehouseCode: string | null; locationCode: string | null
   lotNo: string | null; supplierName: string | null
-  refType: string | null; reason: string | null; createdAt: string
+  refType: string | null; reason: string | null
+  grnNo: string | null; note: string | null; createdByName: string | null
+  createdAt: string
 }
 
 interface ItemBom {
@@ -110,10 +113,19 @@ interface ItemBom {
   }[]
 }
 
+type ItemStage = "under_production" | "production_complete" | "untested" | "testing" | "tested" | "faulty" | "finished"
+
+interface SerialView { id: string; serialNo: string; stage: ItemStage; lotNo: string | null; notes: string | null; createdAt: string; updatedAt: string }
+interface SerialsData {
+  itemId: string; defaultStage: ItemStage
+  stages: { stage: ItemStage; count: number; serials: SerialView[] }[]
+  total: number
+}
+
 const TYPE_META: Record<ItemType, { label: string; icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   raw:            { label: "Raw",             icon: Nut,     tone: "bg-primary/10 text-primary border-primary/20" },
-  semi_assembled: { label: "Semi-assembled",  icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
-  assembled:      { label: "Assembled",       icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  sub_assembly: { label: "Sub-Assemblies",    icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  finished_product:      { label: "Finished Products", icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   consumable:     { label: "Consumable",      icon: Boxes,   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   asset:          { label: "Asset",           icon: Laptop,  tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   packaging:      { label: "Packaging",       icon: Wrench,  tone: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
@@ -123,6 +135,19 @@ const STATUS_TONE: Record<ItemStatus, string> = {
   inactive:     "bg-slate-500/10 text-slate-700 dark:text-slate-400 border-slate-500/20",
   discontinued: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
 }
+const STAGE_META: Record<ItemStage, { label: string; tone: string; bg: string }> = {
+  under_production:    { label: "Under Production",    tone: "text-amber-700 dark:text-amber-400",    bg: "bg-amber-500/10 border-amber-500/25" },
+  production_complete: { label: "Production Complete",  tone: "text-sky-700 dark:text-sky-400",        bg: "bg-sky-500/10 border-sky-500/25" },
+  untested:            { label: "Untested",            tone: "text-slate-600 dark:text-slate-400",    bg: "bg-slate-500/10 border-slate-500/25" },
+  testing:             { label: "Testing",             tone: "text-violet-700 dark:text-violet-400",  bg: "bg-violet-500/10 border-violet-500/25" },
+  tested:              { label: "Tested",              tone: "text-emerald-700 dark:text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/25" },
+  faulty:              { label: "Faulty",              tone: "text-rose-700 dark:text-rose-400",      bg: "bg-rose-500/10 border-rose-500/25" },
+  finished:            { label: "Finished",            tone: "text-primary",                          bg: "bg-primary/10 border-primary/25" },
+}
+
+const PURCHASED_STAGES: ItemStage[] = ["untested", "testing", "tested", "faulty"]
+const MANUFACTURED_STAGES: ItemStage[] = ["under_production", "production_complete", "untested", "testing", "tested", "faulty", "finished"]
+
 const CONDITION_TONE: Record<NonNullable<Item["conditionKind"]>, string> = {
   new:     "text-emerald-700 dark:text-emerald-400",
   good:    "text-primary",
@@ -151,6 +176,7 @@ export default function ItemDetailsPage() {
   const [bom, setBom] = React.useState<ItemBom | null>(null)
   const [ledger, setLedger] = React.useState<LedgerRow[]>([])
   const [usedInTree, setUsedInTree] = React.useState<UsedInEdge[]>([])
+  const [serials, setSerials] = React.useState<SerialsData | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [toast, setToast] = React.useState<{ message: string; hint?: string; type: "success" | "error" | "info" } | null>(null)
@@ -200,13 +226,14 @@ export default function ItemDetailsPage() {
   const load = React.useCallback(async () => {
     setLoading(true); setError(null)
     try {
-      const [itemRes, stockRes, usageRes, bomRes, ledgerRes, treeRes] = await Promise.all([
+      const [itemRes, stockRes, usageRes, bomRes, ledgerRes, treeRes, serialsRes] = await Promise.all([
         fetch(`/api/items/${encodeURIComponent(id)}`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/stock`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/pcb-usage`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/bom`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/ledger`, { cache: "no-store" }),
         fetch(`/api/items/${encodeURIComponent(id)}/used-in-tree`, { cache: "no-store" }),
+        fetch(`/api/items/${encodeURIComponent(id)}/serials`, { cache: "no-store" }),
       ])
       if (!itemRes.ok) {
         const body = await itemRes.json().catch(() => null)
@@ -243,6 +270,12 @@ export default function ItemDetailsPage() {
         setUsedInTree(treeBody.data?.edges ?? [])
       } else {
         setUsedInTree([])
+      }
+      if (serialsRes.ok) {
+        const serialsBody = await serialsRes.json() as { data: SerialsData }
+        setSerials(serialsBody.data)
+      } else {
+        setSerials(null)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load item")
@@ -330,7 +363,14 @@ export default function ItemDetailsPage() {
               <typeMeta.icon className="h-7 w-7" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-3xl font-extrabold tracking-tight text-foreground truncate">{item.name}</h1>
+              <div className="flex items-baseline gap-3">
+                <h1 className="text-3xl font-extrabold tracking-tight text-foreground truncate">{item.name}</h1>
+                {stock && (
+                  <span className={`shrink-0 text-sm font-bold ${stock.onHand > 0 ? (item.minStock > 0 && stock.onHand < item.minStock ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400") : "text-muted-foreground"}`}>
+                    {stock.onHand.toLocaleString()} {item.baseUom}
+                  </span>
+                )}
+              </div>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 <span className="font-mono text-xs font-black bg-primary/10 border border-primary/20 text-primary px-2 py-0.5 rounded">
                   {item.code}
@@ -372,7 +412,7 @@ export default function ItemDetailsPage() {
               manufactured item type with the variant present, so dual-sourced
               items (vendor variant + Made in-house) can still seed the made
               side separately from a Stock In receipt. */}
-          {manufactured && (item.itemType === "semi_assembled" || item.itemType === "assembled") && (
+          {manufactured && (item.itemType === "sub_assembly" || item.itemType === "finished_product") && (
             <Button
               variant="outline"
               onClick={() => setOpeningBalanceOpen(true)}
@@ -419,26 +459,12 @@ export default function ItemDetailsPage() {
           stretches from KPI level down to the BOM section start. */}
       <div className="grid lg:grid-cols-[minmax(0,1fr)_360px] gap-6 items-start">
         <div className="space-y-6 min-w-0">
-          {/* KPI strip — inventory rollup. Damaged folded into the right
-              Inventory panel so this row only carries the three headline
-              figures a user scans first. */}
-          {stock && (
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { label: "On hand",   value: stock.onHand.toLocaleString(),  tone: "text-primary" },
-                { label: "Available", value: stock.available.toLocaleString(), tone: "text-emerald-600 dark:text-emerald-400" },
-                { label: "Reserved",  value: stock.reserved.toLocaleString(),  tone: "text-amber-600 dark:text-amber-400" },
-              ].map((k) => (
-                <Card key={k.label} className="border border-border shadow-xs">
-                  <CardContent className="p-3.5">
-                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{k.label}</div>
-                    <div className={`mt-1 text-2xl font-extrabold ${k.tone} font-mono`}>{k.value}</div>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{item.baseUom}</div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+          {/* Pieces by Stage — workflow pipeline for per-piece tracking */}
+          <PiecesByStageSection
+            serials={serials}
+            itemType={item.itemType}
+            manufactured={!!manufactured}
+          />
 
           {/* Identity / master */}
           <SectionCard icon={Layers} title="Master">
@@ -648,57 +674,8 @@ export default function ItemDetailsPage() {
             </SectionCard>
           )}
 
-          {/* Movement history (F5.7+) — the ledger for this item across variants */}
-          {ledger.length > 0 && (
-            <SectionCard icon={History} title={`Movement history (${ledger.length})`}>
-              <div className="border border-border rounded-lg overflow-hidden">
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-b border-border sticky top-0">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-bold w-36">When</th>
-                        <th className="px-3 py-2 text-left font-bold w-28">Type</th>
-                        <th className="px-3 py-2 text-right font-bold w-20">Qty</th>
-                        <th className="px-3 py-2 text-left font-bold">Location</th>
-                        <th className="px-3 py-2 text-left font-bold">Lot / ref</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {ledger.map((m) => {
-                        const inbound = m.qtyDelta > 0
-                        const typeTone =
-                          m.type === "IN" || m.type === "PRODUCTION" || m.type === "RETURN" ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
-                          : m.type === "OUT" || m.type === "CONSUMPTION" ? "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20"
-                          : m.type === "TRANSFER" ? "bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20"
-                          : "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
-                        return (
-                          <tr key={m.id} className="hover:bg-muted/10">
-                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                              {new Date(m.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold border ${typeTone}`}>{m.type}</span>
-                            </td>
-                            <td className={`px-3 py-2 text-right font-mono font-semibold ${inbound ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
-                              {inbound ? "+" : ""}{m.qtyDelta.toLocaleString()}
-                            </td>
-                            <td className="px-3 py-2 text-xs text-muted-foreground">
-                              {m.warehouseCode ? `${m.warehouseCode}${m.locationCode ? ` · ${m.locationCode}` : ""}` : "—"}
-                            </td>
-                            <td className="px-3 py-2 text-xs">
-                              {m.lotNo && <span className="font-mono text-muted-foreground">{m.lotNo}</span>}
-                              {m.supplierName && <span className="text-muted-foreground"> · {m.supplierName}</span>}
-                              {!m.lotNo && (m.reason || m.refType) && <span className="text-muted-foreground italic">{m.reason ?? m.refType}</span>}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </SectionCard>
-          )}
+          {/* Movement history */}
+          <MovementHistorySection ledger={ledger} baseUom={item.baseUom} />
         </div>
 
         {/* Right side: one tall Inventory panel. Stretches to the height of
@@ -784,7 +761,7 @@ export default function ItemDetailsPage() {
                     <div className="rounded-lg border border-border/60 bg-muted/20 p-3 flex items-start gap-2">
                       <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
                       <p className="text-xs text-muted-foreground">
-                        No stock on hand yet. {item.itemType === "assembled" || item.itemType === "semi_assembled"
+                        No stock on hand yet. {item.itemType === "finished_product" || item.itemType === "sub_assembly"
                           ? "Post a production run to project into the ledger."
                           : "Receive a PO or add an opening quantity to start tracking."}
                       </p>
@@ -1229,6 +1206,353 @@ function BomTreeView({ lines, fromId }: { lines: BomLine[]; fromId: string | nul
   )
 }
 
+// ── Movement History — enhanced ledger ──────────────────────────────────────
+
+const TXN_TYPE_META: Record<string, { label: string; icon: React.ComponentType<{ className?: string }>; tone: string }> = {
+  IN:          { label: "Stock In",     icon: ArrowDownLeft,  tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" },
+  PRODUCTION:  { label: "Production",   icon: Factory,        tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" },
+  RETURN:      { label: "Return",       icon: ArrowDownLeft,  tone: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" },
+  OUT:         { label: "Stock Out",    icon: ArrowUpRight,   tone: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20" },
+  CONSUMPTION: { label: "Consumption",  icon: ArrowUpRight,   tone: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20" },
+  TRANSFER:    { label: "Transfer",     icon: ArrowLeftRight, tone: "bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-500/20" },
+  ADJUSTMENT:  { label: "Adjustment",   icon: Sliders,        tone: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20" },
+}
+
+const TXN_FILTERS = ["ALL", "IN", "OUT", "TRANSFER", "ADJUSTMENT", "PRODUCTION", "CONSUMPTION", "RETURN"] as const
+
+function MovementHistorySection({ ledger, baseUom }: { ledger: LedgerRow[]; baseUom: string }) {
+  const [filter, setFilter] = React.useState<string>("ALL")
+  const [expandedId, setExpandedId] = React.useState<string | null>(null)
+
+  const filtered = filter === "ALL" ? ledger : ledger.filter((m) => m.type === filter)
+
+  const totalIn = ledger.reduce((s, m) => s + (m.qtyDelta > 0 ? m.qtyDelta : 0), 0)
+  const totalOut = ledger.reduce((s, m) => s + (m.qtyDelta < 0 ? -m.qtyDelta : 0), 0)
+
+  return (
+    <Card className="border border-border shadow-sm overflow-hidden">
+      <CardHeader className="border-b border-border bg-muted/10 px-4 py-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-primary" />
+            <CardTitle className="text-sm font-bold">Movement History</CardTitle>
+            <span className="text-[10px] text-muted-foreground font-semibold ml-1">
+              {ledger.length} movement{ledger.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          {/* Summary chips */}
+          {ledger.length > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 px-2.5 py-0.5 text-[10px] font-bold">
+                <ArrowDownLeft className="h-2.5 w-2.5" /> In {totalIn.toLocaleString()} {baseUom}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 text-rose-700 dark:text-rose-400 px-2.5 py-0.5 text-[10px] font-bold">
+                <ArrowUpRight className="h-2.5 w-2.5" /> Out {totalOut.toLocaleString()} {baseUom}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2.5 py-0.5 text-[10px] font-bold">
+                Net {(totalIn - totalOut).toLocaleString()} {baseUom}
+              </span>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {ledger.length === 0 ? (
+          <div className="p-5 flex items-start gap-2">
+            <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+            <p className="text-xs text-muted-foreground">No inventory movements recorded yet.</p>
+          </div>
+        ) : (
+          <>
+            {/* Type filter tabs */}
+            <div className="flex items-center gap-1 px-4 pt-3 pb-2 overflow-x-auto">
+              {TXN_FILTERS.map((t) => {
+                const count = t === "ALL" ? ledger.length : ledger.filter((m) => m.type === t).length
+                if (t !== "ALL" && count === 0) return null
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setFilter(t)}
+                    className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold transition-colors cursor-pointer whitespace-nowrap ${
+                      filter === t
+                        ? "bg-primary text-primary-foreground shadow-sm"
+                        : "bg-muted/40 text-muted-foreground hover:bg-muted/60"
+                    }`}
+                  >
+                    {t === "ALL" ? "All" : (TXN_TYPE_META[t]?.label ?? t)}
+                    <span className={`ml-0.5 rounded-full px-1.5 py-0.5 text-[9px] ${
+                      filter === t ? "bg-primary-foreground/20" : "bg-background/60"
+                    }`}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            <DragScrollArea className="overflow-x-auto">
+              <div className="max-h-[480px] overflow-y-auto">
+                <table className="w-full text-sm min-w-[900px]">
+                  <thead className="text-[10px] uppercase bg-muted/40 text-muted-foreground border-y border-border sticky top-0 z-10">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-bold w-36">When</th>
+                      <th className="px-3 py-2 text-left font-bold w-28">Type</th>
+                      <th className="px-3 py-2 text-right font-bold w-20">Qty</th>
+                      <th className="px-3 py-2 text-right font-bold w-24">Balance</th>
+                      <th className="px-3 py-2 text-left font-bold w-32">Location</th>
+                      <th className="px-3 py-2 text-left font-bold w-36">Lot</th>
+                      <th className="px-3 py-2 text-left font-bold">Details</th>
+                      <th className="px-3 py-2 text-left font-bold w-28">By</th>
+                      <th className="px-2 py-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filtered.map((m) => {
+                      const inbound = m.qtyDelta > 0
+                      const meta = TXN_TYPE_META[m.type] ?? TXN_TYPE_META.ADJUSTMENT
+                      const TxnIcon = meta.icon
+                      const hasDetail = !!(m.note || m.grnNo || m.reason)
+                      const isExpanded = expandedId === m.id
+                      return (
+                        <React.Fragment key={m.id}>
+                          <tr className={`hover:bg-muted/10 ${isExpanded ? "bg-muted/10" : ""}`}>
+                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                              {new Date(m.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                            </td>
+                            <td className="px-3 py-2">
+                              <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-bold border ${meta.tone}`}>
+                                <TxnIcon className="h-2.5 w-2.5" />
+                                {meta.label}
+                              </span>
+                            </td>
+                            <td className={`px-3 py-2 text-right font-mono font-bold ${inbound ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}`}>
+                              {inbound ? "+" : ""}{m.qtyDelta.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-foreground/70">
+                              {m.runningBalance.toLocaleString()}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                              {m.warehouseCode ? `${m.warehouseCode}${m.locationCode ? ` · ${m.locationCode}` : ""}` : "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs">
+                              {m.lotNo ? <span className="font-mono text-muted-foreground">{m.lotNo}</span> : <span className="text-muted-foreground/40">—</span>}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground">
+                              {m.supplierName && <span>{m.supplierName}</span>}
+                              {m.supplierName && m.refType && <span> · </span>}
+                              {m.refType && <span className="italic">{m.refType}{m.grnNo ? ` (${m.grnNo})` : ""}</span>}
+                              {!m.supplierName && !m.refType && m.reason && <span className="italic">{m.reason}</span>}
+                              {!m.supplierName && !m.refType && !m.reason && "—"}
+                            </td>
+                            <td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-[120px]">
+                              {m.createdByName ? (
+                                <span className="inline-flex items-center gap-1" title={m.createdByName}>
+                                  <User className="h-2.5 w-2.5 shrink-0" /> {m.createdByName}
+                                </span>
+                              ) : "—"}
+                            </td>
+                            <td className="px-2 py-2">
+                              {hasDetail && (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedId(isExpanded ? null : m.id)}
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-muted/60 text-muted-foreground"
+                                  title={isExpanded ? "Hide details" : "Show details"}
+                                >
+                                  {isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                          {isExpanded && hasDetail && (
+                            <tr className="bg-muted/5">
+                              <td colSpan={9} className="px-4 py-2">
+                                <div className="flex flex-wrap gap-4 text-xs">
+                                  {m.grnNo && (
+                                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                                      <FileText className="h-3 w-3 shrink-0" />
+                                      <span className="font-semibold">GRN:</span>
+                                      <span className="font-mono">{m.grnNo}</span>
+                                    </div>
+                                  )}
+                                  {m.reason && (
+                                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                                      <Info className="h-3 w-3 shrink-0" />
+                                      <span className="font-semibold">Reason:</span>
+                                      <span>{m.reason}</span>
+                                    </div>
+                                  )}
+                                  {m.note && (
+                                    <div className="flex items-start gap-1.5 text-muted-foreground">
+                                      <StickyNote className="h-3 w-3 shrink-0 mt-0.5" />
+                                      <span className="font-semibold">Note:</span>
+                                      <span className="whitespace-pre-wrap">{m.note}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </DragScrollArea>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ── Pieces by Stage — horizontal pipeline ──────────────────────────────────
+
+function PiecesByStageSection({ serials, itemType, manufactured }: {
+  serials: SerialsData | null
+  itemType: ItemType
+  manufactured: boolean
+}) {
+  const stages = manufactured ? MANUFACTURED_STAGES : PURCHASED_STAGES
+  const stageMap = React.useMemo(() => {
+    const m = new Map<ItemStage, SerialView[]>()
+    if (serials) {
+      for (const s of serials.stages) m.set(s.stage, s.serials)
+    }
+    return m
+  }, [serials])
+
+  const [expandedStage, setExpandedStage] = React.useState<ItemStage | null>(null)
+  const [lotFilter, setLotFilter] = React.useState<string | null>(null)
+
+  return (
+    <Card className="border border-border shadow-sm overflow-hidden">
+      <CardHeader className="border-b border-border bg-muted/10 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Hash className="h-4 w-4 text-primary" />
+          <CardTitle className="text-sm font-bold">Pieces by Stage</CardTitle>
+          {serials && serials.total > 0 && (
+            <span className="ml-auto rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold">
+              {serials.total} piece{serials.total === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="p-4">
+        {/* Pipeline arrow strip */}
+        <div className="flex gap-2 overflow-x-auto p-1">
+          {stages.map((stage, idx) => {
+            const meta = STAGE_META[stage]
+            const pieces = stageMap.get(stage) ?? []
+            const count = pieces.length
+            const isActive = count > 0
+            const isExpanded = expandedStage === stage
+            return (
+              <button
+                key={stage}
+                type="button"
+                onClick={() => { setExpandedStage(isExpanded ? null : stage); setLotFilter(null) }}
+                className={`relative flex-1 min-w-[80px] rounded-lg border px-2 py-1.5 text-center transition-all cursor-pointer ${
+                  isExpanded
+                    ? `${meta.bg} ring-2 ring-offset-1 ring-current ${meta.tone}`
+                    : isActive
+                      ? `${meta.bg} ${meta.tone} hover:ring-1 hover:ring-current`
+                      : "bg-muted/30 border-border text-muted-foreground/50"
+                }`}
+              >
+                {idx < stages.length - 1 && (
+                  <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 z-10 text-border">
+                    <ChevronRight className="h-3 w-3" />
+                  </div>
+                )}
+                <div className="text-[9px] uppercase tracking-wider font-bold truncate">{meta.label}</div>
+                <div className={`text-lg font-extrabold font-mono ${isActive ? "" : "opacity-40"}`}>
+                  {count}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Expanded serial list for selected stage */}
+        {expandedStage && (stageMap.get(expandedStage) ?? []).length > 0 && (() => {
+          const allPieces = stageMap.get(expandedStage) ?? []
+          const lots = Array.from(new Set(allPieces.map((s) => s.lotNo ?? "—")))
+          const filtered = lotFilter ? allPieces.filter((s) => (s.lotNo ?? "—") === lotFilter) : allPieces
+          return (
+            <div className="mt-3 border border-border rounded-lg overflow-hidden">
+              <div className={`px-3 py-2 text-xs font-bold flex items-center gap-2 ${STAGE_META[expandedStage].bg} ${STAGE_META[expandedStage].tone}`}>
+                <Hash className="h-3 w-3" />
+                {STAGE_META[expandedStage].label} — {filtered.length} of {allPieces.length} piece{allPieces.length === 1 ? "" : "s"}
+              </div>
+              {/* Lot filter dropdown */}
+              {lots.length > 1 && (
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/5">
+                  <label className="text-[10px] uppercase font-bold text-muted-foreground shrink-0">Filter by Lot</label>
+                  <select
+                    value={lotFilter ?? ""}
+                    onChange={(e) => setLotFilter(e.target.value || null)}
+                    className="text-xs font-mono bg-background border border-border rounded-md px-2 py-1 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary max-w-[280px]"
+                  >
+                    <option value="">All lots ({allPieces.length})</option>
+                    {lots.map((lot) => {
+                      const count = allPieces.filter((s) => (s.lotNo ?? "—") === lot).length
+                      return <option key={lot} value={lot}>{lot} ({count})</option>
+                    })}
+                  </select>
+                  {lotFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setLotFilter(null)}
+                      className="text-[10px] font-semibold text-muted-foreground hover:text-foreground cursor-pointer"
+                    >
+                      clear
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="max-h-60 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-[9px] uppercase bg-muted/40 text-muted-foreground border-b border-border sticky top-0">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left font-bold">Serial #</th>
+                      <th className="px-2 py-1.5 text-left font-bold">Lot</th>
+                      <th className="px-2 py-1.5 text-left font-bold">Notes</th>
+                      <th className="px-2 py-1.5 text-right font-bold whitespace-nowrap">Updated</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {filtered.map((s) => (
+                      <tr key={s.id} className="hover:bg-muted/10">
+                        <td className="px-2 py-1.5 font-mono font-bold text-primary whitespace-nowrap">{s.serialNo}</td>
+                        <td className="px-2 py-1.5 font-mono text-muted-foreground whitespace-nowrap">{s.lotNo || "—"}</td>
+                        <td className="px-2 py-1.5 text-muted-foreground">{s.notes || "—"}</td>
+                        <td className="px-2 py-1.5 text-right text-muted-foreground whitespace-nowrap">
+                          {new Date(s.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* Empty state */}
+        {(!serials || serials.total === 0) && (
+          <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 p-3 flex items-start gap-2">
+            <Info className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+            <p className="text-xs text-muted-foreground">
+              No pieces tracked yet. Serial numbers will be assigned when stock is received or production starts.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function SectionCard({ icon: Icon, title, children, dense }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
@@ -1261,8 +1585,8 @@ function KV({ label, value, mono }: { label: string; value: React.ReactNode; mon
 
 const USED_IN_TYPE_ICON: Record<ItemType, React.ComponentType<{ className?: string }>> = {
   raw: Nut,
-  semi_assembled: Cpu,
-  assembled: Package,
+  sub_assembly: Cpu,
+  finished_product: Package,
   consumable: Boxes,
   asset: Laptop,
   packaging: Wrench,
@@ -1367,9 +1691,7 @@ function DetailSkeleton() {
           <Skeleton className="h-4 w-96" />
         </div>
       </div>
-      <div className="grid grid-cols-4 gap-3">
-        {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
-      </div>
+      <Skeleton className="h-28" />
       <Skeleton className="h-64" />
     </div>
   )

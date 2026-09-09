@@ -23,8 +23,8 @@ import { extractError } from "@/lib/api-error"
 
 type ItemType =
   | "raw"
-  | "semi_assembled"
-  | "assembled"
+  | "sub_assembly"
+  | "finished_product"
   | "consumable"
   | "asset"
   | "packaging"
@@ -67,8 +67,8 @@ interface Item {
 // Colour + icon per item_type. Kept in one place so tags/filters stay in sync.
 const TYPE_META: Record<ItemType, { label: string; icon: React.ComponentType<{ className?: string }>; tone: string }> = {
   raw:            { label: "Raw",            icon: Nut,     tone: "bg-primary/10 text-primary border-primary/20" },
-  semi_assembled: { label: "Semi-assembled", icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
-  assembled:      { label: "Assembled",      icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  sub_assembly: { label: "Sub-Assemblies",    icon: Cpu,     tone: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  finished_product:      { label: "Finished Products", icon: Package, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
   consumable:     { label: "Consumable",     icon: Boxes,   tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   asset:          { label: "Asset",          icon: Boxes,   tone: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   packaging:      { label: "Packaging",      icon: Boxes,   tone: "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20" },
@@ -136,7 +136,7 @@ function UniversalItemList() {
   // the right view; the user can widen them via the chip strip afterwards.
   const initialTypeFilter: ItemType | "all" = (() => {
     const raw = searchParams.get("itemType")
-    return raw === "raw" || raw === "semi_assembled" || raw === "assembled"
+    return raw === "raw" || raw === "sub_assembly" || raw === "finished_product"
       || raw === "consumable" || raw === "asset" || raw === "packaging"
       ? raw
       : "all"
@@ -311,7 +311,7 @@ function UniversalItemList() {
       return true
     })
     const counts: Record<ItemType | "all", number> = {
-      all: base.length, raw: 0, semi_assembled: 0, assembled: 0,
+      all: base.length, raw: 0, sub_assembly: 0, finished_product: 0,
       consumable: 0, asset: 0, packaging: 0,
     }
     for (const it of base) counts[it.itemType]++
@@ -615,7 +615,7 @@ function UniversalItemList() {
                         disabled={!editable}
                         title={editable
                           ? undefined
-                          : selected.itemType === "assembled"
+                          : selected.itemType === "finished_product"
                             ? "Product items are edited via Products → Product List for now"
                             : "PCB-revision items are edited via PCB Management → PCB Structure for now"}
                         onClick={() => setEditing(true)}

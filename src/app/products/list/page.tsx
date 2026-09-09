@@ -1,7 +1,7 @@
 "use client"
 
 /**
- * Assembled Products workspace list.
+ * Finished Products workspace list.
  *
  * Post-consolidation this page reads the universal items master and filters
  * to `itemType === 'assembled' OR isFinishedGood === true` — the union of
@@ -10,7 +10,7 @@
  * too). Legacy `products` table is no longer the source; every write goes
  * through /items/*.
  *
- * The workspace label was renamed to "Assembled Products" (see modules.ts).
+ * The workspace label was renamed to "Finished Products" (see modules.ts).
  * The URL path stays `/products/list` for backward-compatible bookmarks.
  */
 
@@ -33,8 +33,8 @@ type BulkAction = "activate" | "deactivate" | "discontinue" | "mark_finished" | 
 
 type ItemType =
   | "raw"
-  | "semi_assembled"
-  | "assembled"
+  | "sub_assembly"
+  | "finished_product"
   | "consumable"
   | "asset"
   | "packaging"
@@ -63,7 +63,7 @@ const STATUS_TONE: Record<ItemStatus, string> = {
 
 // The role sub-filter narrows the union — assembled items only, finished
 // goods only, or both. Default "all" shows the full union.
-type Role = "all" | "assembled" | "finished"
+type Role = "all" | "finished_product" | "finished"
 
 // Per-item stats from /api/products/stats. Missing key => "no Active BOM".
 interface ProductStats {
@@ -112,7 +112,7 @@ function AssembledProductsList() {
     rawStatus === "active" || rawStatus === "inactive" || rawStatus === "discontinued" ? rawStatus : "all"
   const rawRole = searchParams.get("role")
   const initialRole: Role =
-    rawRole === "assembled" || rawRole === "finished" ? rawRole : "all"
+    rawRole === "finished_product" || rawRole === "finished" ? rawRole : "all"
   const rawView = searchParams.get("view")
   const initialView: ViewMode = rawView === "table" ? "table" : "cards"
 
@@ -166,8 +166,8 @@ function AssembledProductsList() {
       // second, complementary call so a semi_assembled item flagged as a
       // finished good still shows up here without a giant client-side sift.
       const [assRes, finRes, statsRes] = await Promise.all([
-        fetch("/api/items?itemType=assembled", { cache: "no-store" }),
-        fetch("/api/items?itemType=semi_assembled", { cache: "no-store" }),
+        fetch("/api/items?itemType=finished_product", { cache: "no-store" }),
+        fetch("/api/items?itemType=sub_assembly", { cache: "no-store" }),
         fetch("/api/products/stats", { cache: "no-store" }),
       ])
       const [assBody, finBody, statsBody] = await Promise.all([
@@ -203,7 +203,7 @@ function AssembledProductsList() {
   const filtered = React.useMemo(() => {
     const query = q.trim().toLowerCase()
     return items.filter((it) => {
-      if (role === "assembled" && it.itemType !== "assembled") return false
+      if (role === "finished_product" && it.itemType !== "finished_product") return false
       if (role === "finished" && !it.isFinishedGood) return false
       if (statusFilter !== "all" && it.status !== statusFilter) return false
       if (query) {
@@ -216,7 +216,7 @@ function AssembledProductsList() {
 
   const roleCounts = React.useMemo(() => ({
     all: items.length,
-    assembled: items.filter((it) => it.itemType === "assembled").length,
+    finished_product: items.filter((it) => it.itemType === "finished_product").length,
     finished: items.filter((it) => it.isFinishedGood).length,
   }), [items])
 
@@ -302,7 +302,7 @@ function AssembledProductsList() {
       lines.push([
         escape(it.code),
         escape(it.name),
-        escape(it.itemType === "assembled" ? "Assembled" : "Semi-assembled"),
+        escape(it.itemType === "finished_product" ? "Finished Products" : "Sub-Assemblies"),
         escape(it.isFinishedGood ? "yes" : "no"),
         escape(it.status),
         escape(it.categoryPath ?? ""),
@@ -334,10 +334,10 @@ function AssembledProductsList() {
         <div className="flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground flex items-center gap-2 font-medium">
             <span>Items</span><span>/</span>
-            <span className="text-foreground font-semibold">Assembled Products</span>
+            <span className="text-foreground font-semibold">Finished Products</span>
           </div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-            Assembled Products
+            Finished Products
           </h1>
           <p className="text-sm text-muted-foreground">
             Assembled items plus every sellable sub-assembly (marked <span className="font-semibold text-emerald-600 dark:text-emerald-400">Finished</span>). Add or edit via the universal item flow.
@@ -411,9 +411,9 @@ function AssembledProductsList() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground font-semibold">Show:</span>
-          {(["all", "assembled", "finished"] as Role[]).map((r) => {
+          {(["all", "finished_product", "finished"] as Role[]).map((r) => {
             const active = role === r
-            const label = r === "all" ? "All products" : r === "assembled" ? "Assembled only" : "Finished only"
+            const label = r === "all" ? "All products" : r === "finished_product" ? "Finished Products" : "Finished Goods"
             return (
               <button
                 key={r}
@@ -535,7 +535,7 @@ function AssembledProductsList() {
         ))}
 
         {!loading && filtered.map((it) => {
-          const isAssembled = it.itemType === "assembled"
+          const isAssembled = it.itemType === "finished_product"
           const Icon = isAssembled ? Package : Cpu
           const st = stats.get(it.id)
           const hasBom = Boolean(st?.activeBomVersion)
@@ -609,9 +609,9 @@ function AssembledProductsList() {
                 )}
                 <div className="grid grid-cols-4 gap-1.5 text-center">
                   <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
-                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Stage</div>
-                    <div className="text-[11px] font-semibold mt-0.5 truncate" title={isAssembled ? "Assembled" : "Semi-assembled"}>
-                      {isAssembled ? "Assy" : "Sub"}
+                    <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Type</div>
+                    <div className="text-[11px] font-semibold mt-0.5 truncate" title={isAssembled ? "Finished Products" : "Sub-Assemblies"}>
+                      {isAssembled ? "Finished" : "Sub"}
                     </div>
                   </div>
                   <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
