@@ -258,33 +258,56 @@ function BomImport() {
     return map
   }, [d.ITEM_CATEGORIES])
 
+  // Default parent category for imported sub-assemblies. Points at the
+  // "Imported PCBs" leaf under "Sub-Assemblies" (seeded by migration
+  // 20260910000000). Empty string when the seed hasn't landed on this tenant
+  // yet — the picker falls back to unset and the user picks manually.
+  const importedPcbsCategoryId = React.useMemo(() => {
+    return d.ITEM_CATEGORIES.find((c) => c.path === "sub-assemblies/imported-pcbs")?.id ?? ""
+  }, [d.ITEM_CATEGORIES])
+
   // Existing catalog for the Linked/New chip. Fetched once when the page
   // mounts — the volumes are small and we want the chips accurate at parse
   // time. Rebuilds only when the fetch re-runs (never, on this page).
   const [existingItems, setExistingItems] = React.useState<{
     byMpn: Map<string, string>                                  // lower(partNo) → item code (for row Linked/New chips)
     byName: Map<string, string>                                 // lower(name)   → item code (for row Linked/New chips)
-    byNameFull: Map<string, { id: string; code: string; name: string }> // parent match → drives version-on-existing
-  }>({ byMpn: new Map(), byName: new Map(), byNameFull: new Map() })
+    /** Parent match keyed by `lower(name)|lower(importSource||"")`. A re-import
+     *  from the SAME source name matches; a same-named item imported from a
+     *  different source (or hand-added, source null) doesn't collide. */
+    byNameAndSource: Map<string, { id: string; code: string; name: string; importSource: string | null }>
+    /** All items indexed by name only — used for the row-level "Linked/New"
+     *  chip and for the parent-tab warning that a same-named item exists. */
+    byName2: Map<string, { id: string; code: string; name: string; importSource: string | null }>
+  }>({ byMpn: new Map(), byName: new Map(), byNameAndSource: new Map(), byName2: new Map() })
   React.useEffect(() => {
     let cancelled = false
     fetch("/api/items", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((body: { data?: Array<{ id: string; code: string; name: string; variants: Array<{ partNo: string | null }> }> } | null) => {
+      .then((body: { data?: Array<{ id: string; code: string; name: string; importSource: string | null; variants: Array<{ partNo: string | null }> }> } | null) => {
         if (cancelled || !body?.data) return
         const byMpn = new Map<string, string>()
         const byName = new Map<string, string>()
-        const byNameFull = new Map<string, { id: string; code: string; name: string }>()
+        const byNameAndSource = new Map<string, { id: string; code: string; name: string; importSource: string | null }>()
+        const byName2 = new Map<string, { id: string; code: string; name: string; importSource: string | null }>()
         for (const it of body.data) {
           if (it.name) {
-            byName.set(it.name.toLowerCase(), it.code)
-            byNameFull.set(it.name.toLowerCase(), { id: it.id, code: it.code, name: it.name })
+            const nameLower = it.name.toLowerCase()
+            byName.set(nameLower, it.code)
+            const key = `${nameLower}|${(it.importSource ?? "").toLowerCase()}`
+            byNameAndSource.set(key, { id: it.id, code: it.code, name: it.name, importSource: it.importSource })
+            // Prefer keeping the earliest (or any deterministic) entry when
+            // duplicates exist under the same name — the row-level chip only
+            // cares that SOME item with the name exists.
+            if (!byName2.has(nameLower)) {
+              byName2.set(nameLower, { id: it.id, code: it.code, name: it.name, importSource: it.importSource })
+            }
           }
           for (const v of it.variants) {
             if (v.partNo) byMpn.set(v.partNo.toLowerCase(), it.code)
           }
         }
-        setExistingItems({ byMpn, byName, byNameFull })
+        setExistingItems({ byMpn, byName, byNameAndSource, byName2 })
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -351,7 +374,7 @@ function BomImport() {
         setParseError("No sheets found in the workbook.")
         return
       }
-      const built: SheetState[] = pcbs.map((p) => buildSheetState(p, initialStage, byLowerRawName))
+      const built: SheetState[] = pcbs.map((p) => buildSheetState(p, initialStage, byLowerRawName, importedPcbsCategoryId))
       setSheets(built)
       // Roll-up tabs (Combined/Summary) stay unticked by default — matches the
       // parser's own signal. Empty tabs are also excluded. In attach mode
@@ -499,6 +522,12 @@ function BomImport() {
     router.push("/items/add")
   }
 
+  // Provenance stamp put on parents at create time and used as the second
+  // half of the (name + source) parent-match key on re-import.
+  const sourceLabelFor = (sheetName: string) => `${fileName} / ${sheetName}`.trim()
+  const parentMatchKey = (name: string, sheetName: string) =>
+    `${name.trim().toLowerCase()}|${sourceLabelFor(sheetName).toLowerCase()}`
+
   // ── the import loop ────────────────────────────────────────────────────
   const doImport = async () => {
     setImporting(true)
@@ -510,6 +539,7 @@ function BomImport() {
 
     const gathered: ImportResult[] = []
     const errs: string[] = []
+    let anyAutoActivated = false
     // In attach mode every sheet lands on the SAME parent, so only the first
     // successful chunk creates the Draft — everything after appends into it.
     // Reset to false at each sheet in fresh mode (where each sheet has its
@@ -528,7 +558,10 @@ function BomImport() {
         if (attachMode) {
           parentIdLocal = parentId
         } else {
-          const existingParent = existingItems.byNameFull.get(s.parentName.trim().toLowerCase())
+          // Match on (name + importSource) — a same-named item from a
+          // different source (or hand-added, source null) is treated as a
+          // different item so we don't hijack its BOM.
+          const existingParent = existingItems.byNameAndSource.get(parentMatchKey(s.parentName, s.sheetName))
           if (existingParent) {
             parentIdLocal = existingParent.id
             reusedExisting = true
@@ -542,6 +575,7 @@ function BomImport() {
                   code: s.parentCode.trim(),
                   itemType: s.parentStage,
                   categoryId: s.parentCategoryId || undefined,
+                  importSource: sourceLabelFor(s.sheetName),
                 }),
               })
               const iBody = await iRes.json().catch(() => null)
@@ -598,6 +632,7 @@ function BomImport() {
             bomVersionId: "",
             linesCreated: 0, itemsCreated: 0, itemsMatched: 0,
             brandsCreated: 0, suppliersCreated: 0, skipped: 0,
+            autoActivated: false,
           }
           let batchError: string | null = null
 
@@ -626,10 +661,11 @@ function BomImport() {
             const r = bBody.data as {
               bomVersionId: string; linesCreated: number; itemsCreated: number
               itemsMatched: number; brandsCreated: number; suppliersCreated: number
-              skipped: Array<unknown>
+              autoActivated: boolean; skipped: Array<unknown>
             }
             agg.bomVersionId = r.bomVersionId
             draftCreated = true
+            if (r.autoActivated) agg.autoActivated = true
             agg.linesCreated += r.linesCreated
             agg.itemsCreated += r.itemsCreated
             agg.itemsMatched += r.itemsMatched
@@ -650,10 +686,12 @@ function BomImport() {
 
           // Activate the freshly-imported Draft so it shows up as Active
           // on /products/list and /pcb-management/list right away.
+          // Skip when the server already auto-activated (v1 — first version).
           // Attach mode is trickier — multiple sheets can fold into the
           // same parent's Draft, so we defer activation until the loop
           // finishes (see the post-loop pass below).
-          if (!attachMode && agg.bomVersionId) {
+          if (agg.autoActivated) anyAutoActivated = true
+          if (!attachMode && agg.bomVersionId && !agg.autoActivated) {
             try {
               await fetch(`/api/items/${parentIdLocal}/bom/${agg.bomVersionId}/activate`, { method: "POST" })
             } catch { /* non-fatal — user can activate manually from the BOM editor */ }
@@ -664,7 +702,7 @@ function BomImport() {
             parentCode: attachMode
               ? (parentInfo?.code ?? "")
               : reusedExisting
-                ? (existingItems.byNameFull.get(s.parentName.trim().toLowerCase())?.code ?? s.parentCode.trim())
+                ? (existingItems.byNameAndSource.get(parentMatchKey(s.parentName, s.sheetName))?.code ?? s.parentCode.trim())
                 : s.parentCode.trim(),
             bomVersionId: agg.bomVersionId,
             linesCreated: agg.linesCreated,
@@ -685,7 +723,7 @@ function BomImport() {
       // Attach mode: every sheet folded into a single parent Draft. Now
       // that all chunks across all sheets are done, activate that one
       // Draft (the last successful gather has the right bomVersionId).
-      if (attachMode && gathered.length > 0) {
+      if (attachMode && gathered.length > 0 && !anyAutoActivated) {
         const last = gathered[gathered.length - 1]
         if (last?.bomVersionId) {
           try {
@@ -907,8 +945,8 @@ function BomImport() {
                         roll-up
                       </span>
                     )}
-                    {(!attachMode && !stageMode && !isExcluded && existingItems.byNameFull.has(s.parentName.trim().toLowerCase())) && (
-                      <span className="ml-1 rounded-full bg-primary/15 text-primary px-1.5 text-[10px] font-bold" title="Parent name matches an existing item — will create a new BOM version">
+                    {(!attachMode && !stageMode && !isExcluded && existingItems.byNameAndSource.has(parentMatchKey(s.parentName, s.sheetName))) && (
+                      <span className="ml-1 rounded-full bg-primary/15 text-primary px-1.5 text-[10px] font-bold" title="Parent name and import source match an existing item — will create a new BOM version">
                         vN+1
                       </span>
                     )}
@@ -939,13 +977,27 @@ function BomImport() {
                         an existing item, so the importer will create a new
                         BOM version on it instead of a new item. */}
                     {(() => {
-                      const hit = existingItems.byNameFull.get(activeSheet.parentName.trim().toLowerCase())
-                      if (!hit) return null
-                      return (
-                        <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold">
-                          → new BOM version on {hit.code}
-                        </span>
-                      )
+                      const hit = existingItems.byNameAndSource.get(parentMatchKey(activeSheet.parentName, activeSheet.sheetName))
+                      if (hit) {
+                        return (
+                          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold">
+                            → new BOM version on {hit.code}
+                          </span>
+                        )
+                      }
+                      // Name collides with an item from a DIFFERENT source
+                      // (or a hand-added one). We won't hijack it — a fresh
+                      // parent will be created. Warn so the user isn't
+                      // surprised by two items sharing a name.
+                      const collision = existingItems.byName2.get(activeSheet.parentName.trim().toLowerCase())
+                      if (collision) {
+                        return (
+                          <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5 text-[10px] font-bold" title={collision.importSource ? `An item named "${collision.name}" already exists from source: ${collision.importSource}` : `An item named "${collision.name}" already exists (added manually)`}>
+                            ! same name, different source — will create new item
+                          </span>
+                        )
+                      }
+                      return null
                     })()}
                   </CardTitle>
                 </CardHeader>
@@ -1333,7 +1385,12 @@ function BomImport() {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
-function buildSheetState(p: ImportedPcb, initialStage: Stage, byLowerCategoryName: Map<string, string>): SheetState {
+function buildSheetState(
+  p: ImportedPcb,
+  initialStage: Stage,
+  byLowerCategoryName: Map<string, string>,
+  defaultSubAssemblyCategoryId: string,
+): SheetState {
   const rows: Row[] = p.lines.map((l) => ({
     categoryId: guessCategory(l.type, byLowerCategoryName),
     name: clean(l.name),
@@ -1348,13 +1405,17 @@ function buildSheetState(p: ImportedPcb, initialStage: Stage, byLowerCategoryNam
     qty: Number.isFinite(l.qty) && l.qty > 0 ? l.qty : 1,
     ref: clean(l.reference),
   }))
+  // Default parent category: "Imported PCBs" under Sub-Assemblies when the
+  // sheet is landing as a sub_assembly (the common case). Finished-product
+  // imports leave it unset — no equivalent default there.
+  const defaultCategory = initialStage === "sub_assembly" ? defaultSubAssemblyCategoryId : ""
   return {
     sheetName: p.sheetName,
     isRollup: p.isRollup,
     parentName: p.name || p.sheetName,
     parentCode: suggestParentCode(p.name || p.sheetName, initialStage),
     parentStage: initialStage,
-    parentCategoryId: "",
+    parentCategoryId: defaultCategory,
     rows,
   }
 }

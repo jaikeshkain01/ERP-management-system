@@ -49,8 +49,6 @@ interface Item {
   minStock: number
   onHand: number
   status: ItemStatus
-  // Board specs from /api/items — used by the solder-type filter and the
-  // spec strip on each card.
   solderType: "SMD" | "DIP" | null
   footprint: string | null
   variants: unknown[]
@@ -78,10 +76,6 @@ const STATUS_TONE: Record<ItemStatus, string> = {
   discontinued: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
 }
 
-// Solder-type filter — sub_assembly-specific because PCB revisions have
-// a solder type but a mechanical sub-assembly usually doesn't.
-type SolderFilter = "all" | "smd" | "dip" | "unspecified"
-
 type ViewMode = "cards" | "table"
 
 // Suspense wrapper — useSearchParams needs a client boundary, so the list
@@ -106,9 +100,7 @@ function SemiAssembledList() {
   const rawStatus = searchParams.get("status")
   const initialStatus: ItemStatus | "all" =
     rawStatus === "active" || rawStatus === "inactive" || rawStatus === "discontinued" ? rawStatus : "all"
-  const rawSolder = searchParams.get("solder")
-  const initialSolder: SolderFilter =
-    rawSolder === "smd" || rawSolder === "dip" || rawSolder === "unspecified" ? rawSolder : "all"
+  const initialCategory = searchParams.get("category") ?? "all"
   const rawView = searchParams.get("view")
   const initialView: ViewMode = rawView === "table" ? "table" : "cards"
 
@@ -118,7 +110,7 @@ function SemiAssembledList() {
   const [error, setError] = React.useState<string | null>(null)
   const [q, setQ] = React.useState(initialQ)
   const [statusFilter, setStatusFilter] = React.useState<ItemStatus | "all">(initialStatus)
-  const [solder, setSolder] = React.useState<SolderFilter>(initialSolder)
+  const [categoryFilter, setCategoryFilter] = React.useState<string>(initialCategory)
   const [view, setView] = React.useState<ViewMode>(initialView)
 
   // Row selection + bulk action state — mirrors the /products/list shape,
@@ -145,12 +137,12 @@ function SemiAssembledList() {
     const params = new URLSearchParams()
     if (q.trim()) params.set("q", q.trim())
     if (statusFilter !== "all") params.set("status", statusFilter)
-    if (solder !== "all") params.set("solder", solder)
+    if (categoryFilter !== "all") params.set("category", categoryFilter)
     if (view !== "cards") params.set("view", view)
     const qs = params.toString()
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, statusFilter, solder, view])
+  }, [q, statusFilter, categoryFilter, view])
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -187,23 +179,28 @@ function SemiAssembledList() {
     const query = q.trim().toLowerCase()
     return items.filter((it) => {
       if (statusFilter !== "all" && it.status !== statusFilter) return false
-      if (solder === "smd" && it.solderType !== "SMD") return false
-      if (solder === "dip" && it.solderType !== "DIP") return false
-      if (solder === "unspecified" && it.solderType !== null) return false
+      if (categoryFilter !== "all") {
+        const leaf = it.categoryPath?.split(" › ").pop() ?? ""
+        if (leaf !== categoryFilter) return false
+      }
       if (query) {
         const hay = `${it.code} ${it.name} ${it.categoryPath ?? ""}`.toLowerCase()
         if (!hay.includes(query)) return false
       }
       return true
     })
-  }, [items, q, statusFilter, solder])
+  }, [items, q, statusFilter, categoryFilter])
 
-  const solderCounts = React.useMemo(() => ({
-    all: items.length,
-    smd: items.filter((it) => it.solderType === "SMD").length,
-    dip: items.filter((it) => it.solderType === "DIP").length,
-    unspecified: items.filter((it) => it.solderType === null).length,
-  }), [items])
+  const categoryList = React.useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const it of items) {
+      const leaf = it.categoryPath?.split(" › ").pop() ?? "Uncategorized"
+      counts.set(leaf, (counts.get(leaf) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, count]) => ({ name, count }))
+  }, [items])
 
   // CSV export of the currently filtered set. Columns include the
   // sub_assembly-specific signals (Active + Draft revision, used-in
@@ -358,7 +355,7 @@ function SemiAssembledList() {
         </div>
       </div>
 
-      {/* Search + solder-type filter + status filter */}
+      {/* Search + category filter + status filter */}
       <div className="bg-card border border-border p-4 rounded-xl shadow-2xs space-y-3">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div className="relative flex-1 max-w-md">
@@ -385,28 +382,38 @@ function SemiAssembledList() {
             <span className="text-xs text-muted-foreground font-mono">{filtered.length} / {items.length}</span>
           </div>
         </div>
-        {/* Solder-type chips — module-specific (a PCB revision has SMD/DIP,
-            a mechanical sub-assembly usually leaves it blank). */}
+        {/* Category chips — filter by the leaf category of each item. */}
+        {categoryList.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground font-semibold">Solder:</span>
-          {(["all", "smd", "dip", "unspecified"] as SolderFilter[]).map((s) => {
-            const active = solder === s
-            const label = s === "all" ? "All" : s === "smd" ? "SMD" : s === "dip" ? "DIP" : "Unspecified"
+          <span className="text-xs text-muted-foreground font-semibold">Category:</span>
+          <button
+            onClick={() => setCategoryFilter("all")}
+            className={`px-3 py-1 text-xs rounded-full border transition-all cursor-pointer font-semibold select-none ${
+              categoryFilter === "all"
+                ? "bg-primary/10 border-primary text-primary shadow-3xs"
+                : "bg-background border-border text-muted-foreground hover:bg-muted/50"
+            }`}
+          >
+            All <span className="font-mono opacity-70">({items.length})</span>
+          </button>
+          {categoryList.map((cat) => {
+            const active = categoryFilter === cat.name
             return (
               <button
-                key={s}
-                onClick={() => setSolder(s)}
+                key={cat.name}
+                onClick={() => setCategoryFilter(cat.name)}
                 className={`px-3 py-1 text-xs rounded-full border transition-all cursor-pointer font-semibold select-none ${
                   active
                     ? "bg-primary/10 border-primary text-primary shadow-3xs"
                     : "bg-background border-border text-muted-foreground hover:bg-muted/50"
                 }`}
               >
-                {label} <span className="font-mono opacity-70">({solderCounts[s]})</span>
+                {cat.name} <span className="font-mono opacity-70">({cat.count})</span>
               </button>
             )
           })}
         </div>
+        )}
       </div>
 
       {error && (
@@ -554,14 +561,12 @@ function SemiAssembledList() {
                           Finished
                         </span>
                       )}
-                      {it.solderType && (
-                        <span
-                          className="inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
-                          title={`Solder type: ${it.solderType}`}
-                        >
-                          {it.solderType}
-                        </span>
-                      )}
+                      <span
+                        className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-400"
+                        title={it.categoryPath ?? "Uncategorized"}
+                      >
+                        {it.categoryPath?.split(" › ").pop() ?? "Uncategorized"}
+                      </span>
                     </div>
                     <div className="text-[11px] font-mono text-primary">{it.code}</div>
                   </div>
@@ -643,8 +648,8 @@ function SemiAssembledList() {
               </div>
               <div className="grid grid-cols-4 gap-1.5 text-center">
                 <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
-                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Category</div>
-                  <div className="text-[11px] font-semibold truncate mt-0.5" title={it.categoryPath ?? "—"}>{it.categoryPath?.split(" › ").pop() ?? "—"}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">Solder</div>
+                  <div className="text-[11px] font-semibold truncate mt-0.5" title={it.solderType ?? "—"}>{it.solderType ?? "—"}</div>
                 </div>
                 <div className="rounded-lg border border-border bg-muted/20 px-1.5 py-2">
                   <div className="text-[9px] uppercase tracking-wide text-muted-foreground font-semibold">On hand</div>
@@ -720,6 +725,7 @@ function SemiAssembledList() {
                   </th>
                   <th className="px-4 py-2 text-left font-bold">Code</th>
                   <th className="px-4 py-2 text-left font-bold">Name</th>
+                  <th className="px-4 py-2 text-left font-bold">Category</th>
                   <th className="px-4 py-2 text-left font-bold">Solder</th>
                   <th className="px-4 py-2 text-left font-bold">Footprint</th>
                   <th className="px-4 py-2 text-left font-bold">Active / Draft</th>
@@ -732,7 +738,7 @@ function SemiAssembledList() {
               <tbody className="divide-y divide-border">
                 {loading && Array.from({ length: 6 }).map((_, i) => (
                   <tr key={`sk-${i}`}>
-                    {Array.from({ length: 10 }).map((__, j) => (
+                    {Array.from({ length: 11 }).map((__, j) => (
                       <td key={j} className="px-4 py-2"><Skeleton className="h-4 w-full" /></td>
                     ))}
                   </tr>
@@ -766,6 +772,11 @@ function SemiAssembledList() {
                             <span className="inline-flex items-center rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase text-emerald-700 dark:text-emerald-400" title="Sellable finished good">Finished</span>
                           )}
                         </div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span className="inline-flex items-center rounded-full border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-400" title={it.categoryPath ?? "Uncategorized"}>
+                          {it.categoryPath?.split(" › ").pop() ?? "Uncategorized"}
+                        </span>
                       </td>
                       <td className="px-4 py-2 font-mono text-muted-foreground">{it.solderType ?? "—"}</td>
                       <td className="px-4 py-2 font-mono text-muted-foreground truncate max-w-[140px]" title={it.footprint ?? "—"}>{it.footprint ?? "—"}</td>
@@ -822,8 +833,8 @@ function SemiAssembledList() {
                 <Plus className="h-4 w-4" /> Add the first one
               </Button>
             ) : (
-              (q.trim() || statusFilter !== "all" || solder !== "all") && (
-                <button onClick={() => { setQ(""); setStatusFilter("all"); setSolder("all") }} className="text-xs text-primary hover:underline font-semibold cursor-pointer">
+              (q.trim() || statusFilter !== "all" || categoryFilter !== "all") && (
+                <button onClick={() => { setQ(""); setStatusFilter("all"); setCategoryFilter("all") }} className="text-xs text-primary hover:underline font-semibold cursor-pointer">
                   Reset filters
                 </button>
               )

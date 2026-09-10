@@ -77,6 +77,8 @@ export interface BomImportResult {
   brandsCreated: number;
   suppliersCreated: number;
   variantsCreated: number;
+  /** True when the imported version was auto-activated (v1 — no prior version). */
+  autoActivated: boolean;
   warnings: string[];
   skipped: { rowIndex: number; reason: string }[];
 }
@@ -589,6 +591,7 @@ export async function importBom(parentItemId: string, input: BomImportInput): Pr
     //    (mirrors createItemBomVersion so imported versions look native
     //    alongside hand-added ones); `append` reuses the Draft found above.
     let bomVersionId: string;
+    let versionNum = 0;
     if (existingDraftId) {
       bomVersionId = existingDraftId;
       // Bump the Draft's updated_at so listings reflect the append.
@@ -601,13 +604,17 @@ export async function importBom(parentItemId: string, input: BomImportInput): Pr
         SELECT COALESCE(count(*), 0)::int + 1 AS n
           FROM item_bom_versions
          WHERE parent_item_id = ${parentItemId}::uuid AND deleted_at IS NULL`;
-      const version = `v${nextRow[0].n}`;
+      versionNum = nextRow[0].n;
+      const version = `v${versionNum}`;
+      // v1 has no predecessor to compare against — activate immediately.
+      const isFirstVersion = versionNum === 1;
+      const initialStatus = isFirstVersion ? "Active" : "Draft";
       const inserted = await tx.$queryRaw<{ id: string }[]>`
         INSERT INTO item_bom_versions (
           company_id, parent_item_id, version, status,
           created_by, updated_by
         ) VALUES (
-          ${ctx.companyId!}::uuid, ${parentItemId}::uuid, ${version}, 'Draft'::bom_status,
+          ${ctx.companyId!}::uuid, ${parentItemId}::uuid, ${version}, ${initialStatus}::bom_status,
           ${ctx.userId}::uuid, ${ctx.userId}::uuid
         ) RETURNING id`;
       bomVersionId = inserted[0].id;
@@ -652,6 +659,8 @@ export async function importBom(parentItemId: string, input: BomImportInput): Pr
       warnings.push(`${skipped.length} row${skipped.length === 1 ? "" : "s"} skipped — see skipped[] for details.`);
     }
 
+    const autoActivated = !existingDraftId && versionNum === 1;
+
     return {
       parentItemId,
       bomVersionId,
@@ -663,6 +672,7 @@ export async function importBom(parentItemId: string, input: BomImportInput): Pr
       brandsCreated,
       suppliersCreated,
       variantsCreated,
+      autoActivated,
       warnings,
       skipped,
     };

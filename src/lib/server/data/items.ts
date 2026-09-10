@@ -1304,6 +1304,9 @@ export interface CreateItemInput {
   status?: ItemStatus;               // default 'active'
   /** Slice 3: sellable flag. Independent of stage. Defaults to false. */
   isFinishedGood?: boolean;
+  /** Provenance label — set by the BOM importer to "{fileName} / {sheetName}"
+   *  so re-imports can distinguish a same-named item from a different source. */
+  importSource?: string | null;
   variants?: CreateItemVariantInput[];
 }
 
@@ -1473,6 +1476,7 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         name, description, category_id, item_type, base_uom,
         min_stock, reorder_qty, safety_stock, lead_time_days, specs, status,
         is_finished_good, default_stage,
+        import_source,
         created_by, updated_by
       ) VALUES (
         ${ctx.companyId!}::uuid, ${code}, ${genericPn},
@@ -1489,6 +1493,7 @@ export async function createItem(input: CreateItemInput): Promise<ItemView> {
         ${input.minStock ?? 0}, ${input.reorderQty ?? 0}, ${input.safetyStock ?? 0},
         ${input.leadTimeDays ?? null}, ${JSON.stringify(specs)}::jsonb, ${status}::item_status,
         ${input.isFinishedGood ?? false}, ${defaultStage}::item_stage,
+        ${input.importSource?.trim() || null},
         ${ctx.userId}::uuid, ${ctx.userId}::uuid
       )
       RETURNING id`;

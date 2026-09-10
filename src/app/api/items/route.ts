@@ -83,6 +83,7 @@ const CreateBody = z.object({
   specs: z.unknown().optional(),
   status: ITEM_STATUS.optional(),
   isFinishedGood: z.boolean().optional(),
+  importSource: z.string().trim().max(400).nullable().optional(),
   variants: z.array(VariantBody).max(50).optional(),
 });
 
